@@ -1,0 +1,17 @@
+{
+  "name": "daredemo-slot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "日本のパチスロの内部構造（抽選・リール制御・状態機械）を WebUI で設定して遊べるシミュレータ。実在機種の再現ではなく、実機データは一切使用しない。",
+  "license": "MIT",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}
