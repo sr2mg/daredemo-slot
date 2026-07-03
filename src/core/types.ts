@@ -68,12 +68,29 @@ export interface RtStateDef {
 
 export type LidRelease =
   | { type: 'gameCountTable'; table: readonly { games: number; weight: number }[] }
-  | { type: 'lottery'; weight: number } // 毎ゲーム 65536 分率で解除抽選
+  | {
+      type: 'lottery';
+      weight: number; // 65536 分率で解除抽選
+      /** 'pureMiss' = 純ハズレ（抽選結果が空集合）のゲームのみ抽選（サラ金型 KC）。既定 'any' */
+      on?: 'any' | 'pureMiss';
+    }
   | { type: 'roleHit'; of: RoleId };
 
-export interface LidDef {
-  engageOn: readonly ('bonusFlag' | 'bonusEnd')[];
+/** モード = 解除テーブルの選択状態（吉宗型の通常/天国）。出玉に直結するのでメイン管理 */
+export interface ModeDef {
+  id: string;
   release: LidRelease;
+  /** ボーナス終了時のモード移行（重み付き）。省略時は現状維持 */
+  onBonusEnd?: readonly { to: string; weight: number }[];
+}
+
+export interface LidDef {
+  /** bonusFlag = ストックが空→非空になったとき / bonusEnd = ボーナス終了時に掛け直し（キュー非空時） */
+  engageOn: readonly ('bonusFlag' | 'bonusEnd')[];
+  /** modes を使わない場合の解除条件 */
+  release?: LidRelease;
+  /** モード付き解除（release と排他） */
+  modes?: { initial: string; states: readonly ModeDef[] };
 }
 
 export interface CarryoverDef {
@@ -140,6 +157,8 @@ export interface EngineState {
   lid: boolean;
   /** gameCountTable 解除の残ゲーム数 */
   lidReleaseIn: number | null;
+  /** 現在のモード（lid.modes 使用時のみ非 null） */
+  mode: string | null;
   /** 前ゲームがリプレイ入賞（次ゲームは投入 0） */
   pendingRebet: boolean;
 }
@@ -161,4 +180,6 @@ export interface GameEvent {
   rtEntered: string | null;
   rtExited: string | null;
   lidReleased: boolean;
+  /** モードが移行した場合の新モード id */
+  modeChanged: string | null;
 }

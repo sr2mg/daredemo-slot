@@ -6,6 +6,7 @@ import type {
   BonusDef,
   EngineState,
   GameEvent,
+  LidRelease,
   MachineDef,
   RoleId,
   RtTrigger,
@@ -29,7 +30,7 @@ export type ChooseStops = (
   ctx: ControlContext,
 ) => { order: readonly number[]; pushes: readonly number[] };
 
-export function initialState(): EngineState {
+export function initialState(machine?: MachineDef): EngineState {
   return {
     base: { type: 'normal' },
     rt: null,
@@ -37,6 +38,7 @@ export function initialState(): EngineState {
     queue: [],
     lid: false,
     lidReleaseIn: null,
+    mode: machine?.carryover.lid?.modes?.initial ?? null,
     pendingRebet: false,
   };
 }
@@ -80,6 +82,20 @@ export function resolveTable(machine: MachineDef, state: EngineState): readonly 
   return table;
 }
 
+/** 現在のモードに応じた蓋の解除条件（docs/design/01 軸 4） */
+export function currentRelease(machine: MachineDef, state: EngineState): LidRelease | null {
+  const lid = machine.carryover.lid;
+  if (!lid) return null;
+  if (lid.modes) {
+    const found = lid.modes.states.find((m) => m.id === state.mode);
+    const mode = found ?? lid.modes.states.find((m) => m.id === lid.modes!.initial);
+    if (!mode) throw new Error(`missing mode state: ${state.mode ?? lid.modes.initial}`);
+    return mode.release;
+  }
+  if (!lid.release) throw new Error('lid requires either release or modes');
+  return lid.release;
+}
+
 /** レバー ON から全リール停止・清算までの 1 ゲームセッション */
 export class GameSession {
   /** 実際に投入された枚数（再遊技は 0） */
@@ -94,8 +110,6 @@ export class GameSession {
   private readonly s: EngineState;
   private readonly history: StopEvent[] = [];
   private readonly queuedBonus: RoleId | null;
-  /** bonusEnd 契機の蓋掛け直し用に先引きした解除ゲーム数（gameCountTable のみ） */
-  private readonly pendingLidGames: number | null;
   private lidReleased: boolean;
   private rtEntered: string | null;
   private finished = false;
@@ -106,53 +120,51 @@ export class GameSession {
     this.s = s;
     const bonusIds = new Set(machine.bonuses.map((b) => b.id));
     const lidDef = machine.carryover.lid;
+    const release = currentRelease(machine, s);
 
     // --- ベット ---
     this.bet = s.pendingRebet ? 0 : machine.bet;
     s.pendingRebet = false;
 
-    // --- 蓋の解除判定（レバー ON 時。解除ゲームは同ゲームから入賞可能） ---
+    // --- 蓋の解除判定 1: ゲーム数カウントダウン（レバー ON 時。解除ゲームは同ゲームから入賞可能） ---
     this.lidReleased = false;
-    if (s.lid && lidDef) {
-      if (lidDef.release.type === 'gameCountTable') {
-        s.lidReleaseIn = (s.lidReleaseIn ?? 0) - 1;
-        if (s.lidReleaseIn <= 0) {
-          s.lid = false;
-          s.lidReleaseIn = null;
-          this.lidReleased = true;
-        }
-      } else if (lidDef.release.type === 'lottery') {
-        if (rng.draw16() < lidDef.release.weight) {
-          s.lid = false;
-          this.lidReleased = true;
-        }
+    if (s.lid && release?.type === 'gameCountTable') {
+      s.lidReleaseIn = (s.lidReleaseIn ?? 0) - 1;
+      if (s.lidReleaseIn <= 0) {
+        s.lid = false;
+        s.lidReleaseIn = null;
+        this.lidReleased = true;
       }
-      // roleHit 解除は入賞判定後（finish）に処理
     }
 
     // --- 内部抽選 ---
     const table = resolveTable(machine, s);
     this.flags = drawLottery(table, rng);
 
+    // --- 蓋の解除判定 2: 解除抽選（純ハズレ契機に対応するため抽選結果の後に評価） ---
+    if (s.lid && release?.type === 'lottery') {
+      const applicable = (release.on ?? 'any') === 'any' || this.flags.length === 0;
+      if (applicable && rng.draw16() < release.weight) {
+        s.lid = false;
+        this.lidReleased = true;
+      }
+    }
+    // roleHit 解除は入賞判定後（finish）に処理
+
     // --- ボーナス当選をキューへ（docs/design/02 規則 3） ---
     this.queuedBonus = null;
     this.rtEntered = null;
     const drawnBonus = this.flags.find((id) => bonusIds.has(id)) ?? null;
     if (drawnBonus !== null && s.base.type === 'normal' && s.queue.length < machine.carryover.queueLimit) {
+      const wasEmpty = s.queue.length === 0;
       s.queue.push(drawnBonus);
       this.queuedBonus = drawnBonus;
-      // 既に蓋 on のときは掛け直さない（解除カウンタ維持）。掛け直しは bonusEnd 契機の役割
-      if (lidDef && lidDef.engageOn.includes('bonusFlag') && !s.lid) {
-        engageLid(s, lidDef, lidDef.release.type === 'gameCountTable' ? drawLidGames(lidDef.release.table, rng) : null);
+      // bonusFlag 契機 = ストックが空→非空になったときのみ。放出中（蓋 off）の上乗せでは掛け直さない
+      if (lidDef && lidDef.engageOn.includes('bonusFlag') && wasEmpty && !s.lid && release) {
+        engageLid(s, release, rng);
       }
       this.rtEntered = applyRtEntry(machine, s, { queuedBonus: drawnBonus, bonusEnded: null, wins: [] });
     }
-
-    // finish() は RNG を持たないため、bonusEnd 契機の蓋掛け直しに使う解除ゲーム数はここで先引きする
-    this.pendingLidGames =
-      lidDef && lidDef.engageOn.includes('bonusEnd') && lidDef.release.type === 'gameCountTable'
-        ? drawLidGames(lidDef.release.table, rng)
-        : null;
 
     // --- 入賞制御に乗る役集合 = 当該ゲームの小役・リプレイ + キュー先頭（蓋 off 時） ---
     const active = new Set(this.flags.filter((id) => !bonusIds.has(id)));
@@ -190,8 +202,8 @@ export class GameSession {
     return event;
   }
 
-  /** 全リール停止後の清算と状態遷移。GameEvent を発行する */
-  finish(): { state: EngineState; event: GameEvent } {
+  /** 全リール停止後の清算と状態遷移。GameEvent を発行する（モード移行・蓋掛け直しの抽選に rng を使う） */
+  finish(rng: Rng): { state: EngineState; event: GameEvent } {
     if (this.finished) throw new Error('session already finished');
     if (!this.isComplete) throw new Error('not all reels are stopped');
     this.finished = true;
@@ -217,7 +229,8 @@ export class GameSession {
     s.pendingRebet = replayWon;
 
     // --- 蓋の roleHit 解除 ---
-    if (s.lid && lidDef?.release.type === 'roleHit' && wins.includes(lidDef.release.of)) {
+    const releaseAtWin = currentRelease(machine, s);
+    if (s.lid && releaseAtWin?.type === 'roleHit' && wins.includes(releaseAtWin.of)) {
       s.lid = false;
       this.lidReleased = true;
     }
@@ -225,6 +238,7 @@ export class GameSession {
     // --- 役物の開始・進行・終了 ---
     let bonusStarted: RoleId | null = null;
     let bonusEnded: RoleId | null = null;
+    let modeChanged: string | null = null;
     const wonBonus = wins.find((id) => bonusIds.has(id)) ?? null;
     if (wonBonus !== null) {
       // キュー先頭の入賞 = 放出。RT はボーナス作動でリセット
@@ -242,8 +256,23 @@ export class GameSession {
       if (bonusRunEnded(def, run)) {
         s.base = { type: 'normal' };
         bonusEnded = run.bonusId;
+
+        // --- モード移行（ボーナス終了時。新モードの解除テーブルで掛け直すため先に評価） ---
+        if (lidDef?.modes) {
+          const current = lidDef.modes.states.find((m) => m.id === s.mode);
+          if (current?.onBonusEnd && current.onBonusEnd.length > 0) {
+            const next = drawWeighted(current.onBonusEnd, rng).to;
+            if (next !== s.mode) {
+              s.mode = next;
+              modeChanged = next;
+            }
+          }
+        }
+
+        // --- 蓋の掛け直し（bonusEnd 契機・キュー非空時） ---
         if (lidDef && lidDef.engageOn.includes('bonusEnd') && s.queue.length > 0) {
-          engageLid(s, lidDef, this.pendingLidGames);
+          const release = currentRelease(machine, s);
+          if (release) engageLid(s, release, rng);
         }
       }
     }
@@ -277,6 +306,7 @@ export class GameSession {
         rtEntered: this.rtEntered,
         rtExited,
         lidReleased: this.lidReleased,
+        modeChanged,
       },
     };
   }
@@ -293,7 +323,7 @@ export function playGame(
   const session = new GameSession(machine, state, rng, ctxCache);
   const { order, pushes } = chooseStops(session.active, session.ctx);
   for (const reel of order) session.stopReel(reel, pushes[reel]!);
-  return session.finish();
+  return session.finish(rng);
 }
 
 function bonusDefOf(machine: MachineDef, id: RoleId): BonusDef {
@@ -344,24 +374,21 @@ function applyRtEntry(machine: MachineDef, s: EngineState, ctx: TriggerContext):
   return null;
 }
 
-/** 解除ゲーム数テーブルから重み付き抽選（蓋を掛ける前に引いておく） */
-function drawLidGames(
-  table: readonly { games: number; weight: number }[],
-  rng: Rng,
-): number {
-  const total = table.reduce((sum, row) => sum + row.weight, 0);
+function drawWeighted<T extends { weight: number }>(rows: readonly T[], rng: Rng): T {
+  const total = rows.reduce((sum, row) => sum + row.weight, 0);
   let value = rng.nextInt(total);
-  for (const row of table) {
+  for (const row of rows) {
     value -= row.weight;
-    if (value < 0) return row.games;
+    if (value < 0) return row;
   }
-  return table[table.length - 1]!.games;
+  return rows[rows.length - 1]!;
 }
 
-/** 蓋を掛ける。games は gameCountTable 解除のときのみ非 null（0 以下 = 即放出可能なので掛けない） */
-function engageLid(s: EngineState, lidDef: NonNullable<CarryoverLid>, games: number | null): void {
-  if (lidDef.release.type === 'gameCountTable') {
-    if (games === null || games <= 0) return;
+/** 蓋を掛ける。gameCountTable は解除ゲーム数をその場で抽選（0 以下 = 即放出可能なので掛けない） */
+function engageLid(s: EngineState, release: LidRelease, rng: Rng): void {
+  if (release.type === 'gameCountTable') {
+    const games = drawWeighted(release.table, rng).games;
+    if (games <= 0) return;
     s.lid = true;
     s.lidReleaseIn = games;
   } else {
@@ -369,5 +396,3 @@ function engageLid(s: EngineState, lidDef: NonNullable<CarryoverLid>, games: num
     s.lidReleaseIn = null;
   }
 }
-
-type CarryoverLid = MachineDef['carryover']['lid'];

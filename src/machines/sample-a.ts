@@ -78,30 +78,38 @@ const R = [
   'blank', //    19
 ] as const;
 
+/** 共有リール配列（ストック機プリセットでも再利用。docs/design/04 の制約検証済み） */
+export const sampleStrips = [L, C, R] as const;
+
+/** 共有の役定義（Aタイプ標準構成） */
+export const sampleRoles: MachineDef['roles'] = [
+  { id: 'replay', kind: 'replay', payout: 0, pattern: ['replay', 'replay', 'replay'], pullIn: 'guaranteed' },
+  { id: 'bell', kind: 'small', payout: 8, pattern: ['bell', 'bell', 'bell'], pullIn: 'guaranteed' },
+  { id: 'cherry', kind: 'small', payout: 2, pattern: ['cherry', 'any', 'any'], pullIn: { missable: { targetRate: 0.35 } } },
+  // スイカ: 3 リール目押しのレア役（各リール 2 個。実測引き込み率 ≒14%）
+  { id: 'melon', kind: 'small', payout: 15, pattern: ['melon', 'melon', 'melon'], pullIn: { missable: { targetRate: 0.14 } } },
+  // targetRate は「単独成立時に適当押しで入賞する率」。3 リール役は各リールの引き込み率の積になる
+  // （seven/bar は各リール 7/20 ≒ 35% → 全体 ≒ 4.3%、制御の都合で実測 2.6%）
+  { id: 'bb_red', kind: 'bonus', payout: 0, pattern: ['seven_red', 'seven_red', 'seven_red'], pullIn: { missable: { targetRate: 0.043 } } },
+  { id: 'rb', kind: 'bonus', payout: 0, pattern: ['bar', 'bar', 'bar'], pullIn: { missable: { targetRate: 0.043 } } },
+];
+
+/** 共有の有効ライン（クロス 5 ライン） */
+export const cross5: MachineDef['lines'] = [
+  [0, 0, 0],
+  [1, 1, 1],
+  [2, 2, 2],
+  [0, 1, 2],
+  [2, 1, 0],
+];
+
 export const sampleAType: MachineDef = {
   name: 'サンプル A タイプ',
   bet: 3,
   frames: 20,
-  strips: [L, C, R],
-  // クロス 5 ライン（水平 3 + 対角 2）
-  lines: [
-    [0, 0, 0],
-    [1, 1, 1],
-    [2, 2, 2],
-    [0, 1, 2],
-    [2, 1, 0],
-  ],
-  roles: [
-    { id: 'replay', kind: 'replay', payout: 0, pattern: ['replay', 'replay', 'replay'], pullIn: 'guaranteed' },
-    { id: 'bell', kind: 'small', payout: 8, pattern: ['bell', 'bell', 'bell'], pullIn: 'guaranteed' },
-    { id: 'cherry', kind: 'small', payout: 2, pattern: ['cherry', 'any', 'any'], pullIn: { missable: { targetRate: 0.35 } } },
-    // スイカ: 3 リール目押しのレア役（各リール 2 個。実測引き込み率 ≒14%）
-    { id: 'melon', kind: 'small', payout: 15, pattern: ['melon', 'melon', 'melon'], pullIn: { missable: { targetRate: 0.14 } } },
-    // targetRate は「単独成立時に適当押しで入賞する率」。3 リール役は各リールの引き込み率の積になる
-    // （seven/bar は各リール 7/20 ≒ 35% → 全体 ≒ 4.3%）
-    { id: 'bb_red', kind: 'bonus', payout: 0, pattern: ['seven_red', 'seven_red', 'seven_red'], pullIn: { missable: { targetRate: 0.043 } } },
-    { id: 'rb', kind: 'bonus', payout: 0, pattern: ['bar', 'bar', 'bar'], pullIn: { missable: { targetRate: 0.043 } } },
-  ],
+  strips: sampleStrips,
+  lines: cross5,
+  roles: sampleRoles,
   priority: 'role-first',
   bonuses: [
     // BB: 20 ゲーム消化で終了（獲得目安 ≒ 20G × (60000/65536) × 8 枚 ≒ 146 枚）

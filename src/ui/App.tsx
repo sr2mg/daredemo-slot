@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { Xoshiro128 } from '../core/rng.js';
 import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
-import { sampleAType } from '../machines/sample-a.js';
+import { machines } from '../machines/index.js';
 import { LayoutPanel, SpecPanel } from './panels.js';
 
 /**
@@ -12,8 +12,6 @@ import { LayoutPanel, SpecPanel } from './panels.js';
  * 操作: Space = レバー / J・K・L = 左・中・右停止（ボタンクリックも可）
  */
 
-const machine: MachineDef = sampleAType;
-const N = machine.frames;
 /** 約 80rpm 相当: 1 周 20 コマ ÷ 750ms ≒ 37.5ms/コマ */
 const FRAME_MS = 37.5;
 const INITIAL_CREDIT = 1000;
@@ -36,6 +34,7 @@ const ROLE_LABEL: Record<string, string> = {
   melon: 'スイカ 15枚',
   bb_red: 'BIG BONUS',
   rb: 'REGULAR BONUS',
+  sb_kin: 'シングル',
 };
 
 type Phase = 'ready' | 'spinning';
@@ -46,19 +45,23 @@ interface ReelView {
   stopped: boolean;
 }
 
+const freshReels = (machine: MachineDef): ReelView[] =>
+  machine.strips.map(() => ({ top: 0, stopped: true }));
+
 export function App() {
-  const [engine, setEngine] = useState<EngineState>(initialState);
+  const [machine, setMachine] = useState<MachineDef>(machines[0]!);
+  const [engine, setEngine] = useState<EngineState>(() => initialState(machines[0]!));
   const [credit, setCredit] = useState(INITIAL_CREDIT);
   const [phase, setPhase] = useState<Phase>('ready');
-  const [reels, setReels] = useState<ReelView[]>(() =>
-    machine.strips.map(() => ({ top: 0, stopped: true })),
-  );
+  const [reels, setReels] = useState<ReelView[]>(() => freshReels(machines[0]!));
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [debug, setDebug] = useState(false);
 
   const rngRef = useRef(new Xoshiro128(Date.now() >>> 0));
   const sessionRef = useRef<GameSession | null>(null);
+  const machineRef = useRef(machine);
+  machineRef.current = machine;
   const reelsRef = useRef(reels);
   reelsRef.current = reels;
   const engineRef = useRef(engine);
@@ -71,21 +74,35 @@ export function App() {
   // リール回転: 一定速でフレームを進める
   useEffect(() => {
     if (phase !== 'spinning') return;
+    const frames = machine.frames;
     const timer = setInterval(() => {
       setReels((prev) =>
-        prev.map((reel) => (reel.stopped ? reel : { ...reel, top: (reel.top + 1) % N })),
+        prev.map((reel) => (reel.stopped ? reel : { ...reel, top: (reel.top + 1) % frames })),
       );
     }, FRAME_MS);
     return () => clearInterval(timer);
-  }, [phase]);
+  }, [phase, machine]);
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => [line, ...prev].slice(0, 10));
   }, []);
 
+  const selectMachine = useCallback((name: string) => {
+    const next = machines.find((m) => m.name === name);
+    if (!next) return;
+    sessionRef.current = null;
+    setMachine(next);
+    setEngine(initialState(next));
+    setCredit(INITIAL_CREDIT);
+    setPhase('ready');
+    setReels(freshReels(next));
+    setLastEvent(null);
+    setLog([]);
+  }, []);
+
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
-    const session = new GameSession(machine, engineRef.current, rngRef.current);
+    const session = new GameSession(machineRef.current, engineRef.current, rngRef.current);
     if (session.bet > creditRef.current) return; // クレジット不足
     sessionRef.current = session;
     setCredit((c) => c - session.bet);
@@ -106,7 +123,7 @@ export function App() {
       );
 
       if (session.isComplete) {
-        const { state, event } = session.finish();
+        const { state, event } = session.finish(rngRef.current);
         sessionRef.current = null;
         setEngine(state);
         setCredit((c) => c + event.payout);
@@ -114,6 +131,7 @@ export function App() {
         setPhase('ready');
         const parts: string[] = [];
         if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
+        if (event.lidReleased) parts.push('🔓 放出開始！');
         if (event.bonusStarted) parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
         if (event.bonusEnded) parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
@@ -145,11 +163,30 @@ export function App() {
     statusChips.push(`${ROLE_LABEL[run.bonusId] ?? run.bonusId} 消化中 ${run.gamesPlayed}G / 獲得 ${run.totalPayout}枚`);
   }
   if (engine.rt !== null) statusChips.push(`RT中 ${engine.rtGames}G`);
-  if (debug && engine.queue.length > 0) statusChips.push(`内部中 (${engine.queue.join(',')})${engine.lid ? ' 蓋on' : ''}`);
+  if (debug) {
+    if (engine.queue.length > 0) {
+      statusChips.push(`内部中 ストック${engine.queue.length}個${engine.lid ? ` 蓋on(残${engine.lidReleaseIn ?? '?'}G)` : ' 放出可'}`);
+    }
+    if (engine.mode !== null) statusChips.push(`モード: ${engine.mode}`);
+  }
 
   return (
     <div className="app">
-      <h1 className="title">{machine.name}</h1>
+      <div className="machine-select-row">
+        <select
+          className="machine-select"
+          value={machine.name}
+          onChange={(e) => selectMachine(e.target.value)}
+          disabled={phase !== 'ready'}
+          data-testid="machine-select"
+        >
+          {machines.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <div className="status-row">
         {statusChips.length > 0 ? (
@@ -166,7 +203,7 @@ export function App() {
           {machine.strips.map((strip, reel) => (
             <div key={reel} className={`reel ${reels[reel]!.stopped ? '' : 'reel-spinning'}`}>
               {[0, 1, 2].map((row) => {
-                const symbol = strip[(reels[reel]!.top + row) % N]!;
+                const symbol = strip[(reels[reel]!.top + row) % machine.frames]!;
                 const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
                 return (
                   <div key={row} className={`cell ${view.className}`}>
@@ -222,8 +259,8 @@ export function App() {
         ))}
       </div>
 
-      <SpecPanel machine={machine} />
-      <LayoutPanel machine={machine} />
+      <SpecPanel key={`spec-${machine.name}`} machine={machine} />
+      <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
 
       <label className="debug-toggle">
         <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />

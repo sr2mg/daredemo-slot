@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkLayout } from '../src/core/validate.js';
+import { machines } from '../src/machines/index.js';
 import { sampleAType } from '../src/machines/sample-a.js';
 
 describe('checkLayout（配列の総当たり検証）', () => {
@@ -23,5 +24,14 @@ describe('checkLayout（配列の総当たり検証）', () => {
     expect(cherry.measured).toBeGreaterThan(0.2);
     expect(cherry.measured).toBeLessThan(0.5);
     expect(cherry.ok).toBe(true);
+  });
+});
+
+describe('全プリセット機種の配列検証', () => {
+  it.each(machines.map((m) => [m.name, m] as const))('%s は全制約を満たす', (_name, machine) => {
+    const report = checkLayout(machine);
+    expect(report.kickViolations).toBe(0);
+    expect(report.replayMisses).toBe(0);
+    expect(report.ok).toBe(true);
   });
 });

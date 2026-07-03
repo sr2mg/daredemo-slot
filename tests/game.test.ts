@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { initialState, playGame, resolveTable } from '../src/core/game.js';
 import type { ChooseStops } from '../src/core/game.js';
+import type { EngineState } from '../src/core/types.js';
 import type { Rng, RngState } from '../src/core/rng.js';
 import { choosePerfect, simulate } from '../src/core/sim.js';
-import type { EngineState, GameEvent, MachineDef } from '../src/core/types.js';
+import type { GameEvent, MachineDef } from '../src/core/types.js';
 import { sampleAType } from '../src/machines/sample-a.js';
+import { stockBB } from '../src/machines/stock-bb.js';
+import { stockSB } from '../src/machines/stock-sb.js';
 
 /** draw16 が指定系列を返すスタブ（使い切ったら fallback = ハズレ域） */
 class SeqRng implements Rng {
@@ -151,6 +154,90 @@ describe('ストック機の蓋（性質 (c): 蓋 on 中にボーナスが入賞
     expect(result.event.lidReleased).toBe(true);
     expect(result.event.bonusStarted).toBe('bb_red');
     expect(result.state.queue).toHaveLength(1); // 2 個目はストックされたまま
+  });
+});
+
+describe('モード付き解除（吉宗型ストック機）', () => {
+  /** BB 残り 1 ゲーム・キューに次の BB がある状態 */
+  const bonusEnding = (mode: string): EngineState => ({
+    base: { type: 'bonus', run: { bonusId: 'bb_red', gamesPlayed: 19, totalPayout: 0, wins: 0 } },
+    rt: null,
+    rtGames: 0,
+    queue: ['bb_red'],
+    lid: false,
+    lidReleaseIn: null,
+    mode,
+    pendingRebet: false,
+  });
+  const perfectBB: ChooseStops = (_a, ctx) => choosePerfect(stockBB, ctx);
+
+  it('ボーナス終了時にモード移行抽選と新モードの解除テーブルで掛け直す', () => {
+    // nextInt=0 → onBonusEnd の先頭 (normal 70%) → normal 維持、解除テーブル先頭 32G
+    const rng = new SeqRng([0]);
+    const result = playGame(stockBB, bonusEnding('normal'), perfectBB, rng);
+    expect(result.event.bonusEnded).toBe('bb_red');
+    expect(result.event.modeChanged).toBeNull();
+    expect(result.state.mode).toBe('normal');
+    expect(result.state.lid).toBe(true);
+    expect(result.state.lidReleaseIn).toBe(32);
+  });
+
+  it('天国モードは 1G 連する', () => {
+    // nextInt=0 → onBonusEnd 先頭 (heaven 50%) → heaven 維持、解除テーブル先頭 1G
+    const rng = new SeqRng([0]);
+    let result = playGame(stockBB, bonusEnding('heaven'), perfectBB, rng);
+    expect(result.state.mode).toBe('heaven');
+    expect(result.state.lid).toBe(true);
+    expect(result.state.lidReleaseIn).toBe(1);
+
+    // 次ゲームのレバー ON で解除 → 同ゲームに次の BB が入賞 = 1G 連
+    result = playGame(stockBB, result.state, perfectBB, rng); // draw は fallback 65535 = ハズレ
+    expect(result.event.lidReleased).toBe(true);
+    expect(result.event.bonusStarted).toBe('bb_red');
+  });
+});
+
+describe('純ハズレ解除と放出ゾーン（サラ金型 SB ストック機）', () => {
+  const stocked: EngineState = {
+    base: { type: 'normal' },
+    rt: null,
+    rtGames: 0,
+    queue: ['sb_kin', 'sb_kin'],
+    lid: true,
+    lidReleaseIn: null,
+    mode: null,
+    pendingRebet: false,
+  };
+  const perfectSB: ChooseStops = (_a, ctx) => choosePerfect(stockSB, ctx);
+  const SB_DRAW = 17242; // stockSB base テーブルの sb_kin 当選域
+
+  it('純ハズレで解除抽選 → 放出ゾーン中は上乗せしても蓋が掛からない', () => {
+    // ゲーム 1: ハズレ(65535) → 純ハズレ解除抽選(0 < 6553 で当選) → 同ゲームから SB 放出
+    const rng = new SeqRng([65535, 0, 0, SB_DRAW]);
+    let result = playGame(stockSB, stocked, perfectSB, rng);
+    expect(result.event.lidReleased).toBe(true);
+    expect(result.event.bonusStarted).toBe('sb_kin');
+    expect(result.state.queue).toHaveLength(1);
+    expect(result.state.base.type).toBe('bonus');
+
+    // ゲーム 2: SB 作動ゲーム（ベル高確率、1 ゲームで終了）。engageOn は bonusFlag のみなので蓋は掛からない
+    result = playGame(stockSB, result.state, perfectSB, rng); // draw16=0 → in_sb の bell
+    expect(result.event.bonusEnded).toBe('sb_kin');
+    expect(result.state.lid).toBe(false);
+
+    // ゲーム 3: 放出ゾーン中に新たな SB 成立 → キューに積まれるだけで蓋は掛からず、先頭は同ゲーム放出
+    result = playGame(stockSB, result.state, perfectSB, rng); // draw16=SB_DRAW
+    expect(result.event.queuedBonus).toBe('sb_kin');
+    expect(result.state.lid).toBe(false);
+    expect(result.event.bonusStarted).toBe('sb_kin');
+    expect(result.state.queue).toHaveLength(1); // 1 個放出・1 個上乗せ
+  });
+
+  it('シミュレーションが完走し SB が放出される', () => {
+    const result = simulate(stockSB, { games: 5_000, strategy: 'naive', seed: 3 });
+    expect(result.bonusStarts['sb_kin'] ?? 0).toBeGreaterThan(50);
+    expect(result.payoutRate).toBeGreaterThan(0.3);
+    expect(result.payoutRate).toBeLessThan(1.5);
   });
 });
 

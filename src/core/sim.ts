@@ -83,7 +83,7 @@ export function simulate(machine: MachineDef, opts: SimOptions): SimResult {
       ? () => ({ order, pushes: order.map(() => playRng.nextInt(machine.frames)) })
       : (_active, ctx) => choosePerfect(machine, ctx);
 
-  let state = initialState();
+  let state = initialState(machine);
   let totalIn = 0;
   let totalOut = 0;
   let replayCount = 0;

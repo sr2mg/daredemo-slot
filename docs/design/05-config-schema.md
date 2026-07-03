@@ -159,8 +159,9 @@
 | `bonuses[].kind` | `bb` / `rb` / `sb` |
 | `bonuses[].end` | `games` / `jacCount` / `wins` / `maxPayout` の組み合わせ |
 | `rtStates[].entry/exit[].on` | `bonusEnd` / `roleHit` / `games` / `bonusFlag` |
-| `carryover.lid.engageOn[]` | `bonusFlag` / `bonusEnd` |
-| `carryover.lid.release.type` | `gameCountTable` / `lottery` / `roleHit` |
+| `carryover.lid.engageOn[]` | `bonusFlag`（空→非空遷移時） / `bonusEnd`（掛け直し） |
+| `carryover.lid.release.type` | `gameCountTable` / `lottery`（`on: any / pureMiss`） / `roleHit` |
+| `carryover.lid.modes` | `{ initial, states: [{ id, release, onBonusEnd }] }`（`release` と排他。モード = 解除テーブルの選択状態） |
 | `nav.at.triggers[].on` | `roleHit` / `gamesCeiling` / `duringBonus` |
 | `nav.at.management.type` | `games` / `set` / `stock` / `payoutDiff` |
 | `control.priority` | `role-first` / `bonus-first` / `payout-first` / `count-first` |

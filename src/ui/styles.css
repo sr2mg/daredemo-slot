@@ -16,11 +16,22 @@ body {
   text-align: center;
 }
 
-.title {
-  font-size: clamp(20px, 3.5vmin, 32px);
+.machine-select-row {
   margin: 8px 0;
+}
+
+.machine-select {
+  font-family: inherit;
+  font-size: clamp(16px, 2.6vmin, 22px);
+  font-weight: bold;
   color: #ffd54f;
-  letter-spacing: 3px;
+  background: #1e1e2c;
+  border: 1px solid #3a3a55;
+  border-radius: 10px;
+  padding: 10px 16px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  text-align: center;
 }
 
 .status-row {
