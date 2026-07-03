@@ -32,8 +32,10 @@ import type {
  */
 export type Strategy = (session: GameSession) => void;
 
-export function initialState(machine?: MachineDef): EngineState {
+export function initialState(machine?: MachineDef, setting = 1): EngineState {
+  const settings = machine?.lottery.settings ?? 1;
   return {
+    setting: Math.min(Math.max(1, Math.floor(setting)), settings),
     base: { type: 'normal' },
     rt: null,
     rtGames: 0,
@@ -61,6 +63,23 @@ export function resolveTable(machine: MachineDef, state: EngineState): readonly 
   }
 
   let table: readonly WeightedEntry[] = machine.lottery.base;
+
+  // 設定オーバーレイ（基底 = 設定 1。docs/design/02）
+  const overrides = machine.lottery.settingOverrides?.[String(state.setting)];
+  if (overrides && overrides.length > 0) {
+    const key = (roles: readonly RoleId[]) => [...roles].sort().join(',');
+    const overrideMap = new Map(overrides.map((e) => [key(e.roles), e]));
+    const applied = new Set<string>();
+    table = table.map((entry) => {
+      const k = key(entry.roles);
+      const o = overrideMap.get(k);
+      if (!o) return entry;
+      applied.add(k);
+      return { roles: entry.roles, weight: o.weight };
+    });
+    const additions = overrides.filter((e) => !applied.has(key(e.roles)));
+    if (additions.length > 0) table = [...table, ...additions];
+  }
 
   if (state.rt !== null) {
     const rtDef = machine.rtStates.find((r) => r.id === state.rt);

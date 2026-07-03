@@ -152,8 +152,18 @@ export interface MachineDef {
   carryover: CarryoverDef;
   /** 引き込み優先モード（docs/design/03-reel-control.md 優先度 4） */
   priority: 'role-first' | 'bonus-first';
-  /** 基底抽選テーブル（MVP: 単一設定。設定差は将来拡張） */
-  lottery: { base: readonly WeightedEntry[] };
+  /**
+   * 抽選テーブル。base = 設定 1 の基底。設定 2〜6 は settingOverrides の差分
+   * （roles 集合が一致するエントリの重みを上書き。無ければ追加）で表現する。
+   * 役物中テーブル（tables）は設定共通(MVP)
+   */
+  lottery: {
+    /** 設定の本数（1〜6）。省略時 1 = 設定なし */
+    settings?: number;
+    base: readonly WeightedEntry[];
+    /** 設定番号（"2"〜"6"）→ 上書きエントリ */
+    settingOverrides?: Record<string, readonly WeightedEntry[]>;
+  };
   /** 役物の tableRef から参照される丸ごとテーブル */
   tables: Record<string, readonly WeightedEntry[]>;
   /** 打ち分けグループの定義（任意） */
@@ -182,6 +192,8 @@ export interface BonusRun {
 }
 
 export interface EngineState {
+  /** 設定値（1〜settings）。ホール側の操作なので遊技中は変わらない */
+  setting: number;
   base: { type: 'normal' } | { type: 'bonus'; run: BonusRun };
   /** 現在の RT 状態 id（null = 非 RT） */
   rt: string | null;

@@ -23,8 +23,10 @@ function oneIn(games: number, count: number): string {
 
 export function SpecPanel({ machine }: { machine: MachineDef }) {
   const [games, setGames] = useState(100_000);
+  const [setting, setSetting] = useState(1);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Partial<Record<StrategyName, SimResult>> | null>(null);
+  const settings = machine.lottery.settings ?? 1;
 
   // ナビ層のある機種は「ナビ追従（AT の実戦値）」も測る
   const strategies: StrategyName[] = machine.nav ? ['naive', 'navFollow', 'perfect'] : ['naive', 'perfect'];
@@ -35,7 +37,7 @@ export function SpecPanel({ machine }: { machine: MachineDef }) {
       const seed = Date.now() >>> 0;
       const results: Partial<Record<StrategyName, SimResult>> = {};
       for (const strategy of strategies) {
-        results[strategy] = simulate(machine, { games, strategy, seed });
+        results[strategy] = simulate(machine, { games, strategy, seed, setting });
       }
       setResult(results);
       setBusy(false);
@@ -54,6 +56,15 @@ export function SpecPanel({ machine }: { machine: MachineDef }) {
             <option value={100_000}>10万ゲーム（標準）</option>
             <option value={500_000}>50万ゲーム（じっくり）</option>
           </select>
+          {settings > 1 && (
+            <select value={setting} onChange={(e) => setSetting(Number(e.target.value))} disabled={busy}>
+              {Array.from({ length: settings }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  設定{n}
+                </option>
+              ))}
+            </select>
+          )}
           <button onClick={run} disabled={busy} data-testid="run-spec">
             {busy ? '計測中…' : '実測する'}
           </button>

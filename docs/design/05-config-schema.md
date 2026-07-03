@@ -105,17 +105,19 @@
   // ===== 抽選（02。フラグ = 役 ID の集合） =====
   "lottery": {
     "settings": 6,
-    "base": {   // 基底テーブル（設定別）。RT・内部中はオーバーレイで解決（02）
-      "1": [
-        { "roles": ["replay_keep"],     "weight": 8978 },
-        { "roles": ["bell_LCR"],        "weight": 1092 },
-        // ... bell 残り 5 択
-        { "roles": ["cherry"],          "weight": 1057 },
-        { "roles": ["cherry","bb_red"], "weight": 66 },
-        { "roles": ["bb_red"],          "weight": 200 },
-        { "roles": ["rb"],              "weight": 273 }
-      ]
-      // "2": [...], ... 設定 6 まで
+    "base": [   // 基底テーブル = 設定 1。設定・RT・内部中はオーバーレイで解決（02）
+      { "roles": ["replay_keep"],     "weight": 8978 },
+      { "roles": ["bell_LCR"],        "weight": 1092 },
+      // ... bell 残り 5 択
+      { "roles": ["cherry"],          "weight": 1057 },
+      { "roles": ["cherry","bb_red"], "weight": 66 },
+      { "roles": ["bb_red"],          "weight": 200 },
+      { "roles": ["rb"],              "weight": 273 }
+    ],
+    "settingOverrides": {   // 設定 2〜6 は差分（roles 集合一致で重み上書き）
+      "2": [ { "roles": ["bb_red"], "weight": 216 } ],
+      // ...
+      "6": [ { "roles": ["bb_red"], "weight": 300 } ]
     },
     "tables": {   // 役物・集中の tableRef から参照される丸ごとテーブル（設定別）
       "in_bb":  { "1": [ { "roles": ["bell_LCR"], "weight": 30000 }, { "roles": ["jac_in"], "weight": 20000 } ] },

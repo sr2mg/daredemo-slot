@@ -128,15 +128,25 @@ export const sampleAType: MachineDef = {
   ],
   carryover: { queueLimit: 1, lid: null },
   lottery: {
+    settings: 6,
     base: [
+      // 基底 = 設定 1
       { roles: ['replay'], weight: 8978 }, //  ≒1/7.3
       { roles: ['bell'], weight: 6552 }, //    ≒1/10
       { roles: ['cherry'], weight: 1057 }, //  ≒1/62
       { roles: ['melon'], weight: 655 }, //    ≒1/100
       { roles: ['cherry', 'bb_red'], weight: 66 },
-      { roles: ['bb_red'], weight: 200 },
-      { roles: ['rb'], weight: 273 },
+      { roles: ['bb_red'], weight: 200 }, //   ≒1/328
+      { roles: ['rb'], weight: 273 }, //       ≒1/240
     ],
+    // 設定差はボーナス確率のみ（差分上書き）
+    settingOverrides: {
+      '2': [{ roles: ['bb_red'], weight: 216 }, { roles: ['rb'], weight: 285 }],
+      '3': [{ roles: ['bb_red'], weight: 234 }, { roles: ['rb'], weight: 299 }],
+      '4': [{ roles: ['bb_red'], weight: 254 }, { roles: ['rb'], weight: 315 }],
+      '5': [{ roles: ['bb_red'], weight: 276 }, { roles: ['rb'], weight: 334 }],
+      '6': [{ roles: ['bb_red'], weight: 300 }, { roles: ['rb'], weight: 356 }],
+    },
   },
   tables: {
     in_bb: [{ roles: ['bell'], weight: 60000 }],

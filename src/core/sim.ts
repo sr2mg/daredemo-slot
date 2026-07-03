@@ -20,6 +20,8 @@ export interface SimOptions {
   games: number;
   strategy: StrategyName;
   seed: number;
+  /** 設定値（1〜settings）。省略時 1 */
+  setting?: number;
 }
 
 export interface SimResult {
@@ -92,7 +94,7 @@ export function simulate(machine: MachineDef, opts: SimOptions): SimResult {
     for (const reel of order) session.stopReel(reel, playRng.nextInt(machine.frames));
   };
 
-  let state = initialState(machine);
+  let state = initialState(machine, opts.setting ?? 1);
   let totalIn = 0;
   let totalOut = 0;
   let replayCount = 0;

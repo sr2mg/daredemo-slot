@@ -84,6 +84,8 @@ export function App() {
   const [forceSel, setForceSel] = useState('');
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
+  /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
+  const [settingSel, setSettingSel] = useState<'random' | number>('random');
 
   /** ビルトイン + カスタム（同名カスタムはビルトインを上書き） */
   const allMachines = useMemo(() => {
@@ -106,6 +108,8 @@ export function App() {
   creditRef.current = credit;
   const forceSelRef = useRef(forceSel);
   forceSelRef.current = forceSel;
+  const settingSelRef = useRef(settingSel);
+  settingSelRef.current = settingSel;
 
   // リール回転: 一定速でフレームを進める
   useEffect(() => {
@@ -123,11 +127,14 @@ export function App() {
     setLog((prev) => [line, ...prev].slice(0, 10));
   }, []);
 
-  const applyMachine = useCallback((next: MachineDef) => {
+  const applyMachine = useCallback((next: MachineDef, sel?: 'random' | number) => {
+    const settings = next.lottery.settings ?? 1;
+    const choice = sel ?? settingSelRef.current;
+    const setting = choice === 'random' ? 1 + Math.floor(Math.random() * settings) : choice;
     sessionRef.current = null;
     navRef.current = next.nav ? new NavLayer(next, Date.now() >>> 0) : null;
     setMachine(next);
-    setEngine(initialState(next));
+    setEngine(initialState(next, setting));
     setCredit(INITIAL_CREDIT);
     setPhase('ready');
     setReels(freshReels(next));
@@ -266,6 +273,27 @@ export function App() {
             </option>
           ))}
         </select>
+        {(machine.lottery.settings ?? 1) > 1 && (
+          <select
+            className="setting-select"
+            value={String(settingSel)}
+            onChange={(e) => {
+              const v = e.target.value === 'random' ? ('random' as const) : Number(e.target.value);
+              setSettingSel(v);
+              applyMachine(machineRef.current, v); // 設定変更 = リセット（実機同様）
+            }}
+            disabled={phase !== 'ready'}
+            data-testid="setting-select"
+            title="設定（ホール側の操作）。ランダムなら教材モードで正体を確認できる"
+          >
+            <option value="random">設定?（ランダム）</option>
+            {Array.from({ length: machine.lottery.settings ?? 1 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                設定{n}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="status-row">

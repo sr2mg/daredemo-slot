@@ -41,6 +41,7 @@ export const atBeast: MachineDef = {
   rtStates: [],
   carryover: { queueLimit: 1, lid: null },
   lottery: {
+    settings: 6,
     base: [
       { roles: ['replay'], weight: 8978 },
       { roles: ['bell_L'], weight: 5000 }, // 3 択合計 ≒1/4.4
@@ -50,6 +51,14 @@ export const atBeast: MachineDef = {
       { roles: ['melon'], weight: 655 },
       { roles: ['bb_red'], weight: 250 },
     ],
+    // 設定差: チェリー確率（= AT 突入率）とボーナス確率
+    settingOverrides: {
+      '2': [{ roles: ['cherry'], weight: 1100 }, { roles: ['bb_red'], weight: 260 }],
+      '3': [{ roles: ['cherry'], weight: 1150 }, { roles: ['bb_red'], weight: 270 }],
+      '4': [{ roles: ['cherry'], weight: 1210 }, { roles: ['bb_red'], weight: 282 }],
+      '5': [{ roles: ['cherry'], weight: 1280 }, { roles: ['bb_red'], weight: 296 }],
+      '6': [{ roles: ['cherry'], weight: 1365 }, { roles: ['bb_red'], weight: 312 }],
+    },
   },
   tables: {
     in_bb: [{ roles: ['bell_L'], weight: 20000 }, { roles: ['bell_C'], weight: 20000 }, { roles: ['bell_R'], weight: 20000 }],

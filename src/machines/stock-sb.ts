@@ -35,6 +35,7 @@ export const stockSB: MachineDef = {
     },
   },
   lottery: {
+    settings: 6,
     base: [
       { roles: ['replay'], weight: 8978 },
       { roles: ['bell'], weight: 6552 },
@@ -43,6 +44,14 @@ export const stockSB: MachineDef = {
       { roles: ['sb_kin'], weight: 5000 }, // ≒1/13 で SB がストックされていく
       { roles: ['bb_red'], weight: 150 },
     ],
+    // 設定差: SB 確率（= ストックの溜まりやすさ）
+    settingOverrides: {
+      '2': [{ roles: ['sb_kin'], weight: 5150 }],
+      '3': [{ roles: ['sb_kin'], weight: 5320 }],
+      '4': [{ roles: ['sb_kin'], weight: 5510 }],
+      '5': [{ roles: ['sb_kin'], weight: 5720 }],
+      '6': [{ roles: ['sb_kin'], weight: 5960 }, { roles: ['bb_red'], weight: 180 }],
+    },
   },
   tables: {
     // SB の価値は揃った瞬間の 15 枚。作動ゲーム（1 ゲーム）は小役確率がわずかに上がる程度

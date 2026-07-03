@@ -44,6 +44,11 @@ export function checkLayout(machine: MachineDef): LayoutReport {
   for (const entry of machine.lottery.base) {
     flagSets.set([...entry.roles].sort().join(','), entry.roles);
   }
+  for (const overrides of Object.values(machine.lottery.settingOverrides ?? {})) {
+    for (const entry of overrides) {
+      flagSets.set([...entry.roles].sort().join(','), entry.roles);
+    }
+  }
 
   let kickViolations = 0;
   let replayMisses = 0;
@@ -171,6 +176,24 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
   };
   checkTable('lottery.base', def.lottery?.base ?? []);
   for (const [key, table] of Object.entries(def.tables ?? {})) checkTable(`tables.${key}`, table);
+
+  const settings = def.lottery?.settings ?? 1;
+  if (!Number.isInteger(settings) || settings < 1 || settings > 6) err('lottery.settings は 1〜6 が必要です');
+  for (const [settingKey, overrides] of Object.entries(def.lottery?.settingOverrides ?? {})) {
+    const n = Number(settingKey);
+    if (!Number.isInteger(n) || n < 2 || n > settings) {
+      err(`settingOverrides のキー ${settingKey} が不正です（2〜${settings}）`);
+    }
+    // 上書き後の合計はエンジンでは検査されないため、ここで実際に合成して検証する
+    const key = (roles: readonly string[]) => [...roles].sort().join(',');
+    const merged = new Map((def.lottery?.base ?? []).map((e) => [key(e.roles), e.weight]));
+    for (const entry of overrides) {
+      merged.set(key(entry.roles), entry.weight);
+      for (const id of entry.roles) if (!roleIds.has(id)) err(`settingOverrides[${settingKey}]: 未定義の役 ${id}`);
+    }
+    const total = [...merged.values()].reduce((a, b) => a + b, 0);
+    if (total > 65536) err(`設定${settingKey}: 重み合計が 65536 を超えています (${total})`);
+  }
 
   for (const rt of def.rtStates ?? []) {
     for (const id of Object.keys(rt.replayWeights)) {

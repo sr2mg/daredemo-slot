@@ -62,16 +62,24 @@ export const stockBB: MachineDef = {
     },
   },
   lottery: {
+    settings: 6,
     base: [
       { roles: ['replay'], weight: 8978 },
       { roles: ['bell'], weight: 6552 },
       { roles: ['cherry'], weight: 1057 },
       { roles: ['melon'], weight: 655 },
       { roles: ['cherry', 'bb_red'], weight: 66 },
-      // ストック機なので成立自体は軽め（≒1/86）。出玉の波は蓋とモードが作る
+      // ストック機なので成立自体は軽め（≒1/116）。出玉の波は蓋とモードが作る
       { roles: ['bb_red'], weight: 500 },
       { roles: ['rb'], weight: 273 },
     ],
+    settingOverrides: {
+      '2': [{ roles: ['bb_red'], weight: 525 }],
+      '3': [{ roles: ['bb_red'], weight: 552 }],
+      '4': [{ roles: ['bb_red'], weight: 583 }],
+      '5': [{ roles: ['bb_red'], weight: 618 }],
+      '6': [{ roles: ['bb_red'], weight: 660 }, { roles: ['rb'], weight: 300 }],
+    },
   },
   tables: {
     in_bb: [{ roles: ['bell'], weight: 60000 }],

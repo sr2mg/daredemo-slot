@@ -163,6 +163,7 @@ describe('ストック機の蓋（性質 (c): 蓋 on 中にボーナスが入賞
 describe('モード付き解除（吉宗型ストック機）', () => {
   /** BB 残り 1 ゲーム・キューに次の BB がある状態 */
   const bonusEnding = (mode: string): EngineState => ({
+    setting: 1,
     base: { type: 'bonus', run: { bonusId: 'bb_red', gamesPlayed: 19, totalPayout: 0, wins: 0 } },
     rt: null,
     rtGames: 0,
@@ -200,6 +201,7 @@ describe('モード付き解除（吉宗型ストック機）', () => {
 
 describe('純ハズレ解除と放出ゾーン（サラ金型 SB ストック機）', () => {
   const stocked: EngineState = {
+    setting: 1,
     base: { type: 'normal' },
     rt: null,
     rtGames: 0,
@@ -287,6 +289,33 @@ describe('強制フラグ（教材モード・デバッグ用）', () => {
     const session = new GameSession(sampleAType, initialState(sampleAType), new SeqRng([0]), undefined, []);
     expect(session.flags).toEqual([]);
     expect(session.active).toEqual([]);
+  });
+});
+
+describe('設定差（オーバーレイ）', () => {
+  it('設定 6 では上書き行だけ重みが変わり、他は基底のまま', () => {
+    const table1 = resolveTable(sampleAType, initialState(sampleAType, 1));
+    const table6 = resolveTable(sampleAType, initialState(sampleAType, 6));
+    const weightOf = (table: typeof table1, id: string) =>
+      table.find((e) => e.roles.length === 1 && e.roles[0] === id)?.weight;
+    expect(weightOf(table1, 'bb_red')).toBe(200);
+    expect(weightOf(table6, 'bb_red')).toBe(300);
+    expect(weightOf(table6, 'rb')).toBe(356);
+    expect(weightOf(table6, 'replay')).toBe(8978); // 上書きなし = 基底のまま
+  });
+
+  it('設定 6 は設定 1 よりボーナスが多い', () => {
+    const s1 = simulate(sampleAType, { games: 30_000, strategy: 'naive', seed: 5, setting: 1 });
+    const s6 = simulate(sampleAType, { games: 30_000, strategy: 'naive', seed: 5, setting: 6 });
+    const count = (r: typeof s1) => (r.bonusStarts['bb_red'] ?? 0) + (r.bonusStarts['rb'] ?? 0);
+    expect(count(s6)).toBeGreaterThan(count(s1));
+    expect(s6.payoutRate).toBeGreaterThan(s1.payoutRate);
+  });
+
+  it('範囲外の設定はクランプされる', () => {
+    expect(initialState(sampleAType, 0).setting).toBe(1);
+    expect(initialState(sampleAType, 99).setting).toBe(6);
+    expect(initialState(undefined, 4).setting).toBe(1); // 設定なし機種
   });
 });
 
