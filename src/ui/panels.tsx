@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { checkCompliance, RULESETS } from '../core/compliance.js';
 import type { ComplianceResult, RulesetId } from '../core/compliance.js';
+import { describeMachine } from '../core/describe.js';
 import { simulate } from '../core/sim.js';
 import type { SimResult, StrategyName } from '../core/sim.js';
 import type { MachineDef } from '../core/types.js';
 import { checkLayout } from '../core/validate.js';
 import type { LayoutReport } from '../core/validate.js';
+import { guides } from './guides.js';
 
 const STRATEGY_LABEL: Record<StrategyName, string> = {
   naive: '適当打ち',
@@ -21,6 +23,68 @@ const STRATEGY_LABEL: Record<StrategyName, string> = {
 
 function oneIn(games: number, count: number): string {
   return count > 0 ? `1/${(games / count).toFixed(1)}` : '—';
+}
+
+/**
+ * 遊び方ガイド + スペック表。
+ * プリセットは手書きの読み物（guides.ts）を優先し、スペック表は定義から自動生成する。
+ * カスタム機種は説明文も自動生成なので、作った機種にもガイドが付く。
+ */
+export function GuidePanel({ machine }: { machine: MachineDef }) {
+  const manual = guides[machine.name];
+  const auto = useMemo(() => {
+    try {
+      const report = checkLayout(machine);
+      const measuredPullIn = Object.fromEntries(report.roleChecks.map((c) => [c.id, c.measured]));
+      return describeMachine(machine, { measuredPullIn });
+    } catch {
+      return null;
+    }
+  }, [machine]);
+  if (!manual && !auto) return null;
+  const hasSettingColumn = auto?.specRows.some((r) => r.probMax !== null) ?? false;
+
+  return (
+    <details className="panel" open>
+      <summary>この機種の遊び方とスペック</summary>
+      <div className="panel-body">
+        <p className="guide-summary">{manual?.summary ?? auto?.summary}</p>
+        <ul className="guide-list">
+          {(manual?.points ?? auto?.points ?? []).map((point) => (
+            <li key={point}>{point}</li>
+          ))}
+        </ul>
+        {auto && (
+          <>
+            <table className="spec-table" data-testid="guide-spec">
+              <thead>
+                <tr>
+                  <th>役</th>
+                  <th>払い出し</th>
+                  <th>{hasSettingColumn ? '確率（設定1）' : '確率'}</th>
+                  {hasSettingColumn && <th>確率（最高設定）</th>}
+                  <th>備考</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auto.specRows.map((row) => (
+                  <tr key={row.label}>
+                    <td>{row.label}</td>
+                    <td>{row.payout}</td>
+                    <td>{row.prob}</td>
+                    {hasSettingColumn && <td>{row.probMax ?? '同左'}</td>}
+                    <td>{row.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="panel-note">{auto.rateNote}（理論近似値）</p>
+          </>
+        )}
+        <p className="panel-note">操作: Space = レバー / J・K・L = 左・中・右停止</p>
+      </div>
+    </details>
+  );
 }
 
 export function SpecPanel({ machine }: { machine: MachineDef }) {

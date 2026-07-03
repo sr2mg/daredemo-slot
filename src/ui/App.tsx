@@ -5,9 +5,10 @@ import type { NavDisplay } from '../core/nav.js';
 import { Xoshiro128 } from '../core/rng.js';
 import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
+import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
-import { guides } from './guides.js';
-import { CompliancePanel, LayoutPanel, SpecPanel } from './panels.js';
+import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
+import { decodeMachine, parseShareHash } from './share.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
@@ -80,8 +81,11 @@ export function App() {
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [debug, setDebug] = useState(false);
-  const [guideOpen, setGuideOpen] = useState(true);
   const [forceSel, setForceSel] = useState('');
+  /** 告知演出: なし（リーチ目を自力で探す）/ フラグ成立で点灯 / 放出可能で点灯 */
+  const [noticeMode, setNoticeMode] = useState<'none' | 'flag' | 'release'>('none');
+  /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
+  const [flashKey, setFlashKey] = useState(0);
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
@@ -218,6 +222,7 @@ export function App() {
         const kindOf = (id: string) => machineRef.current.bonuses.find((b) => b.id === id)?.kind;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
           parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
+          setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
         }
         if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
@@ -227,6 +232,27 @@ export function App() {
     },
     [pushLog],
   );
+
+  // 共有リンク（#m=...）からの機種読み込み
+  useEffect(() => {
+    const payload = parseShareHash(location.hash);
+    if (!payload) return;
+    void decodeMachine(payload)
+      .then((def) => {
+        const { errors } = validateMachine(def);
+        if (errors.length > 0 || !checkLayout(def).ok) throw new Error('invalid shared machine');
+        // 同名の別内容カスタムがあるときは上書きせず別名にする
+        const existing = loadCustoms().find((c) => c.name === def.name);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(def)) {
+          def = { ...def, name: `${def.name}（共有）` };
+        }
+        saveCustom(def);
+        pushLog(`🔗 共有された機種「${def.name}」を読み込みました`);
+      })
+      .catch(() => pushLog('共有リンクの機種を読み込めませんでした（リンクが壊れています）'))
+      .finally(() => history.replaceState(null, '', location.pathname + location.search));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // キーボード操作
   useEffect(() => {
@@ -242,6 +268,12 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [pullLever, stopReel]);
+
+  // 告知ランプ: SB 以外のボーナスがキューにあるとき、モードに応じて点灯
+  const bonusKinds = new Map(machine.bonuses.map((b) => [b.id, b.kind]));
+  const pendingBonus = engine.queue.some((id) => bonusKinds.get(id) !== 'sb');
+  const lampOn =
+    noticeMode === 'flag' ? pendingBonus : noticeMode === 'release' ? pendingBonus && !engine.lid : false;
 
   const statusChips: string[] = [];
   if (engine.base.type === 'bonus') {
@@ -307,6 +339,10 @@ export function App() {
       </div>
 
       <div className="cabinet">
+        {flashKey > 0 && <div key={flashKey} className="bonus-flash" aria-hidden />}
+        <div className="lamp-row">
+          <span className={`notice-lamp ${lampOn ? 'lamp-on' : ''}`} data-testid="notice-lamp" title="告知ランプ" />
+        </div>
         {navDisplay && (
           <div className="nav-banner" data-testid="nav-banner">
             ナビ: {['左', '中', '右'][navDisplay.correctFirst]}から押せ！
@@ -372,24 +408,16 @@ export function App() {
         ))}
       </div>
 
-      {guides[machine.name] && (
-        <details
-          className="panel"
-          open={guideOpen}
-          onToggle={(e) => setGuideOpen((e.target as HTMLDetailsElement).open)}
-        >
-          <summary>この機種の遊び方</summary>
-          <div className="panel-body">
-            <p className="guide-summary">{guides[machine.name]!.summary}</p>
-            <ul className="guide-list">
-              {guides[machine.name]!.points.map((point) => (
-                <li key={point}>{point}</li>
-              ))}
-            </ul>
-            <p className="panel-note">操作: Space = レバー / J・K・L = 左・中・右停止</p>
-          </div>
-        </details>
-      )}
+      <div className="force-row">
+        <label htmlFor="notice-select">告知演出:</label>
+        <select id="notice-select" value={noticeMode} onChange={(e) => setNoticeMode(e.target.value as typeof noticeMode)}>
+          <option value="none">なし（出目から自力で察知）</option>
+          <option value="flag">完全告知（ボーナス成立で点灯）</option>
+          <option value="release">放出告知（揃えられる状態で点灯）</option>
+        </select>
+      </div>
+
+      <GuidePanel key={`guide-${machine.name}`} machine={machine} />
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />

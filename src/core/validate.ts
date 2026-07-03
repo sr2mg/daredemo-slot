@@ -1,6 +1,6 @@
 import { ControlContext } from './control.js';
 import { patternKey, winsAt } from './judge.js';
-import type { MachineDef, PullIn, RoleId, StopEvent } from './types.js';
+import type { MachineDef, PullIn, RoleId, StopEvent, SymbolId } from './types.js';
 
 /**
  * リール配列の総当たり検証（docs/design/04-reel-layout.md「検証」/ 05 の保存時パイプライン 3）。
@@ -19,6 +19,17 @@ export interface RoleCheck {
   ok: boolean;
 }
 
+/** 違反の具体例（どのフラグ状態のどの停止位置で何が壊れたか） */
+export interface LayoutViolation {
+  kind: 'kick' | 'replayMiss';
+  /** 検査時の成立フラグ（空 = ハズレ） */
+  flags: readonly RoleId[];
+  /** 各リールの停止位置（上段コマ番号） */
+  stops: readonly number[];
+  /** kick のとき: 勝手に入賞してしまった役 */
+  wonRole?: RoleId;
+}
+
 export interface LayoutReport {
   /** 非成立役が入賞したケース数（0 以外は配列不正） */
   kickViolations: number;
@@ -27,6 +38,64 @@ export interface LayoutReport {
   roleChecks: RoleCheck[];
   casesChecked: number;
   ok: boolean;
+  /** 違反の具体例（先頭数件。修正の手がかり用） */
+  violationExamples: LayoutViolation[];
+  /** 蹴飛ばし違反の役別件数（どの役が勝手に揃うか） */
+  kickByRole: Record<RoleId, number>;
+}
+
+/** PB=1（引き込み保証）に必要な最大間隔。滑りは押下位置 +0〜4 コマの 5 コマ窓 */
+export const PB1_MAX_GAP = 5;
+
+export interface SpacingCheck {
+  roleId: RoleId;
+  reel: number;
+  symbol: SymbolId;
+  /** リール上の個数 */
+  count: number;
+  /** 循環間隔の最大値（この値が PB1_MAX_GAP 以下なら常に引き込める） */
+  maxGap: number;
+  ok: boolean;
+}
+
+/**
+ * PB=1 役の配置間隔プリチェック（総当たりの前の軽量診断）。
+ * guaranteed 宣言の役について、各リールの要求図柄が「どこを押しても 5 コマ以内」
+ * に必ずあるか（= 最大循環間隔 ≤ 5）を検査し、どのリールのどの図柄が
+ * 足りないかを具体的に返す。
+ */
+export function checkSpacing(machine: MachineDef): SpacingCheck[] {
+  const results: SpacingCheck[] = [];
+  const frames = machine.frames;
+  for (const role of machine.roles) {
+    if (role.pullIn !== 'guaranteed') continue;
+    for (let reel = 0; reel < machine.strips.length; reel++) {
+      const symbol = role.pattern[reel];
+      if (symbol === undefined || symbol === 'any') continue;
+      const positions: number[] = [];
+      machine.strips[reel]!.forEach((s, i) => {
+        if (s === symbol) positions.push(i);
+      });
+      let maxGap = Infinity;
+      if (positions.length > 0) {
+        maxGap = 0;
+        for (let i = 0; i < positions.length; i++) {
+          const next = positions[(i + 1) % positions.length]!;
+          const gap = (next - positions[i]! + frames) % frames || frames;
+          if (gap > maxGap) maxGap = gap;
+        }
+      }
+      results.push({
+        roleId: role.id,
+        reel,
+        symbol,
+        count: positions.length,
+        maxGap,
+        ok: maxGap <= PB1_MAX_GAP,
+      });
+    }
+  }
+  return results;
 }
 
 /** missable の実測が目標から外れてよい許容誤差（表示上の警告閾値） */
@@ -54,6 +123,9 @@ export function checkLayout(machine: MachineDef): LayoutReport {
   let replayMisses = 0;
   let casesChecked = 0;
   const singleWinCount = new Map<RoleId, number>();
+  const violationExamples: LayoutViolation[] = [];
+  const kickByRole: Record<RoleId, number> = {};
+  const MAX_EXAMPLES = 8;
 
   const rolesById = new Map(machine.roles.map((r) => [r.id, r]));
 
@@ -77,9 +149,20 @@ export function checkLayout(machine: MachineDef): LayoutReport {
           const wins = winsAt(machine, stops);
           casesChecked++;
           for (const win of wins) {
-            if (!activePatterns.has(patternKey(rolesById.get(win)!))) kickViolations++;
+            if (!activePatterns.has(patternKey(rolesById.get(win)!))) {
+              kickViolations++;
+              kickByRole[win] = (kickByRole[win] ?? 0) + 1;
+              if (violationExamples.length < MAX_EXAMPLES) {
+                violationExamples.push({ kind: 'kick', flags: active, stops, wonRole: win });
+              }
+            }
           }
-          if (hasReplay && !wins.some((w) => replayIds.has(w))) replayMisses++;
+          if (hasReplay && !wins.some((w) => replayIds.has(w))) {
+            replayMisses++;
+            if (violationExamples.length < MAX_EXAMPLES) {
+              violationExamples.push({ kind: 'replayMiss', flags: active, stops });
+            }
+          }
           if (single !== null && wins.includes(single)) {
             singleWinCount.set(single, (singleWinCount.get(single) ?? 0) + 1);
           }
@@ -104,6 +187,8 @@ export function checkLayout(machine: MachineDef): LayoutReport {
     roleChecks,
     casesChecked,
     ok: kickViolations === 0 && replayMisses === 0 && roleChecks.every((c) => c.ok),
+    violationExamples,
+    kickByRole,
   };
 }
 
@@ -120,8 +205,17 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
 
   if (!def.name) err('name がありません');
   if (!Number.isInteger(def.frames) || def.frames < 5) err('frames は 5 以上の整数が必要です');
+  if (Number.isInteger(def.frames) && def.frames > 30) warn('frames が 30 を超えています（実機は 20〜21 コマです）');
   if (!Array.isArray(def.strips) || def.strips.length !== 3) err('strips は 3 リール分の配列が必要です');
-  if (!Number.isInteger(def.bet) || def.bet < 1) err('bet は 1 以上が必要です');
+  if (!Number.isInteger(def.bet) || def.bet < 1 || def.bet > 3) {
+    err('bet は 1〜3 が必要です（パチスロの最大投入枚数は 3 枚です）');
+  }
+  for (const [li, line] of (def.lines ?? []).entries()) {
+    if (line.length !== (def.strips?.length ?? 3)) err(`有効ライン${li} の長さがリール数と一致しません`);
+    if (line.some((row) => !Number.isInteger(row) || row < 0 || row > 2)) {
+      err(`有効ライン${li} の行番号が範囲外です（0=上段, 1=中段, 2=下段）`);
+    }
+  }
 
   const symbolSet = new Set((def.strips ?? []).flat());
   for (const [i, strip] of (def.strips ?? []).entries()) {
@@ -138,6 +232,10 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
       if (sym !== 'any' && !symbolSet.has(sym)) warn(`役 ${role.id} の図柄 ${sym} はどのリールにも無く、揃うことがありません`);
     }
     if (role.payout < 0) err(`役 ${role.id} の payout が負`);
+    if (role.payout > 15) {
+      err(`役 ${role.id} の payout が ${role.payout} 枚です（パチスロの 1 回の払い出し上限は 15 枚。15 以下にしてください）`);
+    }
+    if (role.kind === 'replay' && role.payout !== 0) err(`リプレイ役 ${role.id} の payout は 0 にしてください（再遊技は払い出しなし）`);
     const nav = role.nav;
     if (nav) {
       if (!navGroupIds.has(nav.group)) err(`役 ${role.id} の navGroup が未定義: ${nav.group}`);
@@ -172,7 +270,9 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
       for (const id of entry.roles) if (!roleIds.has(id)) err(`${label}: 未定義の役 ${id}`);
       if (entry.roles.filter((id) => bonusIds.has(id)).length > 1) err(`${label}: 1 エントリに複数ボーナス`);
     }
-    if (total > 65536) err(`${label}: 重み合計が 65536 を超えています (${total})`);
+    if (total > 65536) {
+      err(`${label}: 重み合計が 65536 を超えています (${total}) → 合計で ${total - 65536} ぶん重みを減らしてください`);
+    }
   };
   checkTable('lottery.base', def.lottery?.base ?? []);
   for (const [key, table] of Object.entries(def.tables ?? {})) checkTable(`tables.${key}`, table);
@@ -192,7 +292,9 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
       for (const id of entry.roles) if (!roleIds.has(id)) err(`settingOverrides[${settingKey}]: 未定義の役 ${id}`);
     }
     const total = [...merged.values()].reduce((a, b) => a + b, 0);
-    if (total > 65536) err(`設定${settingKey}: 重み合計が 65536 を超えています (${total})`);
+    if (total > 65536) {
+      err(`設定${settingKey}: 重み合計が 65536 を超えています (${total}) → 合計で ${total - 65536} ぶん重みを減らしてください`);
+    }
   }
 
   for (const rt of def.rtStates ?? []) {

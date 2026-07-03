@@ -394,3 +394,251 @@ button:disabled {
   overflow-x: auto;
   color: #9fd;
 }
+
+/* ===== 演出（告知ランプ・ボーナスフラッシュ） ===== */
+
+.cabinet {
+  position: relative;
+  overflow: hidden;
+}
+
+.lamp-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.notice-lamp {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2a2a38;
+  border: 2px solid #3a3a55;
+  transition: background 0.2s;
+}
+
+.notice-lamp.lamp-on {
+  background: #ffd54f;
+  border-color: #ffb300;
+  box-shadow: 0 0 18px 6px rgba(255, 213, 79, 0.7);
+  animation: lamp-blink 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes lamp-blink {
+  from {
+    box-shadow: 0 0 18px 6px rgba(255, 213, 79, 0.7);
+  }
+  to {
+    box-shadow: 0 0 30px 12px rgba(255, 179, 0, 0.9);
+  }
+}
+
+.bonus-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 213, 79, 0.55), rgba(211, 47, 47, 0.25));
+  animation: bonus-flash 1.2s ease-out forwards;
+  z-index: 2;
+}
+
+@keyframes bonus-flash {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ===== フォームエディタ ===== */
+
+.tab,
+.tab-active {
+  background: #2a2a38;
+  color: #aaa;
+  font-size: 14px;
+  padding: 10px 16px;
+}
+
+.tab-active {
+  background: #3949ab;
+  color: #fff;
+}
+
+.form-editor {
+  text-align: left;
+}
+
+.form-section {
+  margin: 10px 0;
+  background: #191926;
+  border: 1px solid #2e2e44;
+  border-radius: 10px;
+}
+
+.form-section > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #9fa8da;
+}
+
+.form-body {
+  padding: 0 14px 14px;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+  font-size: 13px;
+  color: #ccc;
+}
+
+.form-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-text,
+.form-num {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #101018;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
+.form-text {
+  min-width: 220px;
+}
+
+.form-select {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
+.form-mini-btn {
+  font-size: 12px;
+  padding: 6px 10px;
+  background: #2a2a38;
+  color: #ddd;
+  border: 1px solid #3a3a55;
+}
+
+.form-h4 {
+  margin: 14px 0 6px;
+  color: #ffd54f;
+  font-size: 14px;
+}
+
+.form-role {
+  border: 1px solid #2e2e44;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+.role-name {
+  color: #ffd54f;
+}
+
+.weight-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.weight-control input[type='range'] {
+  width: 160px;
+}
+
+.weight-info {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  color: #7fff9f;
+}
+
+.lottery-label {
+  min-width: 140px;
+  display: inline-block;
+  color: #eee;
+}
+
+.chip-diff {
+  font-size: 11px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #b71c1c;
+  color: #fff;
+}
+
+.spec-summary {
+  background: #101018;
+  border: 1px solid #3a3a55;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.spec-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: #ddd;
+}
+
+.spec-summary b.ok {
+  color: #7fff9f;
+}
+
+.spec-summary b.ng {
+  color: #ff6f6f;
+}
+
+.reel-grid {
+  display: flex;
+  gap: 14px;
+  justify-content: flex-start;
+}
+
+.reel-grid-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: #ccc;
+}
+
+.reel-counts {
+  max-width: 160px;
+}
+
+.bonus-table {
+  margin: 4px 0 10px;
+}
+
+.release-editor {
+  margin: 6px 0;
+  padding-left: 8px;
+  border-left: 2px solid #2e2e44;
+}
