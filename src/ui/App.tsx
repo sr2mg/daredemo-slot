@@ -9,6 +9,7 @@ import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import { decodeMachine, parseShareHash } from './share.js';
+import { SfxPlayer } from './sfx-player.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
@@ -86,6 +87,10 @@ export function App() {
   const [noticeMode, setNoticeMode] = useState<'none' | 'flag' | 'release'>('none');
   /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
   const [flashKey, setFlashKey] = useState(0);
+  /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
+  const sfxRef = useRef<SfxPlayer | null>(null);
+  if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
+  const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
   /** サブ基板モード（教材モードの覗き見用） */
@@ -116,6 +121,8 @@ export function App() {
   forceSelRef.current = forceSel;
   const settingSelRef = useRef(settingSel);
   settingSelRef.current = settingSel;
+  const noticeModeRef = useRef(noticeMode);
+  noticeModeRef.current = noticeMode;
 
   // リール回転: 一定速でフレームを進める
   useEffect(() => {
@@ -189,6 +196,7 @@ export function App() {
     if (session.bet > creditRef.current) return; // クレジット不足
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
+    sfxRef.current?.play('lever');
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
     setCredit((c) => c - session.bet);
@@ -204,6 +212,7 @@ export function App() {
       if (reelsRef.current[reel]!.stopped) return;
       const push = reelsRef.current[reel]!.top;
       const stopEvent = session.stopReel(reel, push);
+      sfxRef.current?.play('reelStop');
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
@@ -230,6 +239,17 @@ export function App() {
           parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
           setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
         }
+
+        // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
+        const sfx = sfxRef.current;
+        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') sfx?.play('fanfare');
+        else if (event.replayWon) sfx?.play('replay');
+        else if (event.payout > 0) sfx?.play('payout');
+        if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
+          sfx?.play('kyuin');
+        }
+        if (event.lidReleased) sfx?.play('siren');
+        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) sfx?.play('rush');
         if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
         if (event.rtExited) parts.push(`RT 終了`);
@@ -238,6 +258,11 @@ export function App() {
     },
     [pushLog],
   );
+
+  // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）
+  useEffect(() => {
+    void sfxRef.current?.preload();
+  }, []);
 
   // 共有リンク（#m=...）からの機種読み込み
   useEffect(() => {
@@ -423,6 +448,18 @@ export function App() {
           <option value="flag">完全告知（ボーナス成立で点灯）</option>
           <option value="release">放出告知（揃えられる状態で点灯）</option>
         </select>
+        <label>
+          <input
+            type="checkbox"
+            checked={sfxOn}
+            onChange={(e) => {
+              setSfxOn(e.target.checked);
+              sfxRef.current?.setEnabled(e.target.checked);
+            }}
+            data-testid="sfx-toggle"
+          />
+          効果音（OPLL）
+        </label>
       </div>
 
       <GuidePanel key={`guide-${machine.name}`} machine={machine} />
@@ -464,6 +501,14 @@ export function App() {
           {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
         </div>
       )}
+      <p className="panel-note credit-note">
+        音源コア:{' '}
+        <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
+          emu2413
+        </a>{' '}
+        © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
+      </p>
+
       {debug && (
         <pre className="debug-panel" data-testid="debug">
           {JSON.stringify(
