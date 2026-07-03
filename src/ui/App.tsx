@@ -3,6 +3,7 @@ import { GameSession, initialState } from '../core/game.js';
 import { Xoshiro128 } from '../core/rng.js';
 import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
+import { guides } from './guides.js';
 import { LayoutPanel, SpecPanel } from './panels.js';
 
 /**
@@ -34,8 +35,11 @@ const ROLE_LABEL: Record<string, string> = {
   melon: 'スイカ 15枚',
   bb_red: 'BIG BONUS',
   rb: 'REGULAR BONUS',
-  sb_kin: 'シングル',
+  sb_kin: 'シングル 15枚',
 };
+
+/** 強制フラグ選択の特殊値（教材モード用） */
+const FORCE_PURE_MISS = 'PURE_MISS';
 
 type Phase = 'ready' | 'spinning';
 
@@ -57,6 +61,8 @@ export function App() {
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [debug, setDebug] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(true);
+  const [forceSel, setForceSel] = useState('');
 
   const rngRef = useRef(new Xoshiro128(Date.now() >>> 0));
   const sessionRef = useRef<GameSession | null>(null);
@@ -70,6 +76,8 @@ export function App() {
   phaseRef.current = phase;
   const creditRef = useRef(credit);
   creditRef.current = credit;
+  const forceSelRef = useRef(forceSel);
+  forceSelRef.current = forceSel;
 
   // リール回転: 一定速でフレームを進める
   useEffect(() => {
@@ -98,12 +106,17 @@ export function App() {
     setReels(freshReels(next));
     setLastEvent(null);
     setLog([]);
+    setForceSel('');
   }, []);
 
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
-    const session = new GameSession(machineRef.current, engineRef.current, rngRef.current);
+    // 強制フラグ（教材モード）: 次の 1 ゲームだけ抽選を上書き
+    const sel = forceSelRef.current;
+    const forceFlags = sel === '' ? undefined : sel === FORCE_PURE_MISS ? [] : sel.split('+');
+    const session = new GameSession(machineRef.current, engineRef.current, rngRef.current, undefined, forceFlags);
     if (session.bet > creditRef.current) return; // クレジット不足
+    if (sel !== '') setForceSel('');
     sessionRef.current = session;
     setCredit((c) => c - session.bet);
     setLastEvent(null);
@@ -132,8 +145,12 @@ export function App() {
         const parts: string[] = [];
         if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
         if (event.lidReleased) parts.push('🔓 放出開始！');
-        if (event.bonusStarted) parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
-        if (event.bonusEnded) parts.push(`■ ボーナス終了`);
+        // SB（普通役物）は地味さが本体なので開始・終了を騒がない（実機も告知しない）
+        const kindOf = (id: string) => machineRef.current.bonuses.find((b) => b.id === id)?.kind;
+        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
+          parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
+        }
+        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
         if (event.rtExited) parts.push(`RT 終了`);
         if (parts.length > 0) pushLog(parts.join(' '));
@@ -259,6 +276,25 @@ export function App() {
         ))}
       </div>
 
+      {guides[machine.name] && (
+        <details
+          className="panel"
+          open={guideOpen}
+          onToggle={(e) => setGuideOpen((e.target as HTMLDetailsElement).open)}
+        >
+          <summary>この機種の遊び方</summary>
+          <div className="panel-body">
+            <p className="guide-summary">{guides[machine.name]!.summary}</p>
+            <ul className="guide-list">
+              {guides[machine.name]!.points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+            <p className="panel-note">操作: Space = レバー / J・K・L = 左・中・右停止</p>
+          </div>
+        </details>
+      )}
+
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
 
@@ -266,6 +302,29 @@ export function App() {
         <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
         成立フラグを見る（ネタバレ・教材モード）
       </label>
+      {debug && (
+        <div className="force-row">
+          <label htmlFor="force-select">強制フラグ:</label>
+          <select
+            id="force-select"
+            value={forceSel}
+            onChange={(e) => setForceSel(e.target.value)}
+            data-testid="force-select"
+          >
+            <option value="">なし（通常抽選）</option>
+            <option value={FORCE_PURE_MISS}>純ハズレ</option>
+            {machine.lottery.base.map((entry) => {
+              const value = entry.roles.join('+');
+              return (
+                <option key={value} value={value}>
+                  {entry.roles.map((r) => ROLE_LABEL[r] ?? r).join(' + ')}
+                </option>
+              );
+            })}
+          </select>
+          {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
+        </div>
+      )}
       {debug && (
         <pre className="debug-panel" data-testid="debug">
           {JSON.stringify(

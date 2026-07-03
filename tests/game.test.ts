@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialState, playGame, resolveTable } from '../src/core/game.js';
+import { GameSession, initialState, playGame, resolveTable } from '../src/core/game.js';
 import type { ChooseStops } from '../src/core/game.js';
 import type { EngineState } from '../src/core/types.js';
 import type { Rng, RngState } from '../src/core/rng.js';
@@ -238,6 +238,21 @@ describe('純ハズレ解除と放出ゾーン（サラ金型 SB ストック機
     expect(result.bonusStarts['sb_kin'] ?? 0).toBeGreaterThan(50);
     expect(result.payoutRate).toBeGreaterThan(0.3);
     expect(result.payoutRate).toBeLessThan(1.5);
+  });
+});
+
+describe('強制フラグ（教材モード・デバッグ用）', () => {
+  it('内部抽選を上書きでき、抽選乱数を消費しない', () => {
+    const rng = new SeqRng([0]); // 本来なら replay 当選域
+    const session = new GameSession(sampleAType, initialState(sampleAType), rng, undefined, ['bb_red']);
+    expect(session.flags).toEqual(['bb_red']);
+    expect(session.active).toContain('bb_red'); // キュー先頭として制御に乗る
+  });
+
+  it('空配列で強制純ハズレにできる', () => {
+    const session = new GameSession(sampleAType, initialState(sampleAType), new SeqRng([0]), undefined, []);
+    expect(session.flags).toEqual([]);
+    expect(session.active).toEqual([]);
   });
 });
 

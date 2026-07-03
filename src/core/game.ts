@@ -114,7 +114,14 @@ export class GameSession {
   private rtEntered: string | null;
   private finished = false;
 
-  constructor(machine: MachineDef, state: EngineState, rng: Rng, ctxCache?: Map<string, ControlContext>) {
+  constructor(
+    machine: MachineDef,
+    state: EngineState,
+    rng: Rng,
+    ctxCache?: Map<string, ControlContext>,
+    /** デバッグ・検証用: 内部抽選を上書きする（[] = 強制純ハズレ）。指定時は抽選乱数を消費しない */
+    forceFlags?: readonly RoleId[],
+  ) {
     this.machine = machine;
     const s = structuredClone(state) as EngineState;
     this.s = s;
@@ -138,8 +145,7 @@ export class GameSession {
     }
 
     // --- 内部抽選 ---
-    const table = resolveTable(machine, s);
-    this.flags = drawLottery(table, rng);
+    this.flags = forceFlags ?? drawLottery(resolveTable(machine, s), rng);
 
     // --- 蓋の解除判定 2: 解除抽選（純ハズレ契機に対応するため抽選結果の後に評価） ---
     if (s.lid && release?.type === 'lottery') {

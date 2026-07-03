@@ -17,8 +17,9 @@ export const stockSB: MachineDef = {
   lines: cross5,
   roles: [
     ...sampleRoles,
-    // SB 役: 揃えやすい図柄の組み合わせ（replay/replay/bell は各リール PB=1 → 中段で常に引き込める）
-    { id: 'sb_kin', kind: 'bonus', payout: 0, pattern: ['replay', 'replay', 'bell'], pullIn: 'guaranteed' },
+    // SB 役: 揃えやすい図柄の組み合わせ（replay/replay/bell は各リール PB=1 → 中段で常に引き込める）。
+    // 実機サラ金に合わせて揃った瞬間に 15 枚直払い（作動ゲーム側はほぼ素通り）
+    { id: 'sb_kin', kind: 'bonus', payout: 15, pattern: ['replay', 'replay', 'bell'], pullIn: 'guaranteed' },
   ],
   priority: 'role-first',
   bonuses: [
@@ -44,7 +45,8 @@ export const stockSB: MachineDef = {
     ],
   },
   tables: {
-    in_sb: [{ roles: ['bell'], weight: 60000 }], // SB 作動ゲームはベル高確率（1 ゲームで終了）
+    // SB の価値は揃った瞬間の 15 枚。作動ゲーム（1 ゲーム）は小役確率がわずかに上がる程度
+    in_sb: [{ roles: ['bell'], weight: 12000 }],
     in_bb: [{ roles: ['bell'], weight: 60000 }],
   },
 };
