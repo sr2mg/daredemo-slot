@@ -119,25 +119,25 @@ export type SfxName =
   | 'rush';
 
 /**
- * 大花火風のベット/レバー音階（記憶ベース: ベット=ミ、レバー=ラ）。
- * 実機の正確なピッチ資料は未確認なので、違ったらここを直すだけで全体に反映される。
+ * 大花火風のベット/レバー音階（長 6 度の 2 音ハモリ）。
+ * ベット = G4+E5、レバーオン = C5+A5。違ったらここを直すだけで全体に反映される。
  */
-export const BET_NOTE = 659.26; // E5（ミ）
-export const LEVER_NOTE = 880; // A5（ラ）
+export const BET_CHORD = { main: 659.26, sub: 392.0 } as const; //  E5 + G4
+export const LEVER_CHORD = { main: 880, sub: 523.25 } as const; // A5 + C5
 
 /** 効果音の定義（すべてオリジナルのレジスタシーケンス。アルゼ風の文法で作曲） */
 export function buildSfxDefs(): Record<SfxName, SfxDef> {
-  // ベット「ペッ」とレバー「ピッ」: シンセのビープ。1 オクターブ下を重ねた 2 音で厚みを出す
-  const beep = (b: SeqBuilder, freq: number, at: number, off: number): SeqBuilder =>
+  // ベット「ペッ」とレバー「ピッ」: シンセの 2 音ハモリビープ
+  const beep = (b: SeqBuilder, chord: { main: number; sub: number }, at: number, off: number): SeqBuilder =>
     b
-      .keyOn(0, V_SYNTH, 4, freq, at)
-      .keyOn(1, V_SYNTH, 5, freq / 2, at)
+      .keyOn(0, V_SYNTH, 4, chord.main, at)
+      .keyOn(1, V_SYNTH, 5, chord.sub, at)
       .keyOff(0, off)
       .keyOff(1, off);
-  const bet = beep(new SeqBuilder(), BET_NOTE, 0, 0.055);
-  const lever = beep(new SeqBuilder(), LEVER_NOTE, 0, 0.065);
-  // ベットせずにレバーを叩いたとき用: ミ→ラ を実機のリズムで連結
-  const betLever = beep(beep(new SeqBuilder(), BET_NOTE, 0, 0.055), LEVER_NOTE, 0.09, 0.155);
+  const bet = beep(new SeqBuilder(), BET_CHORD, 0, 0.055);
+  const lever = beep(new SeqBuilder(), LEVER_CHORD, 0, 0.065);
+  // ベットせずにレバーを叩いたとき用: ベット→レバーを実機のリズムで連結
+  const betLever = beep(beep(new SeqBuilder(), BET_CHORD, 0, 0.055), LEVER_CHORD, 0.09, 0.155);
 
   const reelStop = new SeqBuilder().keyOn(0, V_SYNBASS, 2, 175, 0).pitch(0, 147, 0.03).keyOff(0, 0.08);
 
