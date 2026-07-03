@@ -127,15 +127,17 @@ export const LEVER_NOTE = 880; // A5（ラ）
 
 /** 効果音の定義（すべてオリジナルのレジスタシーケンス。アルゼ風の文法で作曲） */
 export function buildSfxDefs(): Record<SfxName, SfxDef> {
-  // ベット「ペッ」とレバー「ピッ」: シンセの短い単音ビープ
-  const bet = new SeqBuilder().keyOn(0, V_SYNTH, 4, BET_NOTE, 0).keyOff(0, 0.055);
-  const lever = new SeqBuilder().keyOn(0, V_SYNTH, 4, LEVER_NOTE, 0).keyOff(0, 0.065);
+  // ベット「ペッ」とレバー「ピッ」: シンセのビープ。1 オクターブ下を重ねた 2 音で厚みを出す
+  const beep = (b: SeqBuilder, freq: number, at: number, off: number): SeqBuilder =>
+    b
+      .keyOn(0, V_SYNTH, 4, freq, at)
+      .keyOn(1, V_SYNTH, 5, freq / 2, at)
+      .keyOff(0, off)
+      .keyOff(1, off);
+  const bet = beep(new SeqBuilder(), BET_NOTE, 0, 0.055);
+  const lever = beep(new SeqBuilder(), LEVER_NOTE, 0, 0.065);
   // ベットせずにレバーを叩いたとき用: ミ→ラ を実機のリズムで連結
-  const betLever = new SeqBuilder()
-    .keyOn(0, V_SYNTH, 4, BET_NOTE, 0)
-    .keyOff(0, 0.055)
-    .keyOn(0, V_SYNTH, 4, LEVER_NOTE, 0.09)
-    .keyOff(0, 0.155);
+  const betLever = beep(beep(new SeqBuilder(), BET_NOTE, 0, 0.055), LEVER_NOTE, 0.09, 0.155);
 
   const reelStop = new SeqBuilder().keyOn(0, V_SYNBASS, 2, 175, 0).pitch(0, 147, 0.03).keyOff(0, 0.08);
 

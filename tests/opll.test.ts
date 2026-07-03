@@ -69,15 +69,17 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
     expect(defs.kyuin.duration).toBeGreaterThan(1);
   });
 
-  it('ベット=ミ(E5)・レバー=ラ(A5) の単音で、betLever は 2 音の連結（大花火風）', () => {
-    // fnum 下位バイト（reg 0x10）でピッチが区別できる
-    const fnumLoOf = (def: (typeof defs)['bet']) =>
-      def.events.filter((e) => e.reg === 0x10).map((e) => e.val);
-    const betNote = freqToFnum(659.26).fnum & 0xff;
-    const leverNote = freqToFnum(880).fnum & 0xff;
-    expect(fnumLoOf(defs.bet)).toEqual([betNote]);
-    expect(fnumLoOf(defs.lever)).toEqual([leverNote]);
-    expect(fnumLoOf(defs.betLever)).toEqual([betNote, leverNote]); // ミ→ラ
+  it('ベット=ミ(E5)・レバー=ラ(A5) + 1 オクターブ下の 2 音重ね（大花火風）', () => {
+    // fnum 下位バイト（reg 0x10=ch0 / 0x11=ch1）でピッチが区別できる
+    const fnumLoOf = (def: (typeof defs)['bet'], ch: number) =>
+      def.events.filter((e) => e.reg === 0x10 + ch).map((e) => e.val);
+    const note = (freq: number) => freqToFnum(freq).fnum & 0xff;
+    expect(fnumLoOf(defs.bet, 0)).toEqual([note(659.26)]);
+    expect(fnumLoOf(defs.bet, 1)).toEqual([note(659.26 / 2)]); // 1 オクターブ下
+    expect(fnumLoOf(defs.lever, 0)).toEqual([note(880)]);
+    expect(fnumLoOf(defs.lever, 1)).toEqual([note(440)]);
+    expect(fnumLoOf(defs.betLever, 0)).toEqual([note(659.26), note(880)]); // ミ→ラ
+    expect(fnumLoOf(defs.betLever, 1)).toEqual([note(659.26 / 2), note(440)]);
     expect(defs.betLever.duration).toBeGreaterThan(defs.lever.duration);
   });
 });
