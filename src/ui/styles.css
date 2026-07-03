@@ -642,3 +642,11 @@ button:disabled {
   padding-left: 8px;
   border-left: 2px solid #2e2e44;
 }
+
+.wizard-result {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #101018;
+  border: 1px solid #3a3a55;
+  border-radius: 10px;
+}

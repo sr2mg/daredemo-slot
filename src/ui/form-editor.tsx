@@ -358,7 +358,12 @@ function BasicSection({ draft, update }: SectionProps) {
   );
 }
 
-function LotterySection({ draft, update, setting }: SectionProps & { setting: number }) {
+function LotterySection({
+  draft,
+  update,
+  setting,
+  structural = true,
+}: SectionProps & { setting: number; structural?: boolean }) {
   const [newRole, setNewRole] = useState('');
   const [newOverlap, setNewOverlap] = useState('');
   const table = mergedTable(draft, setting);
@@ -389,7 +394,7 @@ function LotterySection({ draft, update, setting }: SectionProps & { setting: nu
                 weight={entry.weight}
                 onChange={(v) => update((d) => writeWeight(d, setting, entry.roles, v))}
               />
-              {setting === 1 && (
+              {setting === 1 && structural && (
                 <button
                   className="form-mini-btn"
                   title="このエントリを削除"
@@ -417,7 +422,7 @@ function LotterySection({ draft, update, setting }: SectionProps & { setting: nu
               : `${formatOneIn(missP)}（${formatPct(missP, 1)}）`}
           </span>
         </div>
-        {setting === 1 && (
+        {setting === 1 && structural && (
           <div className="form-row">
             <RoleSelect value={newRole} draft={draft} onChange={setNewRole} allowNone="役を選ぶ…" />
             <RoleSelect
@@ -662,7 +667,8 @@ function TableEditor({
   draft,
   update,
   tableName,
-}: SectionProps & { tableName: string }) {
+  structural = true,
+}: SectionProps & { tableName: string; structural?: boolean }) {
   const table = draft.tables[tableName] ?? [];
   const [newRole, setNewRole] = useState('');
   return (
@@ -675,33 +681,42 @@ function TableEditor({
             sliderMax={DENOM}
             onChange={(v) => update((d) => void (d.tables[tableName]![i]!.weight = v))}
           />
-          <button
-            className="form-mini-btn"
-            onClick={() => update((d) => void d.tables[tableName]!.splice(i, 1))}
-          >
-            ✕
-          </button>
+          {structural && (
+            <button
+              className="form-mini-btn"
+              onClick={() => update((d) => void d.tables[tableName]!.splice(i, 1))}
+            >
+              ✕
+            </button>
+          )}
         </div>
       ))}
-      <div className="form-row">
-        <RoleSelect value={newRole} draft={draft} onChange={setNewRole} allowNone="役を選ぶ…" />
-        <button
-          className="form-mini-btn"
-          disabled={newRole === '' || table.some((e) => entryKey(e.roles) === newRole)}
-          onClick={() =>
-            update((d) => {
-              d.tables[tableName] = [...(d.tables[tableName] ?? []), { roles: [newRole], weight: 10000 }];
-            })
-          }
-        >
-          行を追加
-        </button>
-      </div>
+      {structural && (
+        <div className="form-row">
+          <RoleSelect value={newRole} draft={draft} onChange={setNewRole} allowNone="役を選ぶ…" />
+          <button
+            className="form-mini-btn"
+            disabled={newRole === '' || table.some((e) => entryKey(e.roles) === newRole)}
+            onClick={() =>
+              update((d) => {
+                d.tables[tableName] = [...(d.tables[tableName] ?? []), { roles: [newRole], weight: 10000 }];
+              })
+            }
+          >
+            行を追加
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function BonusSection({ draft, update, setting }: SectionProps & { setting: number }) {
+function BonusSection({
+  draft,
+  update,
+  setting,
+  structural = true,
+}: SectionProps & { setting: number; structural?: boolean }) {
   const est = useMemo(() => {
     try {
       return estimateSpec(draft, setting);
@@ -722,20 +737,25 @@ function BonusSection({ draft, update, setting }: SectionProps & { setting: numb
             <div className="form-role" key={bonus.id}>
               <div className="form-row">
                 <b className="role-name">{bonus.id}</b>
-                <select
-                  className="form-select"
-                  value={bonus.kind}
-                  onChange={(e) => update((d) => void (d.bonuses[bi]!.kind = e.target.value as BonusDef['kind']))}
-                >
-                  <option value="bb">BB（ビッグ）</option>
-                  <option value="rb">RB（レギュラー）</option>
-                  <option value="sb">SB（1ゲームだけ）</option>
-                </select>
+                {structural ? (
+                  <select
+                    className="form-select"
+                    value={bonus.kind}
+                    onChange={(e) => update((d) => void (d.bonuses[bi]!.kind = e.target.value as BonusDef['kind']))}
+                  >
+                    <option value="bb">BB（ビッグ）</option>
+                    <option value="rb">RB（レギュラー）</option>
+                    <option value="sb">SB（1ゲームだけ）</option>
+                  </select>
+                ) : (
+                  <span className="chip">{bonus.kind.toUpperCase()}</span>
+                )}
                 {row && (
                   <span className="weight-info">
                     確率 {formatOneIn(row.p)} / 期待獲得 約{Math.round(row.expectedMedalsNaive)}枚
                   </span>
                 )}
+                {structural && (
                 <button
                   className="form-mini-btn"
                   title="このボーナスを削除（抽選エントリも一緒に消します）"
@@ -764,6 +784,7 @@ function BonusSection({ draft, update, setting }: SectionProps & { setting: numb
                 >
                   ✕
                 </button>
+                )}
               </div>
               {bonus.kind !== 'sb' && (
                 <div className="form-row">
@@ -793,10 +814,11 @@ function BonusSection({ draft, update, setting }: SectionProps & { setting: numb
                 </div>
               )}
               <p className="panel-note">ボーナス中の抽選テーブル（{bonus.tableRef}）:</p>
-              <TableEditor draft={draft} update={update} tableName={bonus.tableRef} />
+              <TableEditor draft={draft} update={update} tableName={bonus.tableRef} structural={structural} />
             </div>
           );
         })}
+        {structural && (
         <div className="form-row">
           <input
             className="form-text"
@@ -840,9 +862,12 @@ function BonusSection({ draft, update, setting }: SectionProps & { setting: numb
             ボーナスを追加
           </button>
         </div>
-        <p className="panel-note">
-          追加したボーナスの図柄は「役と払い出し」で、確率は「抽選テーブル」で調整できます。
-        </p>
+        )}
+        {structural && (
+          <p className="panel-note">
+            追加したボーナスの図柄は「役と払い出し」で、確率は「抽選テーブル」で調整できます。
+          </p>
+        )}
       </div>
     </details>
   );
@@ -1336,10 +1361,20 @@ interface SectionProps {
   update: (fn: (d: MachineDraft) => void) => void;
 }
 
-export function FormEditor({ draft, onChange }: { draft: MachineDef; onChange: (d: MachineDef) => void }) {
+export function FormEditor({
+  draft,
+  onChange,
+  tier = 'advanced',
+}: {
+  draft: MachineDef;
+  onChange: (d: MachineDef) => void;
+  /** ふつう = 数値のつまみだけ / 上級 = 構造（役・配列・システム）も編集 */
+  tier?: 'normal' | 'advanced';
+}) {
   const [setting, setSetting] = useState(1);
   const settings = draft.lottery.settings ?? 1;
   const effectiveSetting = Math.min(setting, settings);
+  const structural = tier === 'advanced';
 
   const update = (fn: (d: MachineDraft) => void) => {
     const next = structuredClone(draft) as MachineDraft;
@@ -1351,11 +1386,16 @@ export function FormEditor({ draft, onChange }: { draft: MachineDef; onChange: (
     <div className="form-editor" data-testid="form-editor">
       <SpecSummary draft={draft} setting={effectiveSetting} onSetting={setSetting} />
       <BasicSection draft={draft} update={update} />
-      <LotterySection draft={draft} update={update} setting={effectiveSetting} />
-      <RolesSection draft={draft} update={update} />
-      <ReelSection draft={draft} update={update} />
-      <BonusSection draft={draft} update={update} setting={effectiveSetting} />
-      <SystemsSection draft={draft} update={update} />
+      <LotterySection draft={draft} update={update} setting={effectiveSetting} structural={structural} />
+      {structural && <RolesSection draft={draft} update={update} />}
+      {structural && <ReelSection draft={draft} update={update} />}
+      <BonusSection draft={draft} update={update} setting={effectiveSetting} structural={structural} />
+      {structural && <SystemsSection draft={draft} update={update} />}
+      {!structural && (
+        <p className="panel-note">
+          役の追加・図柄・リール配列・RT / ストック / AT の構造は「上級」タブで編集できます。
+        </p>
+      )}
     </div>
   );
 }

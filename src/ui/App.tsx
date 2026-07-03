@@ -430,7 +430,12 @@ export function App() {
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
       <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
-      <EditorPanel key={`edit-${machine.name}`} machine={machine} onSave={saveCustom} />
+      <EditorPanel
+        key={`edit-${machine.name}`}
+        machine={machine}
+        onSave={saveCustom}
+        defaultTier={customs.length === 0 ? 'easy' : 'normal'}
+      />
 
       <label className="debug-toggle">
         <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />

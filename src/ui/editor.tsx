@@ -5,15 +5,31 @@ import type { MachineDef } from '../core/types.js';
 import { checkLayout, checkSpacing, validateMachine } from '../core/validate.js';
 import { FormEditor } from './form-editor.js';
 import { buildShareUrl, downloadMachine, readMachineFile } from './share.js';
+import { Wizard } from './wizard.js';
 
 /**
  * 機種エディタ（docs/design/05「WebUI で設定 → 保存 → 遊べる」）。
- * かんたん（フォーム）タブと JSON（上級者）タブの 2 面構成。
+ * 4 ティア構成 — タブごとに「やることの種類」が違う:
+ * - かんたん: ウィザード。タイプ・甘さ・波を選ぶだけ（出玉設計と適合確認は自動）
+ * - ふつう:   調整。抽選テーブルの重み・ボーナスのゲーム数などのつまみだけ
+ * - 上級:     構造。役・図柄・リール配列・RT/蓋/ナビまで全部
+ * - JSON:     なんでも。定義そのものを直接編集
+ * ふつう/上級/JSON は同じ下書きを共有し、タブを移動してもデータは失われない。
+ *
  * 保存時に検証パイプラインを通す:
  * 1. 構造検証（validateMachine） → 2. 配列総当たり検証（checkLayout・違反例つき）
  * → 3. スペック実測 → 4. 適合試験（4号機基準の軽量チェック・バッジ表示）
  * エラーがゼロのときだけ保存できる（適合試験は参考情報でブロックしない）。
  */
+
+export type EditorTier = 'easy' | 'normal' | 'advanced' | 'json';
+
+const TIER_LABEL: Record<EditorTier, string> = {
+  easy: 'かんたん（選ぶだけ）',
+  normal: 'ふつう（つまみ調整）',
+  advanced: '上級（構造から作る）',
+  json: 'JSON',
+};
 
 interface ValidationView {
   errors: string[];
@@ -129,42 +145,44 @@ function runPipeline(def: MachineDef, withCompliance: boolean): ValidationView {
 export function EditorPanel({
   machine,
   onSave,
+  defaultTier = 'normal',
 }: {
   machine: MachineDef;
   onSave: (def: MachineDef) => void;
+  /** 初期タブ。初見ユーザーには 'easy' を渡す */
+  defaultTier?: EditorTier;
 }) {
   const [draft, setDraft] = useState<MachineDef>(() => structuredClone(machine));
-  const [tab, setTab] = useState<'form' | 'json'>('form');
+  const [tier, setTier] = useState<EditorTier>(defaultTier);
   const [text, setText] = useState('');
   const [result, setResult] = useState<ValidationView | null>(null);
   const [busy, setBusy] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const switchTab = (next: 'form' | 'json') => {
-    if (next === tab) return;
-    if (next === 'json') {
-      setText(JSON.stringify(draft, null, 2));
-      setTab('json');
-      return;
+  const switchTier = (next: EditorTier) => {
+    if (next === tier) return;
+    // JSON から離れるとき: パースできるときだけ下書きへ反映
+    if (tier === 'json') {
+      try {
+        setDraft(JSON.parse(text) as MachineDef);
+        setResult(null);
+      } catch (e) {
+        setResult({
+          errors: [`JSON パースエラー: ${e instanceof Error ? e.message : String(e)}（直してから移動してください）`],
+          warnings: [],
+          specNote: null,
+          compliance: null,
+        });
+        return;
+      }
     }
-    // JSON → フォーム: パースできるときだけ反映
-    try {
-      setDraft(JSON.parse(text) as MachineDef);
-      setResult(null);
-      setTab('form');
-    } catch (e) {
-      setResult({
-        errors: [`JSON パースエラー: ${e instanceof Error ? e.message : String(e)}（直してからフォームに戻ってください）`],
-        warnings: [],
-        specNote: null,
-        compliance: null,
-      });
-    }
+    if (next === 'json') setText(JSON.stringify(draft, null, 2));
+    setTier(next);
   };
 
   const currentDef = (): MachineDef | null => {
-    if (tab === 'form') return normalize(draft);
+    if (tier !== 'json') return normalize(draft);
     try {
       return normalize(JSON.parse(text) as MachineDef);
     } catch (e) {
@@ -208,7 +226,7 @@ export function EditorPanel({
     void readMachineFile(file)
       .then((def) => {
         setDraft(def);
-        setTab('form');
+        setTier('normal');
         setResult(null);
         setShareNote(`「${def.name}」を読み込みました。内容を確認して保存してください`);
       })
@@ -227,21 +245,30 @@ export function EditorPanel({
       <summary>機種エディタ（この台を改造する / 新しい台を作る）</summary>
       <div className="panel-body">
         <p className="panel-note">
-          いま選んでいる機種の定義を編集できます。名前を変えて保存すると新しい機種になります（ブラウザに保存・★印）。
+          「かんたん」は選ぶだけで新しい台を自動生成。「ふつう」以降はいま選んでいる機種の定義を編集できます
+          （名前を変えて保存すると新しい機種・ブラウザに保存・★印）。
           保存時に検証（構造 → 配列総当たり → 実測 → 適合試験）が走り、エラーがあると保存できません。
         </p>
         <div className="panel-controls">
-          <button className={tab === 'form' ? 'tab-active' : 'tab'} onClick={() => switchTab('form')} data-testid="tab-form">
-            かんたん（フォーム）
-          </button>
-          <button className={tab === 'json' ? 'tab-active' : 'tab'} onClick={() => switchTab('json')} data-testid="tab-json">
-            JSON（上級者）
-          </button>
+          {(Object.keys(TIER_LABEL) as EditorTier[]).map((t) => (
+            <button key={t} className={tier === t ? 'tab-active' : 'tab'} onClick={() => switchTier(t)} data-testid={`tab-${t}`}>
+              {TIER_LABEL[t]}
+            </button>
+          ))}
         </div>
 
-        {tab === 'form' ? (
-          <FormEditor draft={draft} onChange={setDraft} />
-        ) : (
+        {tier === 'easy' && (
+          <Wizard
+            onSave={onSave}
+            onEdit={(def) => {
+              setDraft(def);
+              setResult(null);
+              setTier('normal');
+            }}
+          />
+        )}
+        {(tier === 'normal' || tier === 'advanced') && <FormEditor draft={draft} onChange={setDraft} tier={tier} />}
+        {tier === 'json' && (
           <textarea
             className="editor-textarea"
             value={text}
@@ -251,6 +278,8 @@ export function EditorPanel({
           />
         )}
 
+        {tier !== 'easy' && (
+        <>
         <div className="panel-controls">
           <button onClick={() => run(false)} disabled={busy} data-testid="editor-validate">
             {busy ? '検証中…' : '検証のみ'}
@@ -303,6 +332,8 @@ export function EditorPanel({
                 </div>
               ))}
           </div>
+        )}
+        </>
         )}
 
         <details className="form-section">
