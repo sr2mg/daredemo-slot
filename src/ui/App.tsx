@@ -88,6 +88,8 @@ export function App() {
   const [flashKey, setFlashKey] = useState(0);
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
+  /** サブ基板モード（教材モードの覗き見用） */
+  const [atMode, setAtMode] = useState<string | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
   const [settingSel, setSettingSel] = useState<'random' | number>('random');
 
@@ -147,6 +149,7 @@ export function App() {
     setForceSel('');
     setNavDisplay(null);
     setAtRemaining(null);
+    setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -215,9 +218,12 @@ export function App() {
         setNavDisplay(null);
         const navNotes = navRef.current?.onEvent(event) ?? [];
         setAtRemaining(navRef.current?.atRemainingGames ?? null);
+        setAtMode(navRef.current?.atMode ?? null);
         const parts: string[] = [...navNotes];
         if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
         if (event.lidReleased) parts.push('🔓 放出開始！');
+        if (event.ctEntered) parts.push('⚡ CT 突入！目押しで取り切れ！');
+        if (event.ctExited) parts.push('CT 終了');
         // SB（普通役物）は地味さが本体なので開始・終了を騒がない（実機も告知しない）
         const kindOf = (id: string) => machineRef.current.bonuses.find((b) => b.id === id)?.kind;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
@@ -281,12 +287,14 @@ export function App() {
     statusChips.push(`${ROLE_LABEL[run.bonusId] ?? run.bonusId} 消化中 ${run.gamesPlayed}G / 獲得 ${run.totalPayout}枚`);
   }
   if (engine.rt !== null) statusChips.push(`RT中 ${engine.rtGames}G`);
+  if (engine.ct !== null) statusChips.push(`CT中 ${engine.ctGames}G / 獲得${engine.ctPayout}枚`);
   if (atRemaining !== null) statusChips.push(`AT中 残り${atRemaining}G`);
   if (debug) {
     if (engine.queue.length > 0) {
       statusChips.push(`内部中 ストック${engine.queue.length}個${engine.lid ? ` 蓋on(残${engine.lidReleaseIn ?? '?'}G)` : ' 放出可'}`);
     }
     if (engine.mode !== null) statusChips.push(`モード: ${engine.mode}`);
+    if (atMode !== null) statusChips.push(`ATモード: ${atMode}`);
   }
 
   return (

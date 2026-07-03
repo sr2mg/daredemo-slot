@@ -155,12 +155,18 @@ export function describeMachine(machine: MachineDef, opts: EstimateOptions = {})
   }
   const at = machine.nav?.at;
   if (at) {
-    const triggerTexts = at.triggers.map((t) => {
+    const triggerSource = machine.nav?.modes?.states[0]?.triggers ?? at.triggers;
+    const triggerTexts = triggerSource.map((t) => {
       if (t.on === 'roleHit') return `${t.of} で ${formatPct(t.prob, 0)}`;
       if (t.on === 'pureMiss') return `純ハズレで ${formatPct(t.prob, 1)}`;
       return `${t.n}G の天井`;
     });
     points.push(`AT 突入のきっかけ: ${triggerTexts.join(' / ')}`);
+    if (machine.nav?.modes) {
+      points.push(
+        `AT 抽選はサブ基板の高確/低確モード制（${machine.nav.modes.states.map((m) => m.id).join(' / ')}）。レア役でモードが移行し、同じ役でも当選率が変わる（メイン基板は一切関知しない）`,
+      );
+    }
     if (at.management.type === 'set') {
       points.push(`AT は ${at.management.gamesPerSet}G × 継続率 ${formatPct(at.management.continueProb, 0)} のセット管理。ナビに従うだけで機械割が上がる`);
     } else {
@@ -170,8 +176,35 @@ export function describeMachine(machine: MachineDef, opts: EstimateOptions = {})
   for (const rt of machine.rtStates) {
     const entry = rt.entry[0];
     const exit = rt.exit.find((t) => t.on === 'games');
+    const entryText =
+      entry?.on === 'bonusEnd'
+        ? `${entry.of ?? 'ボーナス'} 終了後`
+        : entry?.on === 'roleHit'
+          ? `${entry.of} 入賞で`
+          : '条件成立で';
+    const punk = rt.exit.find((t) => t.on === 'roleHit');
+    const endText = [
+      punk && punk.on === 'roleHit' ? `${punk.of} 入賞でパンク` : null,
+      exit && exit.on === 'games' ? `${exit.n}G で終了` : null,
+    ].filter(Boolean).join(' / ');
+    points.push(`${entryText} RT「${rt.id}」に突入${endText ? `（${endText}）` : ''}。抽選テーブルの一部が差し替わる`);
+    const bonusOverride = Object.keys(rt.replayWeights).find((id) => bonusIds.has(id));
+    if (bonusOverride) {
+      points.push(
+        `⚠「${rt.id}」はボーナス役 ${bonusOverride} の確率を跳ね上げる集中（2〜3号機の仕組み）。4号機で禁止された表現なので、4号機基準の適合試験には通らないのが正しい挙動`,
+      );
+    }
+  }
+  for (const ctDef of machine.ct ?? []) {
+    const entry = ctDef.entry[0];
     const entryText = entry?.on === 'bonusEnd' ? `${entry.of ?? 'ボーナス'} 終了後` : '条件成立で';
-    points.push(`${entryText} RT「${rt.id}」に突入${exit && exit.on === 'games' ? `（${exit.n}G で終了）` : ''}。リプレイ確率が変わる`);
+    const ends: string[] = [];
+    if (ctDef.end.games !== undefined) ends.push(`${ctDef.end.games}G`);
+    if (ctDef.end.maxPayout !== undefined) ends.push(`${ctDef.end.maxPayout}枚獲得`);
+    if (ctDef.end.punkRoles?.length) ends.push(`${ctDef.end.punkRoles.join('・')} 入賞でパンク`);
+    points.push(
+      `${entryText} CT「${ctDef.id}」に突入。抽選はそのままリール制御だけが変わり、${ctDef.freeRoles.join('・')} を成立フラグに関係なく目押しで狙える（終了: ${ends.join(' / ')}）。目押し力がそのまま出玉になる`,
+    );
   }
   const gap = s1.perfect - s1.naive;
   points.push(

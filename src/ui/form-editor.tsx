@@ -83,9 +83,22 @@ function roleReferences(draft: MachineDef, id: RoleId): string[] {
   if (draft.bonuses.some((b) => b.id === id)) refs.push('ボーナス定義');
   if (draft.roles.some((r) => r.nav?.onMiss.type === 'reduced' && r.nav.onMiss.roleRef === id)) refs.push('こぼし先');
   for (const rt of draft.rtStates) if (id in rt.replayWeights) refs.push(`RT ${rt.id}`);
+  for (const ctDef of draft.ct ?? []) {
+    if (ctDef.freeRoles.includes(id)) refs.push(`CT ${ctDef.id}`);
+    if (ctDef.end.punkRoles?.includes(id)) refs.push(`CT ${ctDef.id} パンク役`);
+    if (ctDef.entry.some((t) => 'of' in t && t.of === id)) refs.push(`CT ${ctDef.id} 突入契機`);
+  }
   const at = draft.nav?.at;
   if (at?.triggers.some((t) => t.on === 'roleHit' && t.of === id)) refs.push('AT 契機');
   if (at?.addOn?.some((a) => a.of === id)) refs.push('AT 上乗せ');
+  for (const mode of draft.nav?.modes?.states ?? []) {
+    if (
+      mode.triggers?.some((t) => t.on === 'roleHit' && t.of === id) ||
+      mode.transitions?.some((t) => t.on === 'roleHit' && t.of === id)
+    ) {
+      refs.push(`AT モード ${mode.id}`);
+    }
+  }
   return refs;
 }
 

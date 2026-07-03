@@ -7,7 +7,9 @@ import {
   runComplianceTask,
 } from '../src/core/compliance.js';
 import { atBeast } from '../src/machines/at-beast.js';
+import { ctMachine } from '../src/machines/ct-machine.js';
 import { sampleAType } from '../src/machines/sample-a.js';
+import { shuchuMachine } from '../src/machines/shuchu.js';
 import { stockBB } from '../src/machines/stock-bb.js';
 import { stockSB } from '../src/machines/stock-sb.js';
 
@@ -36,13 +38,18 @@ describe('適合試験チェック', () => {
     expect(assembleCompliance(plan, rates)).toEqual(checkCompliance(sampleAType, opts));
   }, 120_000);
 
-  it('全プリセットが設定 1・6 で 4 号機基準に適合する', () => {
-    for (const machine of [sampleAType, atBeast, stockBB, stockSB]) {
+  it('4号機相当の全プリセットが設定 1・6 で 4 号機基準に適合する', () => {
+    for (const machine of [sampleAType, atBeast, stockBB, stockSB, ctMachine]) {
       for (const setting of [1, 6]) {
         const result = checkCompliance(machine, { setting, seed: 42, trialsOverride: FAST });
         expect(result.pass, `${machine.name} 設定${setting}`).toBe(true);
       }
     }
+  }, 240_000);
+
+  it('集中機（3号機風）は 4 号機基準に通らない（集中が禁止された歴史の再現として正しい）', () => {
+    const result = checkCompliance(shuchuMachine, { setting: 1, seed: 42, trialsOverride: FAST });
+    expect(result.pass).toBe(false);
   }, 120_000);
 
   it('サンプル A タイプは下限・上限に対して余裕を持って適合する', () => {

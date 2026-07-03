@@ -8,7 +8,10 @@ import type { LidRelease, MachineDef, RoleDef, RoleId, WeightedEntry } from './t
  * スライダー操作のたびに呼べる。以下を単純化した近似であり、確定値は実測が正:
  * - ボーナスの取りこぼし待ち・蓋・キュー詰まりはスループット係数として近似
  *   （opts.measuredPullIn に checkLayout の実測引き込み率を渡すと精度が上がる）
- * - RT はボーナス終了契機 + ゲーム数転落のもののみ近似計上
+ * - RT / CT は「滞在ブロック」（突入率 × 期待滞在ゲーム数）として混合計上。
+ *   パンク役終了は打ち切り付き幾何分布の期待値で近似する
+ * - 集中（RT でボーナス役が高確率化する構成）では SB の連続入賞によるキュー飽和を
+ *   無視するため過大評価になりやすい（数 pt〜十数 pt）
  * - 完全打ちは「目押し可能役は全て取得・打ち分けは常に正解」と仮定
  */
 
@@ -272,31 +275,94 @@ export function estimateSpec(machine: MachineDef, setting = 1, opts: EstimateOpt
     const throughput = bonusThroughput(machine, lambda, missPAll, strategy, opts);
     const lambdaEff = new Map([...lambda].map(([id, p]) => [id, p * throughput]));
 
-    // RT 近似: bonusEnd 契機 + games 契機の exit を持つ RT のみ計上
-    // （非ボーナスゲームのうち rt にいる割合 rho を求め、リプレイ確率と小役期待値を混合）
-    let rtGamesPerNormalGame = 0;
-    let rtOut = normal.out;
-    let rtReplay = normal.pReplay;
+    /** 役 id が 1 ゲームに入賞する確率（フラグ確率 × 入賞率） */
+    const winP = (id: RoleId, fromTable: readonly WeightedEntry[] = table): number => {
+      const role = byId.get(id);
+      if (!role) return 0;
+      const hit = strategy === 'perfect' ? 1 : naiveHitRate(role, opts);
+      const flagP = fromTable.reduce((sum, e) => (e.roles.includes(id) ? sum + e.weight / DENOM : sum), 0);
+      return flagP * hit;
+    };
+
+    // --- RT / CT を「滞在ブロック」として近似する ---
+    // ブロック = 通常ゲーム 1 に対して何ゲームぶん存在するか（games）と、
+    // その間のテーブル・追加獲得（CT のフリー役）の組。
+    interface Block {
+      games: number;
+      table: readonly WeightedEntry[];
+      /** CT のフリー役など、テーブル外で毎ゲーム上乗せされる期待払い出し */
+      extraOut: number;
+    }
+    const blocks: Block[] = [];
+
     for (const rt of machine.rtStates) {
+      // 突入率: ボーナス終了契機 + 役入賞契機
+      let enterP = 0;
       const entryBonusEnd = rt.entry.find((t) => t.on === 'bonusEnd');
-      const exitGames = rt.exit.find((t) => t.on === 'games');
-      if (!entryBonusEnd || !exitGames || exitGames.on !== 'games') continue;
-      const sources = entryBonusEnd.of !== undefined ? [entryBonusEnd.of] : [...lambdaEff.keys()];
-      const enterP = sources.reduce((sum, id) => sum + (lambdaEff.get(id) ?? 0), 0);
-      const n = exitGames.n;
-      rtGamesPerNormalGame += enterP * n;
+      if (entryBonusEnd && entryBonusEnd.on === 'bonusEnd') {
+        const sources = entryBonusEnd.of !== undefined ? [entryBonusEnd.of] : [...lambdaEff.keys()];
+        enterP += sources.reduce((sum, id) => sum + (lambdaEff.get(id) ?? 0), 0);
+      }
+      for (const t of rt.entry) if (t.on === 'roleHit') enterP += winP(t.of);
+      if (enterP <= 0) continue;
+      // 滞在長: ゲーム数転落を上限とするパンク役（roleHit exit）の打ち切り付き幾何分布
+      let cap = Infinity;
+      let punkP = 0;
+      for (const t of rt.exit) {
+        if (t.on === 'games') cap = Math.min(cap, t.n);
+        else if (t.on === 'roleHit') punkP += winP(t.of);
+      }
+      const length = cappedGeometricMean(punkP, cap);
+      if (!Number.isFinite(length)) continue;
       const rtTable = table.map((e) => {
         const only = e.roles.length === 1 ? e.roles[0]! : null;
         const w = only !== null ? rt.replayWeights[only] : undefined;
         return w !== undefined ? { roles: e.roles, weight: w } : e;
       });
-      const ev = tableEv(machine, rtTable, strategy, opts);
-      rtOut = ev.out;
-      rtReplay = ev.pReplay;
+      blocks.push({ games: enterP * length, table: rtTable, extraOut: 0 });
     }
-    const rho = Math.min(0.9, rtGamesPerNormalGame / (1 + rtGamesPerNormalGame));
-    const nonBonusOut = (1 - rho) * normal.out + rho * rtOut;
-    const nonBonusReplay = (1 - rho) * normal.pReplay + rho * rtReplay;
+
+    for (const ctDef of machine.ct ?? []) {
+      const entry = ctDef.entry.find((t) => t.on === 'bonusEnd');
+      if (!entry || entry.on !== 'bonusEnd') continue;
+      const sources = entry.of !== undefined ? [entry.of] : [...lambdaEff.keys()];
+      const enterP = sources.reduce((sum, id) => sum + (lambdaEff.get(id) ?? 0), 0);
+      if (enterP <= 0) continue;
+      // CT 中の追加獲得: フリー役のうち期待値最大のものを毎ゲーム狙う
+      const best = Math.max(
+        0,
+        ...ctDef.freeRoles.map((id) => {
+          const role = byId.get(id);
+          return role ? rolePayoutEv(machine, role, strategy, opts) : 0;
+        }),
+      );
+      let cap = ctDef.end.games ?? 200;
+      if (ctDef.end.maxPayout !== undefined && best > 0) cap = Math.min(cap, ctDef.end.maxPayout / best);
+      const punkP = (ctDef.end.punkRoles ?? []).reduce((sum, id) => sum + winP(id), 0);
+      const length = cappedGeometricMean(punkP, cap);
+      blocks.push({ games: enterP * length, table, extraOut: best });
+    }
+
+    // 非ボーナスゲームの混合期待値（通常 1 ゲーム + 各ブロック games ゲーム）
+    const denom = 1 + blocks.reduce((sum, b) => sum + b.games, 0);
+    let nonBonusOut = normal.out;
+    let nonBonusReplay = normal.pReplay;
+    for (const block of blocks) {
+      const ev = block.table === table ? normal : tableEv(machine, block.table, strategy, opts);
+      nonBonusOut += block.games * (ev.out + block.extraOut);
+      nonBonusReplay += block.games * ev.pReplay;
+    }
+    nonBonusOut /= denom;
+    nonBonusReplay /= denom;
+
+    // ボーナスのフラグ確率もブロック込みで混合する（集中 = RT で SB 確率が跳ね上がる等）
+    const lambdaOf = (fromTable: readonly WeightedEntry[], id: RoleId): number =>
+      fromTable.reduce((sum, e) => (e.roles.includes(id) ? sum + e.weight / DENOM : sum), 0);
+    const lambdaMix = (id: RoleId): number => {
+      let p = lambdaOf(table, id);
+      for (const block of blocks) p += block.games * lambdaOf(block.table, id);
+      return (p / denom) * throughput;
+    };
 
     // 1 非ボーナスゲームあたり: ボーナスゲーム数 B・払い出し・投入
     let bonusGames = 0;
@@ -304,8 +370,8 @@ export function estimateSpec(machine: MachineDef, setting = 1, opts: EstimateOpt
     let bonusIn = 0;
     const bonusRows: BonusSpecRow[] = [];
     for (const def of machine.bonuses) {
-      const pFlag = lambda.get(def.id) ?? 0;
-      const p = lambdaEff.get(def.id) ?? 0;
+      const pFlag = lambdaMix(def.id) / throughput;
+      const p = lambdaMix(def.id);
       const run = bonusRunEv(machine, def.id, strategy, opts);
       const direct = byId.get(def.id)?.payout ?? 0; // SB の揃った瞬間の直接払い出し等
       bonusGames += p * run.games;
@@ -395,6 +461,13 @@ export function analyzeSensitivity(machine: MachineDef, setting = 1, opts: Estim
   }
 
   return rows.sort((a, b) => Math.abs(b.dNaive) - Math.abs(a.dNaive));
+}
+
+/** 毎ゲーム確率 p のパンクと上限 cap ゲームの早いほうで終わる状態の期待滞在ゲーム数 */
+function cappedGeometricMean(punkP: number, cap: number): number {
+  if (punkP <= 0) return cap;
+  if (!Number.isFinite(cap)) return 1 / punkP;
+  return (1 - (1 - punkP) ** cap) / punkP;
 }
 
 /** 「1/N」表記（p=0 は —） */

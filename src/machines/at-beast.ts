@@ -69,6 +69,7 @@ export const atBeast: MachineDef = {
   },
   nav: {
     at: {
+      // modes 使用時は各モードの triggers が優先される（これはフォールバック定義）
       triggers: [
         { on: 'roleHit', of: 'cherry', prob: 0.33 },
         { on: 'roleHit', of: 'melon', prob: 0.5 },
@@ -78,6 +79,38 @@ export const atBeast: MachineDef = {
       management: { type: 'set', gamesPerSet: 30, continueProb: 0.7 },
       addOn: [{ on: 'roleHit', of: 'melon', addGames: 10 }],
       navTargets: ['bell3'],
+    },
+    // サブ基板の高確/低確モード（獣王の高確モードと同じ発想。メイン基板は一切知らない）
+    modes: {
+      initial: 'low',
+      states: [
+        {
+          id: 'low',
+          triggers: [
+            { on: 'roleHit', of: 'cherry', prob: 0.2 },
+            { on: 'roleHit', of: 'melon', prob: 0.35 },
+            { on: 'pureMiss', prob: 0.003 },
+            { on: 'gamesCeiling', n: 500 },
+          ],
+          transitions: [
+            { on: 'roleHit', of: 'melon', to: 'high', prob: 0.5 },
+            { on: 'roleHit', of: 'cherry', to: 'high', prob: 0.25 },
+          ],
+        },
+        {
+          id: 'high',
+          triggers: [
+            { on: 'roleHit', of: 'cherry', prob: 0.66 },
+            { on: 'roleHit', of: 'melon', prob: 1.0 },
+            { on: 'pureMiss', prob: 0.03 },
+            { on: 'gamesCeiling', n: 500 },
+          ],
+          transitions: [
+            { on: 'atEnd', to: 'low', prob: 1.0 },
+            { on: 'pureMiss', to: 'low', prob: 0.05 },
+          ],
+        },
+      ],
     },
   },
 };

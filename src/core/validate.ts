@@ -262,6 +262,29 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
     if (!def.tables?.[bonus.tableRef]) err(`ボーナス ${bonus.id} の tableRef が未定義: ${bonus.tableRef}`);
   }
 
+  // CT（チャレンジタイム）
+  const ctIds = new Set<string>();
+  for (const ct of def.ct ?? []) {
+    if (ctIds.has(ct.id)) err(`CT の id が重複: ${ct.id}`);
+    ctIds.add(ct.id);
+    if (ct.freeRoles.length === 0) err(`CT ${ct.id}: freeRoles が空です（CT 中に取れる役を指定してください）`);
+    for (const id of ct.freeRoles) {
+      if (!roleIds.has(id)) err(`CT ${ct.id} の freeRoles に未定義の役: ${id}`);
+      if (bonusIds.has(id)) err(`CT ${ct.id} の freeRoles にボーナス役 ${id} は指定できません`);
+    }
+    for (const id of ct.end.punkRoles ?? []) {
+      if (!roleIds.has(id)) err(`CT ${ct.id} の punkRoles に未定義の役: ${id}`);
+    }
+    for (const t of ct.entry) {
+      if ((t.on === 'roleHit' || t.on === 'bonusEnd' || t.on === 'bonusFlag') && t.of !== undefined && !roleIds.has(t.of)) {
+        err(`CT ${ct.id} の entry に未定義の役: ${t.of}`);
+      }
+    }
+    if (ct.end.games === undefined && ct.end.maxPayout === undefined && (ct.end.punkRoles?.length ?? 0) === 0) {
+      err(`CT ${ct.id}: 終了条件がありません（games / maxPayout / punkRoles のいずれかが必要）`);
+    }
+  }
+
   const checkTable = (label: string, table: readonly { roles: readonly string[]; weight: number }[]) => {
     let total = 0;
     for (const entry of table) {
@@ -300,6 +323,29 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
   for (const rt of def.rtStates ?? []) {
     for (const id of Object.keys(rt.replayWeights)) {
       if (!roleIds.has(id)) err(`RT ${rt.id} の replayWeights に未定義の役: ${id}`);
+      if (bonusIds.has(id)) {
+        warn(
+          `RT ${rt.id} はボーナス役 ${id} の確率を状態で変えています = 集中（2〜3号機の仕組み）。` +
+            '4号機以降は禁止された表現なので、4号機基準の適合試験には通らないのが正常です',
+        );
+      }
+    }
+  }
+
+  // サブ基板モード（AT 高確/低確）
+  const navModes = def.nav?.modes;
+  if (navModes) {
+    if (!def.nav?.at) err('nav.modes には nav.at が必要です');
+    const modeIds = new Set(navModes.states.map((m) => m.id));
+    if (!modeIds.has(navModes.initial)) err(`nav.modes.initial が未定義: ${navModes.initial}`);
+    for (const mode of navModes.states) {
+      for (const t of mode.triggers ?? []) {
+        if (t.on === 'roleHit' && !roleIds.has(t.of)) err(`AT モード ${mode.id} の trigger に未定義の役: ${t.of}`);
+      }
+      for (const t of mode.transitions ?? []) {
+        if (!modeIds.has(t.to)) err(`AT モード ${mode.id} の移行先が未定義: ${t.to}`);
+        if (t.on === 'roleHit' && !roleIds.has(t.of)) err(`AT モード ${mode.id} の transition に未定義の役: ${t.of}`);
+      }
     }
   }
 
