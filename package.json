@@ -6,12 +6,23 @@
   "description": "日本のパチスロの内部構造（抽選・リール制御・状態機械）を WebUI で設定して遊べるシミュレータ。実在機種の再現ではなく、実機データは一切使用しない。",
   "license": "MIT",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
     "typescript": "^5.5.0",
+    "vite": "^7.3.6",
     "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   }
 }

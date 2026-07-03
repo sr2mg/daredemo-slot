@@ -15,7 +15,7 @@ function stubRng(value16: number): Rng {
 }
 
 describe('drawLottery', () => {
-  const table = sampleAType.baseTable;
+  const table = sampleAType.lottery.base;
 
   it('重み合計が 65536 以下', () => {
     expect(totalWeight(table)).toBeLessThanOrEqual(65536);

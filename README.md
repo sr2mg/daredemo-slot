@@ -13,10 +13,19 @@ WebUI で機種仕様（役物・小役・RT・ナビ…）を設定して保存
 
 設計ドキュメントは [docs/design/](docs/design/00-overview.md) を参照。
 
-## 開発
+## 遊ぶ
 
 ```sh
 npm install
-npm test
+npm run dev   # http://localhost:5173
+```
+
+操作: **Space** = レバー / **J・K・L** = 左・中・右リール停止（ボタンクリックも可）。
+「成立フラグを見る」にチェックを入れると、内部抽選の結果と制御対象を覗ける教材モードになる。
+
+## 開発
+
+```sh
+npm test           # 総当たり性質テスト含む
 npm run typecheck
 ```

@@ -80,6 +80,7 @@ const R = [
 
 export const sampleAType: MachineDef = {
   name: 'サンプル A タイプ',
+  bet: 3,
   frames: 20,
   strips: [L, C, R],
   // クロス 5 ライン（水平 3 + 対角 2）
@@ -94,16 +95,40 @@ export const sampleAType: MachineDef = {
     { id: 'replay', kind: 'replay', payout: 0, pattern: ['replay', 'replay', 'replay'], pullIn: 'guaranteed' },
     { id: 'bell', kind: 'small', payout: 8, pattern: ['bell', 'bell', 'bell'], pullIn: 'guaranteed' },
     { id: 'cherry', kind: 'small', payout: 2, pattern: ['cherry', 'any', 'any'], pullIn: { missable: { targetRate: 0.35 } } },
-    { id: 'bb_red', kind: 'bonus', payout: 0, pattern: ['seven_red', 'seven_red', 'seven_red'], pullIn: { missable: { targetRate: 0.25 } } },
-    { id: 'rb', kind: 'bonus', payout: 0, pattern: ['bar', 'bar', 'bar'], pullIn: { missable: { targetRate: 0.25 } } },
+    // targetRate は「単独成立時に適当押しで入賞する率」。3 リール役は各リールの引き込み率の積になる
+    // （seven/bar は各リール 7/20 ≒ 35% → 全体 ≒ 4.3%）
+    { id: 'bb_red', kind: 'bonus', payout: 0, pattern: ['seven_red', 'seven_red', 'seven_red'], pullIn: { missable: { targetRate: 0.043 } } },
+    { id: 'rb', kind: 'bonus', payout: 0, pattern: ['bar', 'bar', 'bar'], pullIn: { missable: { targetRate: 0.043 } } },
   ],
   priority: 'role-first',
-  baseTable: [
-    { roles: ['replay'], weight: 8978 }, //  ≒1/7.3
-    { roles: ['bell'], weight: 6552 }, //    ≒1/10
-    { roles: ['cherry'], weight: 1057 }, //  ≒1/62
-    { roles: ['cherry', 'bb_red'], weight: 66 },
-    { roles: ['bb_red'], weight: 200 },
-    { roles: ['rb'], weight: 273 },
+  bonuses: [
+    // BB: 20 ゲーム消化で終了（獲得目安 ≒ 20G × (60000/65536) × 8 枚 ≒ 146 枚）
+    { id: 'bb_red', kind: 'bb', end: { games: 20 }, tableRef: 'in_bb' },
+    // RB: 12 ゲーム or 8 回入賞で終了
+    { id: 'rb', kind: 'rb', end: { games: 12, wins: 8 }, tableRef: 'in_rb' },
   ],
+  rtStates: [
+    // BB 終了後 50 ゲームのリプレイ高確率 RT
+    {
+      id: 'rt_high',
+      replayWeights: { replay: 29127 },
+      entry: [{ on: 'bonusEnd', of: 'bb_red' }],
+      exit: [{ on: 'games', n: 50 }],
+    },
+  ],
+  carryover: { queueLimit: 1, lid: null },
+  lottery: {
+    base: [
+      { roles: ['replay'], weight: 8978 }, //  ≒1/7.3
+      { roles: ['bell'], weight: 6552 }, //    ≒1/10
+      { roles: ['cherry'], weight: 1057 }, //  ≒1/62
+      { roles: ['cherry', 'bb_red'], weight: 66 },
+      { roles: ['bb_red'], weight: 200 },
+      { roles: ['rb'], weight: 273 },
+    ],
+  },
+  tables: {
+    in_bb: [{ roles: ['bell'], weight: 60000 }],
+    in_rb: [{ roles: ['bell'], weight: 40000 }],
+  },
 };

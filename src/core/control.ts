@@ -90,6 +90,16 @@ export class ControlContext {
     return candidates[0]!;
   }
 
+  /** この履歴から target を（どの押下でも）保証して入賞させられるか（戦略・検証用の公開 API） */
+  winGuaranteed(target: RoleId, history: readonly StopEvent[]): boolean {
+    return this.guaranteedWin(target, this.stopsFrom(history));
+  }
+
+  /** この履歴から押下位置しだいで target を入賞させられるか（戦略・検証用の公開 API） */
+  winPossible(target: RoleId, history: readonly StopEvent[]): boolean {
+    return this.possibleWin(target, this.stopsFrom(history));
+  }
+
   private stopsFrom(history: readonly StopEvent[]): number[] {
     const stops: number[] = new Array(this.nReels).fill(-1);
     for (const event of history) stops[event.reel] = event.stopPosition;
