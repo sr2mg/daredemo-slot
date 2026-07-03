@@ -82,4 +82,19 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
     expect(fnumLoOf(defs.betLever, 1)).toEqual([note(392.0), note(523.25)]);
     expect(defs.betLever.duration).toBeGreaterThan(defs.lever.duration);
   });
+
+  it('ビープ音色を差し替えられる（既定はシンセサイザー 10 番）', () => {
+    const voiceOf = (def: (typeof defs)['bet']) =>
+      def.events.filter((e) => e.reg >= 0x30 && e.reg <= 0x31).map((e) => e.val >> 4);
+    expect(voiceOf(defs.bet)).toEqual([10, 10]); // ch0/ch1 とも既定音色
+    const clarinet = buildSfxDefs({ beepVoice: 5 });
+    expect(voiceOf(clarinet.bet)).toEqual([5, 5]);
+    expect(voiceOf(clarinet.lever)).toEqual([5, 5]);
+    // ビープ以外の効果音は影響を受けない
+    expect(clarinet.fanfare.events).toEqual(defs.fanfare.events);
+    // 波形も実際に変わる
+    const a = renderSequence(exports, opll, defs.bet);
+    const b = renderSequence(exports, opll, clarinet.bet);
+    expect(a).not.toEqual(b);
+  });
 });

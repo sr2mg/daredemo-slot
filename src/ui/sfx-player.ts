@@ -1,27 +1,40 @@
 import type { OpllExports, SfxName } from './opll-core.js';
-import { buildSfxDefs, OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence } from './opll-core.js';
+import {
+  buildSfxDefs,
+  DEFAULT_BEEP_VOICE,
+  OPLL_CLOCK,
+  OPLL_IMPORTS,
+  OPLL_RATE,
+  renderSequence,
+} from './opll-core.js';
 
 /**
  * 効果音プレイヤー。
  * - 起動時に emu2413 の WASM を取得し、全効果音を Float32Array に事前レンダリング
  *   （AudioContext 不要なのでユーザー操作前にできる）
  * - AudioContext はブラウザの自動再生制限のため、最初の play()（= ユーザー操作起点）で生成
- * - ON/OFF は localStorage に保存
+ * - ON/OFF・ビープ音色は localStorage に保存。音色変更時は再レンダリング
  */
 
 const STORAGE_KEY = 'daredemo.sfx.v1';
+const VOICE_KEY = 'daredemo.sfxVoice.v1';
 const MASTER_GAIN = 0.5;
 
 export class SfxPlayer {
   enabled: boolean;
+  beepVoice: number;
   private waves: Partial<Record<SfxName, Float32Array>> = {};
   private buffers: Partial<Record<SfxName, AudioBuffer>> = {};
   private ctx: AudioContext | null = null;
   private gain: GainNode | null = null;
   private loading: Promise<void> | null = null;
+  private exports: OpllExports | null = null;
+  private opll = 0;
 
   constructor() {
     this.enabled = localStorage.getItem(STORAGE_KEY) !== 'off';
+    const stored = Number(localStorage.getItem(VOICE_KEY));
+    this.beepVoice = Number.isInteger(stored) && stored >= 1 && stored <= 15 ? stored : DEFAULT_BEEP_VOICE;
   }
 
   setEnabled(on: boolean): void {
@@ -33,18 +46,35 @@ export class SfxPlayer {
     }
   }
 
+  /** ビープ（ベット/レバー）の音色を変更し、対象の波形を作り直す */
+  setBeepVoice(voice: number): void {
+    this.beepVoice = voice;
+    try {
+      localStorage.setItem(VOICE_KEY, String(voice));
+    } catch {
+      // 保存できなくても再生には支障なし
+    }
+    if (this.exports) this.renderAll();
+  }
+
+  private renderAll(): void {
+    if (!this.exports) return;
+    const defs = buildSfxDefs({ beepVoice: this.beepVoice });
+    for (const [name, def] of Object.entries(defs)) {
+      this.waves[name as SfxName] = renderSequence(this.exports, this.opll, def);
+    }
+    this.buffers = {}; // AudioBuffer キャッシュを無効化
+  }
+
   /** WASM 取得 + 全効果音の事前レンダリング（ユーザー操作前に呼んでよい） */
   preload(): Promise<void> {
     this.loading ??= (async () => {
       const url = new URL('./emu2413.wasm', import.meta.url);
       const bytes = await (await fetch(url)).arrayBuffer();
       const { instance } = await WebAssembly.instantiate(bytes, OPLL_IMPORTS);
-      const exports = instance.exports as unknown as OpllExports;
-      const opll = exports.OPLL_new(OPLL_CLOCK, OPLL_RATE);
-      const defs = buildSfxDefs();
-      for (const [name, def] of Object.entries(defs)) {
-        this.waves[name as SfxName] = renderSequence(exports, opll, def);
-      }
+      this.exports = instance.exports as unknown as OpllExports;
+      this.opll = this.exports.OPLL_new(OPLL_CLOCK, OPLL_RATE);
+      this.renderAll();
     })();
     return this.loading;
   }

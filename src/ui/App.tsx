@@ -8,6 +8,7 @@ import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
+import { OPLL_VOICES } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
 
@@ -91,6 +92,7 @@ export function App() {
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
   const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
+  const [beepVoice, setBeepVoice] = useState(() => sfxRef.current!.beepVoice);
   /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
   const [betDone, setBetDone] = useState(false);
   const betDoneRef = useRef(betDone);
@@ -485,6 +487,25 @@ export function App() {
           />
           効果音（OPLL）
         </label>
+        <label htmlFor="beep-voice">ビープ音色:</label>
+        <select
+          id="beep-voice"
+          value={beepVoice}
+          disabled={!sfxOn}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setBeepVoice(v);
+            sfxRef.current?.setBeepVoice(v);
+            sfxRef.current?.play('bet'); // 即試聴
+          }}
+          data-testid="beep-voice"
+        >
+          {OPLL_VOICES.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.id}: {v.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <GuidePanel key={`guide-${machine.name}`} machine={machine} />

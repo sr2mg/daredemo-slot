@@ -106,6 +106,32 @@ const V_VIBES = 12;
 const V_SYNBASS = 13;
 const V_EGUITAR = 15;
 
+/** YM2413 の内蔵メロディ音色 15 種（UI のドロップダウン用） */
+export const OPLL_VOICES: readonly { id: number; label: string }[] = [
+  { id: 1, label: 'ヴァイオリン' },
+  { id: 2, label: 'ギター' },
+  { id: 3, label: 'ピアノ' },
+  { id: 4, label: 'フルート' },
+  { id: 5, label: 'クラリネット（SQR寄り）' },
+  { id: 6, label: 'オーボエ' },
+  { id: 7, label: 'トランペット' },
+  { id: 8, label: 'オルガン' },
+  { id: 9, label: 'ホルン' },
+  { id: 10, label: 'シンセサイザー（SAW寄り・既定）' },
+  { id: 11, label: 'ハープシコード' },
+  { id: 12, label: 'ビブラフォン' },
+  { id: 13, label: 'シンセベース' },
+  { id: 14, label: 'アコースティックベース' },
+  { id: 15, label: 'エレキギター' },
+];
+
+export const DEFAULT_BEEP_VOICE = V_SYNTH;
+
+export interface SfxOptions {
+  /** ベット/レバービープの音色（1〜15。既定はシンセサイザー） */
+  beepVoice?: number;
+}
+
 export type SfxName =
   | 'bet'
   | 'lever'
@@ -126,12 +152,13 @@ export const BET_CHORD = { main: 659.26, sub: 392.0 } as const; //  E5 + G4
 export const LEVER_CHORD = { main: 880, sub: 523.25 } as const; // A5 + C5
 
 /** 効果音の定義（すべてオリジナルのレジスタシーケンス。アルゼ風の文法で作曲） */
-export function buildSfxDefs(): Record<SfxName, SfxDef> {
-  // ベット「ペッ」とレバー「ピッ」: シンセの 2 音ハモリビープ
+export function buildSfxDefs(opts: SfxOptions = {}): Record<SfxName, SfxDef> {
+  const beepVoice = opts.beepVoice ?? DEFAULT_BEEP_VOICE;
+  // ベット「ペッ」とレバー「ピッ」: 選択音色の 2 音ハモリビープ
   const beep = (b: SeqBuilder, chord: { main: number; sub: number }, at: number, off: number): SeqBuilder =>
     b
-      .keyOn(0, V_SYNTH, 4, chord.main, at)
-      .keyOn(1, V_SYNTH, 5, chord.sub, at)
+      .keyOn(0, beepVoice, 4, chord.main, at)
+      .keyOn(1, beepVoice, 5, chord.sub, at)
       .keyOff(0, off)
       .keyOff(1, off);
   const bet = beep(new SeqBuilder(), BET_CHORD, 0, 0.055);
