@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { checkCompliance, RULESETS } from '../core/compliance.js';
+import type { ComplianceResult, RulesetId } from '../core/compliance.js';
 import { simulate } from '../core/sim.js';
 import type { SimResult, StrategyName } from '../core/sim.js';
 import type { MachineDef } from '../core/types.js';
@@ -115,6 +117,91 @@ export function SpecPanel({ machine }: { machine: MachineDef }) {
           <p className="panel-note">
             完全打ちとの差 {((result.perfect.payoutRate - result.naive.payoutRate) * 100).toFixed(1)}pt が技術介入度（ナビ・目押し）の指標
           </p>
+        )}
+      </div>
+    </details>
+  );
+}
+
+export function CompliancePanel({ machine }: { machine: MachineDef }) {
+  const [ruleset, setRuleset] = useState<RulesetId>('yon');
+  const [setting, setSetting] = useState(1);
+  const [mode, setMode] = useState<'quick' | 'standard'>('quick');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ComplianceResult | null>(null);
+  const settings = machine.lottery.settings ?? 1;
+
+  const run = () => {
+    setBusy(true);
+    setTimeout(() => {
+      setResult(checkCompliance(machine, { ruleset, setting, mode, seed: Date.now() >>> 0 }));
+      setBusy(false);
+    }, 30);
+  };
+
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  const range = (min: number | undefined, max: number | undefined) =>
+    `${min !== undefined ? pct(min) + ' 〜' : ''} ${max !== undefined ? pct(max) + ' 未満' : ''}`.trim();
+
+  return (
+    <details className="panel">
+      <summary>適合試験チェック（試射試験風）</summary>
+      <div className="panel-body">
+        <p className="panel-note">
+          保通協の出玉率基準の近似チェック。上限は完全打ち試行の最大値、下限は適当打ち試行の最小値で判定します
+          （初期状態からの独立試行ウィンドウによる教材的な近似で、実際の試験手続きの再現ではありません）。
+        </p>
+        <div className="panel-controls">
+          <select value={ruleset} onChange={(e) => setRuleset(e.target.value as RulesetId)} disabled={busy}>
+            {Object.values(RULESETS).map((r) => (
+              <option key={r.id} value={r.id}>{r.label}</option>
+            ))}
+          </select>
+          {settings > 1 && (
+            <select value={setting} onChange={(e) => setSetting(Number(e.target.value))} disabled={busy}>
+              {Array.from({ length: settings }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>設定{n}</option>
+              ))}
+            </select>
+          )}
+          <select value={mode} onChange={(e) => setMode(e.target.value as 'quick' | 'standard')} disabled={busy}>
+            <option value="quick">クイック</option>
+            <option value="standard">じっくり</option>
+          </select>
+          <button onClick={run} disabled={busy} data-testid="run-compliance">
+            {busy ? '試験中…' : '試験する'}
+          </button>
+        </div>
+        {result && (
+          <div data-testid="compliance-result">
+            <p className={result.pass ? 'badge-ok' : 'badge-ng'}>
+              {result.pass
+                ? `✓ ${RULESETS[result.ruleset].label}に適合（設定${result.setting}）`
+                : `✗ ${RULESETS[result.ruleset].label}に不適合（設定${result.setting}）`}
+            </p>
+            <table className="spec-table">
+              <thead>
+                <tr>
+                  <th>区間</th>
+                  <th>基準</th>
+                  <th>適当打ち（最小〜最大）</th>
+                  <th>完全打ち（最小〜最大）</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.spans.map((span) => (
+                  <tr key={span.games}>
+                    <td>{span.games.toLocaleString()}G × {span.naive.trials}回</td>
+                    <td>{range(span.min, span.max)}</td>
+                    <td>{pct(span.naive.min)} 〜 {pct(span.naive.max)}</td>
+                    <td>{pct(span.perfect.min)} 〜 {pct(span.perfect.max)}</td>
+                    <td className={span.pass ? 'ok' : 'ng'}>{span.pass ? '✓' : '✗'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </details>

@@ -7,7 +7,7 @@ import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
 import { EditorPanel } from './editor.js';
 import { guides } from './guides.js';
-import { LayoutPanel, SpecPanel } from './panels.js';
+import { CompliancePanel, LayoutPanel, SpecPanel } from './panels.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
@@ -393,6 +393,7 @@ export function App() {
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
+      <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
       <EditorPanel key={`edit-${machine.name}`} machine={machine} onSave={saveCustom} />
 
       <label className="debug-toggle">
