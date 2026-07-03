@@ -30,14 +30,16 @@ describe('drawLottery', () => {
     expect(drawLottery(table, stubRng(15529))).toEqual(['bell']);
     // cherry: [15530, 16587)
     expect(drawLottery(table, stubRng(15530))).toEqual(['cherry']);
-    // cherry+bb_red: [16587, 16653)
-    expect(drawLottery(table, stubRng(16587))).toEqual(['cherry', 'bb_red']);
-    // bb_red: [16653, 16853)
-    expect(drawLottery(table, stubRng(16653))).toEqual(['bb_red']);
-    // rb: [16853, 17126)
-    expect(drawLottery(table, stubRng(17125))).toEqual(['rb']);
-    // ハズレ: [17126, 65536)
-    expect(drawLottery(table, stubRng(17126))).toEqual([]);
+    // melon: [16587, 17242)
+    expect(drawLottery(table, stubRng(16587))).toEqual(['melon']);
+    // cherry+bb_red: [17242, 17308)
+    expect(drawLottery(table, stubRng(17242))).toEqual(['cherry', 'bb_red']);
+    // bb_red: [17308, 17508)
+    expect(drawLottery(table, stubRng(17308))).toEqual(['bb_red']);
+    // rb: [17508, 17781)
+    expect(drawLottery(table, stubRng(17780))).toEqual(['rb']);
+    // ハズレ: [17781, 65536)
+    expect(drawLottery(table, stubRng(17781))).toEqual([]);
     expect(drawLottery(table, stubRng(65535))).toEqual([]);
   });
 

@@ -24,13 +24,16 @@ const SYMBOL_VIEW: Record<string, { text: string; className: string }> = {
   bell: { text: '🔔', className: 'sym-bell' },
   replay: { text: '🔃', className: 'sym-replay' },
   cherry: { text: '🍒', className: 'sym-cherry' },
-  blank: { text: '─', className: 'sym-blank' },
+  melon: { text: '🍉', className: 'sym-melon' },
+  // 純ブランクの伝統（獣王の木＝通称カリフラワー）に敬意を表して野菜
+  blank: { text: '🥦', className: 'sym-blank' },
 };
 
 const ROLE_LABEL: Record<string, string> = {
   replay: 'リプレイ',
   bell: 'ベル 8枚',
   cherry: 'チェリー 2枚',
+  melon: 'スイカ 15枚',
   bb_red: 'BIG BONUS',
   rb: 'REGULAR BONUS',
 };

@@ -48,6 +48,7 @@ const CASES: Expectation[] = [
   { active: ['replay'], mustWin: ['replay'] }, // (b)
   { active: ['bell'], mustWin: ['bell'] }, // (d) PB=1
   { active: ['cherry'], mustWin: [] },
+  { active: ['melon'], mustWin: [] },
   { active: ['bb_red'], mustWin: [] },
   { active: ['rb'], mustWin: [] },
   { active: ['cherry', 'bb_red'], mustWin: [] },

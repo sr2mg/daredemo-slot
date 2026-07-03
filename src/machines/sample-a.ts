@@ -15,7 +15,7 @@ const L = [
   'blank', //     2
   'replay', //    3
   'cherry', //    4
-  'blank', //     5
+  'melon', //     5
   'bell', //      6
   'blank', //     7
   'replay', //    8
@@ -24,7 +24,7 @@ const L = [
   'bell', //     11
   'blank', //    12
   'replay', //   13
-  'blank', //    14
+  'melon', //    14
   'blank', //    15
   'bell', //     16
   'blank', //    17
@@ -36,7 +36,7 @@ const C = [
   'bell', //      0
   'blank', //     1
   'replay', //    2
-  'blank', //     3
+  'melon', //     3
   'seven_red', // 4
   'bell', //      5
   'blank', //     6
@@ -46,7 +46,7 @@ const C = [
   'bell', //     10
   'blank', //    11
   'replay', //   12
-  'blank', //    13
+  'melon', //    13
   'blank', //    14
   'bell', //     15
   'blank', //    16
@@ -60,7 +60,7 @@ const R = [
   'blank', //     1
   'replay', //    2
   'seven_red', // 3
-  'blank', //     4
+  'melon', //     4
   'bell', //      5
   'blank', //     6
   'replay', //    7
@@ -69,7 +69,7 @@ const R = [
   'bell', //     10
   'blank', //    11
   'replay', //   12
-  'blank', //    13
+  'melon', //    13
   'blank', //    14
   'bell', //     15
   'blank', //    16
@@ -95,6 +95,8 @@ export const sampleAType: MachineDef = {
     { id: 'replay', kind: 'replay', payout: 0, pattern: ['replay', 'replay', 'replay'], pullIn: 'guaranteed' },
     { id: 'bell', kind: 'small', payout: 8, pattern: ['bell', 'bell', 'bell'], pullIn: 'guaranteed' },
     { id: 'cherry', kind: 'small', payout: 2, pattern: ['cherry', 'any', 'any'], pullIn: { missable: { targetRate: 0.35 } } },
+    // スイカ: 3 リール目押しのレア役（各リール 2 個。実測引き込み率 ≒14%）
+    { id: 'melon', kind: 'small', payout: 15, pattern: ['melon', 'melon', 'melon'], pullIn: { missable: { targetRate: 0.14 } } },
     // targetRate は「単独成立時に適当押しで入賞する率」。3 リール役は各リールの引き込み率の積になる
     // （seven/bar は各リール 7/20 ≒ 35% → 全体 ≒ 4.3%）
     { id: 'bb_red', kind: 'bonus', payout: 0, pattern: ['seven_red', 'seven_red', 'seven_red'], pullIn: { missable: { targetRate: 0.043 } } },
@@ -122,6 +124,7 @@ export const sampleAType: MachineDef = {
       { roles: ['replay'], weight: 8978 }, //  ≒1/7.3
       { roles: ['bell'], weight: 6552 }, //    ≒1/10
       { roles: ['cherry'], weight: 1057 }, //  ≒1/62
+      { roles: ['melon'], weight: 655 }, //    ≒1/100
       { roles: ['cherry', 'bb_red'], weight: 66 },
       { roles: ['bb_red'], weight: 200 },
       { roles: ['rb'], weight: 273 },

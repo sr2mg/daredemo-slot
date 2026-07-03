@@ -31,7 +31,7 @@ const perfect: ChooseStops = (_active, ctx) => choosePerfect(sampleAType, ctx);
 /** seven（L0 / C4 / R3）に絶対届かない押下位置で止める下手打ち */
 const missSeven: ChooseStops = () => ({ order: [0, 1, 2], pushes: [10, 10, 10] });
 
-const BB_DRAW = 16653; // base テーブルの bb_red 単独当選域
+const BB_DRAW = 17308; // base テーブルの bb_red 単独当選域
 
 function run(
   machine: MachineDef,
