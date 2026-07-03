@@ -10,6 +10,16 @@ export type RoleId = string;
 
 export type PullIn = 'guaranteed' | { missable: { targetRate: number } };
 
+/** 打ち分け指定（docs/design/01 軸 2）。MVP は第 1 停止リールのみで正解判定する 3 択 */
+export interface RoleNav {
+  /** 所属 navGroup（machine.navGroups への参照） */
+  group: string;
+  /** 正解の第 1 停止リール番号。完全な押し順 6 択は将来拡張 */
+  correctFirst: number;
+  /** 不正解時: 取りこぼし or 参照役の入賞 */
+  onMiss: { type: 'lose' } | { type: 'reduced'; roleRef: RoleId };
+}
+
 export interface RoleDef {
   id: RoleId;
   /** bonus はエンジン内では役として統一的に扱う（図柄組み合わせで入賞判定するため） */
@@ -19,6 +29,28 @@ export interface RoleDef {
   /** リールごとの要求図柄。'any' は任意 */
   pattern: readonly (SymbolId | 'any')[];
   pullIn: PullIn;
+  /**
+   * 打ち分け指定。同一 pattern を持つ複数の役（例: 押し順ベル 3 択）はフラグ細分化であり、
+   * 入賞判定・蹴飛ばしは図柄組み合わせ（pattern）単位で行われる
+   */
+  nav?: RoleNav;
+}
+
+// ===== 軸 5: ナビ（サブ基板。メインには一切干渉しない） =====
+
+export type AtTrigger =
+  | { on: 'roleHit'; of: RoleId; prob: number }
+  | { on: 'pureMiss'; prob: number }
+  | { on: 'gamesCeiling'; n: number };
+
+export interface NavAtDef {
+  triggers: readonly AtTrigger[];
+  management:
+    | { type: 'games'; games: number }
+    | { type: 'set'; gamesPerSet: number; continueProb: number };
+  addOn?: readonly { on: 'roleHit'; of: RoleId; addGames: number }[];
+  /** ナビを出す navGroup */
+  navTargets: readonly string[];
 }
 
 /** 抽選テーブルの 1 エントリ。フラグ = 役 ID の集合（docs/design/02-lottery.md） */
@@ -124,6 +156,10 @@ export interface MachineDef {
   lottery: { base: readonly WeightedEntry[] };
   /** 役物の tableRef から参照される丸ごとテーブル */
   tables: Record<string, readonly WeightedEntry[]>;
+  /** 打ち分けグループの定義（任意） */
+  navGroups?: readonly { id: string }[];
+  /** ナビ層（サブ基板）の定義（任意）。AT の状態管理はコアの外（NavLayer）が行う */
+  nav?: { at: NavAtDef };
 }
 
 // ===== エンジン状態と GameEvent =====

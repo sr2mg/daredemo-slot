@@ -1,4 +1,12 @@
-import type { MachineDef, RoleId } from './types.js';
+import type { MachineDef, RoleDef, RoleId } from './types.js';
+
+/**
+ * 図柄組み合わせのキー。同一 pattern を共有する複数フラグ（押し順ベル 3 択等）の
+ * 入賞判定・蹴飛ばしは、役 ID ではなくこのキー単位で行う（フラグ細分化の帰結）。
+ */
+export function patternKey(role: RoleDef): string {
+  return role.pattern.join('|');
+}
 
 /** 停止位置 stop のリール reel が行 row に表示する図柄 */
 export function symbolAt(machine: MachineDef, reel: number, stop: number, row: number): string {

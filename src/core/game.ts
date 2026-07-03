@@ -1,5 +1,5 @@
 import { ControlContext } from './control.js';
-import { winsAt } from './judge.js';
+import { patternKey, winsAt } from './judge.js';
 import { drawLottery } from './lottery.js';
 import type { Rng } from './rng.js';
 import type {
@@ -25,10 +25,12 @@ import type {
  * ナビ層・プレゼン層への GameEvent 配布は呼び出し側の責務。
  */
 
-export type ChooseStops = (
-  active: readonly RoleId[],
-  ctx: ControlContext,
-) => { order: readonly number[]; pushes: readonly number[] };
+/**
+ * 停止戦略。session.stopReel を全リールぶん呼ぶ。
+ * 打ち分け役があるとき、第 1 停止のリール選択で有効役が確定し session.ctx が
+ * 差し替わるため、戦略は各停止時点の session.ctx / session.stopped を参照すること。
+ */
+export type Strategy = (session: GameSession) => void;
 
 export function initialState(machine?: MachineDef): EngineState {
   return {
@@ -102,11 +104,14 @@ export class GameSession {
   readonly bet: number;
   /** 当該ゲームの抽選結果（役 ID の集合） */
   readonly flags: readonly RoleId[];
-  /** 入賞制御に乗る役集合（成立フラグ + キュー先頭ボーナス） */
+  /** 入賞制御に乗る役集合（成立フラグ + キュー先頭ボーナス）。打ち分け解決前 */
   readonly active: readonly RoleId[];
-  readonly ctx: ControlContext;
+  readonly machine: MachineDef;
 
-  private readonly machine: MachineDef;
+  private _ctx: ControlContext;
+  /** 打ち分け解決後の有効役集合（第 1 停止までは active と同一） */
+  private effective: ReadonlySet<RoleId>;
+  private readonly ctxCache: Map<string, ControlContext> | undefined;
   private readonly s: EngineState;
   private readonly history: StopEvent[] = [];
   private readonly queuedBonus: RoleId | null;
@@ -176,14 +181,24 @@ export class GameSession {
     const active = new Set(this.flags.filter((id) => !bonusIds.has(id)));
     if (s.base.type === 'normal' && !s.lid && s.queue.length > 0) active.add(s.queue[0]!);
     this.active = [...active];
+    this.effective = active;
+    this.ctxCache = ctxCache;
+    this._ctx = this.ctxFor(active);
+  }
 
-    const activeKey = this.active.slice().sort().join(',');
-    let ctx = ctxCache?.get(activeKey);
+  /** 現在の制御コンテキスト（第 1 停止で打ち分けが解決されると差し替わる） */
+  get ctx(): ControlContext {
+    return this._ctx;
+  }
+
+  private ctxFor(active: ReadonlySet<RoleId>): ControlContext {
+    const key = [...active].sort().join(',');
+    let ctx = this.ctxCache?.get(key);
     if (!ctx) {
-      ctx = new ControlContext(machine, active);
-      ctxCache?.set(activeKey, ctx);
+      ctx = new ControlContext(this.machine, active);
+      this.ctxCache?.set(key, ctx);
     }
-    this.ctx = ctx;
+    return ctx;
   }
 
   get stopped(): readonly StopEvent[] {
@@ -198,7 +213,15 @@ export class GameSession {
   stopReel(reel: number, pushPosition: number): StopEvent {
     if (this.finished) throw new Error('session already finished');
     if (this.history.some((e) => e.reel === reel)) throw new Error(`reel ${reel} already stopped`);
-    const slip = this.ctx.resolveStop(this.history, reel, pushPosition);
+    // 第 1 停止で打ち分け（押し順 3 択）が確定 → 有効役集合と制御を差し替える（docs/design/03）
+    if (this.history.length === 0) {
+      const effective = effectiveActive(this.machine, this.effective, reel);
+      if (!setEquals(effective, this.effective)) {
+        this.effective = effective;
+        this._ctx = this.ctxFor(effective);
+      }
+    }
+    const slip = this._ctx.resolveStop(this.history, reel, pushPosition);
     const event: StopEvent = {
       reel,
       pushPosition,
@@ -223,12 +246,23 @@ export class GameSession {
     for (const event of this.history) stops[event.reel] = event.stopPosition;
 
     // --- 入賞判定・払い出し ---
-    const wins = winsAt(machine, stops);
+    // 図柄組み合わせ単位で集約し、同一 pattern の別フラグ（押し順ベル 3 択等）の重複計上を防ぐ。
+    // 代表役は有効役を優先して選ぶ
     const rolesById = new Map(machine.roles.map((r) => [r.id, r]));
+    const byPattern = new Map<string, RoleId[]>();
+    for (const win of winsAt(machine, stops)) {
+      const key = patternKey(rolesById.get(win)!);
+      const ids = byPattern.get(key);
+      if (ids) ids.push(win);
+      else byPattern.set(key, [win]);
+    }
+    const wins: RoleId[] = [];
     let payout = 0;
     let replayWon = false;
-    for (const win of wins) {
-      const role = rolesById.get(win)!;
+    for (const ids of byPattern.values()) {
+      const rep = ids.find((id) => this.effective.has(id)) ?? ids[0]!;
+      wins.push(rep);
+      const role = rolesById.get(rep)!;
       payout += role.payout;
       if (role.kind === 'replay') replayWon = true;
     }
@@ -321,15 +355,42 @@ export class GameSession {
 export function playGame(
   machine: MachineDef,
   state: EngineState,
-  chooseStops: ChooseStops,
+  strategy: Strategy,
   rng: Rng,
   /** 同一フラグ集合の ControlContext を跨ゲームで再利用するキャッシュ（シミュレーション高速化） */
   ctxCache?: Map<string, ControlContext>,
 ): { state: EngineState; event: GameEvent } {
   const session = new GameSession(machine, state, rng, ctxCache);
-  const { order, pushes } = chooseStops(session.active, session.ctx);
-  for (const reel of order) session.stopReel(reel, pushes[reel]!);
+  strategy(session);
   return session.finish(rng);
+}
+
+/** 第 1 停止リールが確定したときの有効役集合（打ち分けの解決。docs/design/01 軸 2） */
+export function effectiveActive(
+  machine: MachineDef,
+  active: ReadonlySet<RoleId>,
+  firstReel: number,
+): ReadonlySet<RoleId> {
+  const rolesById = new Map(machine.roles.map((r) => [r.id, r]));
+  const out = new Set<RoleId>();
+  for (const id of active) {
+    const nav = rolesById.get(id)?.nav;
+    if (!nav) {
+      out.add(id);
+    } else if (nav.correctFirst === firstReel) {
+      out.add(id);
+    } else if (nav.onMiss.type === 'reduced') {
+      out.add(nav.onMiss.roleRef);
+    }
+    // onMiss: lose は単に消える（取りこぼし）
+  }
+  return out;
+}
+
+function setEquals(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
 }
 
 function bonusDefOf(machine: MachineDef, id: RoleId): BonusDef {

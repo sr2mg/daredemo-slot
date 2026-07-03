@@ -172,6 +172,49 @@ button:disabled {
   color: #ffd54f;
 }
 
+.nav-banner {
+  margin-bottom: 12px;
+  font-size: clamp(18px, 3.2vmin, 28px);
+  font-weight: bold;
+  color: #17171f;
+  background: #ffd54f;
+  border-radius: 10px;
+  padding: 8px;
+  animation: nav-blink 0.5s step-end infinite alternate;
+}
+
+@keyframes nav-blink {
+  from {
+    background: #ffd54f;
+  }
+  to {
+    background: #ffb300;
+  }
+}
+
+.editor-textarea {
+  width: 100%;
+  min-height: 320px;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  background: #101018;
+  color: #cde;
+  border: 1px solid #3a3a55;
+  border-radius: 8px;
+  padding: 8px;
+  resize: vertical;
+  margin-bottom: 10px;
+}
+
+.editor-save {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.badge-warn {
+  color: #ffb74d;
+}
+
 .win-banner {
   margin-top: 14px;
   font-size: clamp(18px, 3vmin, 26px);

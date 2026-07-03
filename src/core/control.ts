@@ -1,5 +1,5 @@
-import { winsAt } from './judge.js';
-import type { FlagSet, MachineDef, RoleId, StopEvent } from './types.js';
+import { patternKey, winsAt } from './judge.js';
+import type { FlagSet, MachineDef, RoleDef, RoleId, StopEvent } from './types.js';
 
 /**
  * リール制御（docs/design/03-reel-control.md）。
@@ -32,7 +32,10 @@ export class ControlContext {
   private readonly nReels: number;
   private readonly base: number; // frames + 1（未停止 = -1 を 0 に写像）
   private readonly stateCount: number;
-  private readonly activeReplays: ReadonlySet<RoleId>;
+  private readonly rolesById: ReadonlyMap<RoleId, RoleDef>;
+  /** 成立役の図柄組み合わせキー集合（蹴飛ばし判定はこの単位で行う） */
+  private readonly activePatterns: ReadonlySet<string>;
+  private readonly hasActiveReplay: boolean;
   private readonly feasibleMemo: Int8Array;
   private readonly guaranteedMemo = new Map<RoleId, Int8Array>();
   private readonly possibleMemo = new Map<RoleId, Int8Array>();
@@ -45,8 +48,10 @@ export class ControlContext {
     this.stateCount = this.base ** this.nReels;
     this.feasibleMemo = new Int8Array(this.stateCount);
 
+    this.rolesById = new Map(machine.roles.map((r) => [r.id, r]));
     const activeRoles = machine.roles.filter((r) => active.has(r.id));
-    this.activeReplays = new Set(activeRoles.filter((r) => r.kind === 'replay').map((r) => r.id));
+    this.activePatterns = new Set(activeRoles.map(patternKey));
+    this.hasActiveReplay = activeRoles.some((r) => r.kind === 'replay');
 
     const replays = activeRoles.filter((r) => r.kind === 'replay');
     const smalls = activeRoles
@@ -112,11 +117,19 @@ export class ControlContext {
     return key;
   }
 
-  /** 全停止形として合法か: 非成立役が入賞せず、成立リプレイがあれば必ず入賞している */
+  /**
+   * 全停止形として合法か: 非成立の図柄組み合わせが入賞せず、成立リプレイがあれば必ず入賞している。
+   * 判定は図柄組み合わせ（pattern）単位。同一 pattern の別フラグ（押し順ベル等）が
+   * winsAt に複数載っても、成立役と同じ組み合わせなら合法（docs/design/03）。
+   */
   private okFinal(stops: readonly number[]): boolean {
     const wins = winsAt(this.machine, stops);
-    for (const win of wins) if (!this.active.has(win)) return false;
-    if (this.activeReplays.size > 0 && !wins.some((w) => this.activeReplays.has(w))) return false;
+    for (const win of wins) {
+      if (!this.activePatterns.has(patternKey(this.rolesById.get(win)!))) return false;
+    }
+    if (this.hasActiveReplay && !wins.some((w) => this.rolesById.get(w)!.kind === 'replay')) {
+      return false;
+    }
     return true;
   }
 

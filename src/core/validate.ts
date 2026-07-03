@@ -1,5 +1,5 @@
 import { ControlContext } from './control.js';
-import { winsAt } from './judge.js';
+import { patternKey, winsAt } from './judge.js';
 import type { MachineDef, PullIn, RoleId, StopEvent } from './types.js';
 
 /**
@@ -50,8 +50,12 @@ export function checkLayout(machine: MachineDef): LayoutReport {
   let casesChecked = 0;
   const singleWinCount = new Map<RoleId, number>();
 
+  const rolesById = new Map(machine.roles.map((r) => [r.id, r]));
+
   for (const active of flagSets.values()) {
     const activeSet = new Set(active);
+    // 蹴飛ばし判定は図柄組み合わせ単位（同一 pattern の別フラグは合法。docs/design/03）
+    const activePatterns = new Set(active.map((id) => patternKey(rolesById.get(id)!)));
     const ctx = new ControlContext(machine, activeSet);
     const single = active.length === 1 ? active[0]! : null;
     const hasReplay = active.some((id) => replayIds.has(id));
@@ -67,7 +71,9 @@ export function checkLayout(machine: MachineDef): LayoutReport {
           const stops = [history[0]!.stopPosition, history[1]!.stopPosition, history[2]!.stopPosition];
           const wins = winsAt(machine, stops);
           casesChecked++;
-          for (const win of wins) if (!activeSet.has(win)) kickViolations++;
+          for (const win of wins) {
+            if (!activePatterns.has(patternKey(rolesById.get(win)!))) kickViolations++;
+          }
           if (hasReplay && !wins.some((w) => replayIds.has(w))) replayMisses++;
           if (single !== null && wins.includes(single)) {
             singleWinCount.set(single, (singleWinCount.get(single) ?? 0) + 1);
@@ -94,4 +100,113 @@ export function checkLayout(machine: MachineDef): LayoutReport {
     casesChecked,
     ok: kickViolations === 0 && replayMisses === 0 && roleChecks.every((c) => c.ok),
   };
+}
+
+/**
+ * 機種定義の構造バリデーション（docs/design/05 保存時パイプライン 1・2）。
+ * errors = 保存不可、warnings = 動くが意図を確認すべき構成。
+ * 型は unknown 入力（エディタの JSON パース結果）を想定し、防御的にチェックする。
+ */
+export function validateMachine(def: MachineDef): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const err = (msg: string) => errors.push(msg);
+  const warn = (msg: string) => warnings.push(msg);
+
+  if (!def.name) err('name がありません');
+  if (!Number.isInteger(def.frames) || def.frames < 5) err('frames は 5 以上の整数が必要です');
+  if (!Array.isArray(def.strips) || def.strips.length !== 3) err('strips は 3 リール分の配列が必要です');
+  if (!Number.isInteger(def.bet) || def.bet < 1) err('bet は 1 以上が必要です');
+
+  const symbolSet = new Set((def.strips ?? []).flat());
+  for (const [i, strip] of (def.strips ?? []).entries()) {
+    if (strip.length !== def.frames) err(`リール${i} のコマ数が frames と一致しません`);
+  }
+
+  const roleIds = new Set<string>();
+  const navGroupIds = new Set((def.navGroups ?? []).map((g) => g.id));
+  for (const role of def.roles ?? []) {
+    if (roleIds.has(role.id)) err(`役 ID が重複: ${role.id}`);
+    roleIds.add(role.id);
+    if (role.pattern.length !== def.strips.length) err(`役 ${role.id} の pattern 長がリール数と不一致`);
+    for (const sym of role.pattern) {
+      if (sym !== 'any' && !symbolSet.has(sym)) warn(`役 ${role.id} の図柄 ${sym} はどのリールにも無く、揃うことがありません`);
+    }
+    if (role.payout < 0) err(`役 ${role.id} の payout が負`);
+    const nav = role.nav;
+    if (nav) {
+      if (!navGroupIds.has(nav.group)) err(`役 ${role.id} の navGroup が未定義: ${nav.group}`);
+      if (nav.correctFirst < 0 || nav.correctFirst >= def.strips.length) {
+        err(`役 ${role.id} の correctFirst がリール範囲外`);
+      }
+      if (nav.onMiss.type === 'reduced') {
+        const ref = nav.onMiss.roleRef;
+        if (!(def.roles ?? []).some((r) => r.id === ref)) err(`役 ${role.id} の onMiss.roleRef が未定義: ${ref}`);
+        if (role.kind === 'replay') {
+          const refRole = (def.roles ?? []).find((r) => r.id === ref);
+          if (refRole && refRole.kind !== 'replay') err(`リプレイ役 ${role.id} の onMiss 参照先はリプレイである必要があります`);
+        }
+      } else if (role.kind === 'replay') {
+        err(`リプレイ役 ${role.id} の onMiss に lose は使えません（docs/design/03 優先度 2）`);
+      }
+    }
+  }
+
+  const bonusIds = new Set<string>();
+  for (const bonus of def.bonuses ?? []) {
+    bonusIds.add(bonus.id);
+    if (!roleIds.has(bonus.id)) err(`ボーナス ${bonus.id} に対応する役がありません`);
+    if (!def.tables?.[bonus.tableRef]) err(`ボーナス ${bonus.id} の tableRef が未定義: ${bonus.tableRef}`);
+  }
+
+  const checkTable = (label: string, table: readonly { roles: readonly string[]; weight: number }[]) => {
+    let total = 0;
+    for (const entry of table) {
+      total += entry.weight;
+      if (entry.weight < 0) err(`${label}: 負の重みがあります`);
+      for (const id of entry.roles) if (!roleIds.has(id)) err(`${label}: 未定義の役 ${id}`);
+      if (entry.roles.filter((id) => bonusIds.has(id)).length > 1) err(`${label}: 1 エントリに複数ボーナス`);
+    }
+    if (total > 65536) err(`${label}: 重み合計が 65536 を超えています (${total})`);
+  };
+  checkTable('lottery.base', def.lottery?.base ?? []);
+  for (const [key, table] of Object.entries(def.tables ?? {})) checkTable(`tables.${key}`, table);
+
+  for (const rt of def.rtStates ?? []) {
+    for (const id of Object.keys(rt.replayWeights)) {
+      if (!roleIds.has(id)) err(`RT ${rt.id} の replayWeights に未定義の役: ${id}`);
+    }
+  }
+
+  const carryover = def.carryover;
+  if (!carryover || !Number.isInteger(carryover.queueLimit) || carryover.queueLimit < 1) {
+    err('carryover.queueLimit は 1 以上が必要です');
+  }
+  const lid = carryover?.lid;
+  if (lid) {
+    if (lid.release && lid.modes) err('lid.release と lid.modes は排他です');
+    if (!lid.release && !lid.modes) err('lid には release か modes のどちらかが必要です');
+    if (lid.modes) {
+      const modeIds = new Set(lid.modes.states.map((m) => m.id));
+      if (!modeIds.has(lid.modes.initial)) err(`lid.modes.initial が未定義: ${lid.modes.initial}`);
+      for (const mode of lid.modes.states) {
+        for (const t of mode.onBonusEnd ?? []) {
+          if (!modeIds.has(t.to)) err(`モード ${mode.id} の移行先が未定義: ${t.to}`);
+        }
+      }
+    }
+  }
+
+  const at = def.nav?.at;
+  if (at) {
+    for (const target of at.navTargets) {
+      if (!navGroupIds.has(target)) err(`nav.at.navTargets に未定義の navGroup: ${target}`);
+    }
+    const hasNavRole = (def.roles ?? []).some((r) => r.nav && at.navTargets.includes(r.nav.group));
+    if (!hasNavRole) warn('ナビ対象の打ち分け役が存在しないため、AT は出玉に影響しません（docs/design/01 軸 2）');
+  }
+
+  if ((def.bonuses ?? []).length === 0 && !at) warn('役物もナビもない構成です（出玉の波が作れません）');
+
+  return { errors, warnings };
 }

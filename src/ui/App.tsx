@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GameSession, initialState } from '../core/game.js';
+import { NavLayer } from '../core/nav.js';
+import type { NavDisplay } from '../core/nav.js';
 import { Xoshiro128 } from '../core/rng.js';
 import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
+import { EditorPanel } from './editor.js';
 import { guides } from './guides.js';
 import { LayoutPanel, SpecPanel } from './panels.js';
 
@@ -31,6 +34,10 @@ const SYMBOL_VIEW: Record<string, { text: string; className: string }> = {
 const ROLE_LABEL: Record<string, string> = {
   replay: 'リプレイ',
   bell: 'ベル 8枚',
+  bell_L: 'ベル 8枚',
+  bell_C: 'ベル 8枚',
+  bell_R: 'ベル 8枚',
+  bell_weak: 'こぼしベル 1枚',
   cherry: 'チェリー 2枚',
   melon: 'スイカ 15枚',
   bb_red: 'BIG BONUS',
@@ -40,6 +47,17 @@ const ROLE_LABEL: Record<string, string> = {
 
 /** 強制フラグ選択の特殊値（教材モード用） */
 const FORCE_PURE_MISS = 'PURE_MISS';
+
+/** カスタム機種の localStorage キー */
+const CUSTOM_KEY = 'daredemo.customMachines.v1';
+
+function loadCustoms(): MachineDef[] {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? '[]') as MachineDef[];
+  } catch {
+    return [];
+  }
+}
 
 type Phase = 'ready' | 'spinning';
 
@@ -53,6 +71,7 @@ const freshReels = (machine: MachineDef): ReelView[] =>
   machine.strips.map(() => ({ top: 0, stopped: true }));
 
 export function App() {
+  const [customs, setCustoms] = useState<MachineDef[]>(loadCustoms);
   const [machine, setMachine] = useState<MachineDef>(machines[0]!);
   const [engine, setEngine] = useState<EngineState>(() => initialState(machines[0]!));
   const [credit, setCredit] = useState(INITIAL_CREDIT);
@@ -63,9 +82,18 @@ export function App() {
   const [debug, setDebug] = useState(false);
   const [guideOpen, setGuideOpen] = useState(true);
   const [forceSel, setForceSel] = useState('');
+  const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
+  const [atRemaining, setAtRemaining] = useState<number | null>(null);
+
+  /** ビルトイン + カスタム（同名カスタムはビルトインを上書き） */
+  const allMachines = useMemo(() => {
+    const customNames = new Set(customs.map((c) => c.name));
+    return [...machines.filter((m) => !customNames.has(m.name)), ...customs];
+  }, [customs]);
 
   const rngRef = useRef(new Xoshiro128(Date.now() >>> 0));
   const sessionRef = useRef<GameSession | null>(null);
+  const navRef = useRef<NavLayer | null>(machines[0]!.nav ? new NavLayer(machines[0]!, Date.now() >>> 0) : null);
   const machineRef = useRef(machine);
   machineRef.current = machine;
   const reelsRef = useRef(reels);
@@ -95,10 +123,9 @@ export function App() {
     setLog((prev) => [line, ...prev].slice(0, 10));
   }, []);
 
-  const selectMachine = useCallback((name: string) => {
-    const next = machines.find((m) => m.name === name);
-    if (!next) return;
+  const applyMachine = useCallback((next: MachineDef) => {
     sessionRef.current = null;
+    navRef.current = next.nav ? new NavLayer(next, Date.now() >>> 0) : null;
     setMachine(next);
     setEngine(initialState(next));
     setCredit(INITIAL_CREDIT);
@@ -107,7 +134,37 @@ export function App() {
     setLastEvent(null);
     setLog([]);
     setForceSel('');
+    setNavDisplay(null);
+    setAtRemaining(null);
   }, []);
+
+  const allMachinesRef = useRef(allMachines);
+  allMachinesRef.current = allMachines;
+
+  const selectMachine = useCallback(
+    (name: string) => {
+      const next = allMachinesRef.current.find((m) => m.name === name);
+      if (next) applyMachine(next);
+    },
+    [applyMachine],
+  );
+
+  /** エディタからの保存: カスタム機種として永続化し、そのままプレイ */
+  const saveCustom = useCallback(
+    (def: MachineDef) => {
+      setCustoms((prev) => {
+        const next = [...prev.filter((c) => c.name !== def.name), def];
+        try {
+          localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
+        } catch {
+          // 容量超過等は保存失敗しても遊べるようにする
+        }
+        return next;
+      });
+      applyMachine(def);
+    },
+    [applyMachine],
+  );
 
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
@@ -118,6 +175,8 @@ export function App() {
     if (session.bet > creditRef.current) return; // クレジット不足
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
+    // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
+    setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
     setCredit((c) => c - session.bet);
     setLastEvent(null);
     setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
@@ -142,7 +201,10 @@ export function App() {
         setCredit((c) => c + event.payout);
         setLastEvent(event);
         setPhase('ready');
-        const parts: string[] = [];
+        setNavDisplay(null);
+        const navNotes = navRef.current?.onEvent(event) ?? [];
+        setAtRemaining(navRef.current?.atRemainingGames ?? null);
+        const parts: string[] = [...navNotes];
         if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
         if (event.lidReleased) parts.push('🔓 放出開始！');
         // SB（普通役物）は地味さが本体なので開始・終了を騒がない（実機も告知しない）
@@ -180,6 +242,7 @@ export function App() {
     statusChips.push(`${ROLE_LABEL[run.bonusId] ?? run.bonusId} 消化中 ${run.gamesPlayed}G / 獲得 ${run.totalPayout}枚`);
   }
   if (engine.rt !== null) statusChips.push(`RT中 ${engine.rtGames}G`);
+  if (atRemaining !== null) statusChips.push(`AT中 残り${atRemaining}G`);
   if (debug) {
     if (engine.queue.length > 0) {
       statusChips.push(`内部中 ストック${engine.queue.length}個${engine.lid ? ` 蓋on(残${engine.lidReleaseIn ?? '?'}G)` : ' 放出可'}`);
@@ -197,9 +260,9 @@ export function App() {
           disabled={phase !== 'ready'}
           data-testid="machine-select"
         >
-          {machines.map((m) => (
+          {allMachines.map((m) => (
             <option key={m.name} value={m.name}>
-              {m.name}
+              {customs.some((c) => c.name === m.name) ? `★ ${m.name}` : m.name}
             </option>
           ))}
         </select>
@@ -216,6 +279,11 @@ export function App() {
       </div>
 
       <div className="cabinet">
+        {navDisplay && (
+          <div className="nav-banner" data-testid="nav-banner">
+            ナビ: {['左', '中', '右'][navDisplay.correctFirst]}から押せ！
+          </div>
+        )}
         <div className="reels">
           {machine.strips.map((strip, reel) => (
             <div key={reel} className={`reel ${reels[reel]!.stopped ? '' : 'reel-spinning'}`}>
@@ -297,6 +365,7 @@ export function App() {
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
+      <EditorPanel key={`edit-${machine.name}`} machine={machine} onSave={saveCustom} />
 
       <label className="debug-toggle">
         <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />

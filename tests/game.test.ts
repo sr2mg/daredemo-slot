@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { GameSession, initialState, playGame, resolveTable } from '../src/core/game.js';
-import type { ChooseStops } from '../src/core/game.js';
+import type { Strategy } from '../src/core/game.js';
 import type { EngineState } from '../src/core/types.js';
 import type { Rng, RngState } from '../src/core/rng.js';
-import { choosePerfect, simulate } from '../src/core/sim.js';
+import { playPerfect, simulate } from '../src/core/sim.js';
 import type { GameEvent, MachineDef } from '../src/core/types.js';
+import { atBeast } from '../src/machines/at-beast.js';
 import { sampleAType } from '../src/machines/sample-a.js';
 import { stockBB } from '../src/machines/stock-bb.js';
 import { stockSB } from '../src/machines/stock-sb.js';
@@ -30,9 +31,11 @@ class SeqRng implements Rng {
   }
 }
 
-const perfect: ChooseStops = (_active, ctx) => choosePerfect(sampleAType, ctx);
+const perfect: Strategy = (session) => playPerfect(session);
 /** seven（L0 / C4 / R3）に絶対届かない押下位置で止める下手打ち */
-const missSeven: ChooseStops = () => ({ order: [0, 1, 2], pushes: [10, 10, 10] });
+const missSeven: Strategy = (session) => {
+  for (const reel of [0, 1, 2]) session.stopReel(reel, 10);
+};
 
 const BB_DRAW = 17308; // base テーブルの bb_red 単独当選域
 
@@ -40,9 +43,9 @@ function run(
   machine: MachineDef,
   state: EngineState,
   rng: Rng,
-  choose: ChooseStops,
+  strategy: Strategy,
 ): { state: EngineState; event: GameEvent } {
-  return playGame(machine, state, choose, rng);
+  return playGame(machine, state, strategy, rng);
 }
 
 describe('ボーナスのライフサイクルと RT', () => {
@@ -169,12 +172,10 @@ describe('モード付き解除（吉宗型ストック機）', () => {
     mode,
     pendingRebet: false,
   });
-  const perfectBB: ChooseStops = (_a, ctx) => choosePerfect(stockBB, ctx);
-
   it('ボーナス終了時にモード移行抽選と新モードの解除テーブルで掛け直す', () => {
     // nextInt=0 → onBonusEnd の先頭 (normal 70%) → normal 維持、解除テーブル先頭 32G
     const rng = new SeqRng([0]);
-    const result = playGame(stockBB, bonusEnding('normal'), perfectBB, rng);
+    const result = playGame(stockBB, bonusEnding('normal'), perfect, rng);
     expect(result.event.bonusEnded).toBe('bb_red');
     expect(result.event.modeChanged).toBeNull();
     expect(result.state.mode).toBe('normal');
@@ -185,13 +186,13 @@ describe('モード付き解除（吉宗型ストック機）', () => {
   it('天国モードは 1G 連する', () => {
     // nextInt=0 → onBonusEnd 先頭 (heaven 50%) → heaven 維持、解除テーブル先頭 1G
     const rng = new SeqRng([0]);
-    let result = playGame(stockBB, bonusEnding('heaven'), perfectBB, rng);
+    let result = playGame(stockBB, bonusEnding('heaven'), perfect, rng);
     expect(result.state.mode).toBe('heaven');
     expect(result.state.lid).toBe(true);
     expect(result.state.lidReleaseIn).toBe(1);
 
     // 次ゲームのレバー ON で解除 → 同ゲームに次の BB が入賞 = 1G 連
-    result = playGame(stockBB, result.state, perfectBB, rng); // draw は fallback 65535 = ハズレ
+    result = playGame(stockBB, result.state, perfect, rng); // draw は fallback 65535 = ハズレ
     expect(result.event.lidReleased).toBe(true);
     expect(result.event.bonusStarted).toBe('bb_red');
   });
@@ -208,25 +209,24 @@ describe('純ハズレ解除と放出ゾーン（サラ金型 SB ストック機
     mode: null,
     pendingRebet: false,
   };
-  const perfectSB: ChooseStops = (_a, ctx) => choosePerfect(stockSB, ctx);
   const SB_DRAW = 17242; // stockSB base テーブルの sb_kin 当選域
 
   it('純ハズレで解除抽選 → 放出ゾーン中は上乗せしても蓋が掛からない', () => {
     // ゲーム 1: ハズレ(65535) → 純ハズレ解除抽選(0 < 6553 で当選) → 同ゲームから SB 放出
     const rng = new SeqRng([65535, 0, 0, SB_DRAW]);
-    let result = playGame(stockSB, stocked, perfectSB, rng);
+    let result = playGame(stockSB, stocked, perfect, rng);
     expect(result.event.lidReleased).toBe(true);
     expect(result.event.bonusStarted).toBe('sb_kin');
     expect(result.state.queue).toHaveLength(1);
     expect(result.state.base.type).toBe('bonus');
 
     // ゲーム 2: SB 作動ゲーム（ベル高確率、1 ゲームで終了）。engageOn は bonusFlag のみなので蓋は掛からない
-    result = playGame(stockSB, result.state, perfectSB, rng); // draw16=0 → in_sb の bell
+    result = playGame(stockSB, result.state, perfect, rng); // draw16=0 → in_sb の bell
     expect(result.event.bonusEnded).toBe('sb_kin');
     expect(result.state.lid).toBe(false);
 
     // ゲーム 3: 放出ゾーン中に新たな SB 成立 → キューに積まれるだけで蓋は掛からず、先頭は同ゲーム放出
-    result = playGame(stockSB, result.state, perfectSB, rng); // draw16=SB_DRAW
+    result = playGame(stockSB, result.state, perfect, rng); // draw16=SB_DRAW
     expect(result.event.queuedBonus).toBe('sb_kin');
     expect(result.state.lid).toBe(false);
     expect(result.event.bonusStarted).toBe('sb_kin');
@@ -238,6 +238,40 @@ describe('純ハズレ解除と放出ゾーン（サラ金型 SB ストック機
     expect(result.bonusStarts['sb_kin'] ?? 0).toBeGreaterThan(50);
     expect(result.payoutRate).toBeGreaterThan(0.3);
     expect(result.payoutRate).toBeLessThan(1.5);
+  });
+});
+
+describe('押し順打ち分け（AT機・第1停止3択）', () => {
+  it('正解の第1停止でベルが揃い、不正解はこぼしベル1枚になる', () => {
+    // bell_C 強制成立（正解 = 中第1停止）
+    const correct = new GameSession(atBeast, initialState(atBeast), new SeqRng([]), undefined, ['bell_C']);
+    playPerfect(correct); // 完全打ちは正解押し順に従う
+    const correctResult = correct.finish(new SeqRng([]));
+    expect(correctResult.event.wins).toContain('bell_C');
+    expect(correctResult.event.payout).toBe(8);
+
+    // 同じフラグを順押し（左第1停止 = 不正解）
+    const missed = new GameSession(atBeast, initialState(atBeast), new SeqRng([]), undefined, ['bell_C']);
+    for (const reel of [0, 1, 2]) missed.stopReel(reel, 0);
+    const missedResult = missed.finish(new SeqRng([]));
+    expect(missedResult.event.wins).toContain('bell_weak');
+    expect(missedResult.event.wins).not.toContain('bell_C');
+    expect(missedResult.event.payout).toBe(1);
+  });
+
+  it('同一図柄組み合わせの別フラグは重複計上されない（ベル揃いで8枚のみ）', () => {
+    const session = new GameSession(atBeast, initialState(atBeast), new SeqRng([]), undefined, ['bell_L']);
+    for (const reel of [0, 1, 2]) session.stopReel(reel, 0); // 左第1停止 = 正解
+    const { event } = session.finish(new SeqRng([]));
+    expect(event.payout).toBe(8); // bell_L/C/R の3重計上にならない
+    expect(event.wins.filter((w) => w.startsWith('bell_'))).toHaveLength(1);
+  });
+
+  it('ナビ追従はナビ無視より機械割が高い（AT の存在意義）', () => {
+    const naive = simulate(atBeast, { games: 10_000, strategy: 'naive', seed: 11 });
+    const follow = simulate(atBeast, { games: 10_000, strategy: 'navFollow', seed: 11 });
+    expect(follow.atGames).toBeGreaterThan(0);
+    expect(follow.payoutRate).toBeGreaterThan(naive.payoutRate);
   });
 });
 

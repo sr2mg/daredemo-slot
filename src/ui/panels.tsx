@@ -1,9 +1,15 @@
 import { useState } from 'react';
 import { simulate } from '../core/sim.js';
-import type { SimResult } from '../core/sim.js';
+import type { SimResult, StrategyName } from '../core/sim.js';
 import type { MachineDef } from '../core/types.js';
 import { checkLayout } from '../core/validate.js';
 import type { LayoutReport } from '../core/validate.js';
+
+const STRATEGY_LABEL: Record<StrategyName, string> = {
+  naive: '適当打ち',
+  navFollow: 'ナビ追従',
+  perfect: '完全打ち',
+};
 
 /**
  * スペック実測パネルと配列チェックパネル
@@ -18,15 +24,20 @@ function oneIn(games: number, count: number): string {
 export function SpecPanel({ machine }: { machine: MachineDef }) {
   const [games, setGames] = useState(100_000);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ naive: SimResult; perfect: SimResult } | null>(null);
+  const [result, setResult] = useState<Partial<Record<StrategyName, SimResult>> | null>(null);
+
+  // ナビ層のある機種は「ナビ追従（AT の実戦値）」も測る
+  const strategies: StrategyName[] = machine.nav ? ['naive', 'navFollow', 'perfect'] : ['naive', 'perfect'];
 
   const run = () => {
     setBusy(true);
     setTimeout(() => {
       const seed = Date.now() >>> 0;
-      const naive = simulate(machine, { games, strategy: 'naive', seed });
-      const perfect = simulate(machine, { games, strategy: 'perfect', seed });
-      setResult({ naive, perfect });
+      const results: Partial<Record<StrategyName, SimResult>> = {};
+      for (const strategy of strategies) {
+        results[strategy] = simulate(machine, { games, strategy, seed });
+      }
+      setResult(results);
       setBusy(false);
     }, 30);
   };
@@ -52,34 +63,46 @@ export function SpecPanel({ machine }: { machine: MachineDef }) {
             <thead>
               <tr>
                 <th></th>
-                <th>適当打ち</th>
-                <th>完全打ち</th>
+                {strategies.map((s) => (
+                  <th key={s}>{STRATEGY_LABEL[s]}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>機械割</td>
-                <td>{(result.naive.payoutRate * 100).toFixed(1)}%</td>
-                <td>{(result.perfect.payoutRate * 100).toFixed(1)}%</td>
+                {strategies.map((s) => (
+                  <td key={s}>{((result[s]?.payoutRate ?? 0) * 100).toFixed(1)}%</td>
+                ))}
               </tr>
               {bonusIds.map((id) => (
                 <tr key={id}>
                   <td>{id}</td>
-                  <td>{oneIn(result.naive.games, result.naive.bonusStarts[id] ?? 0)}</td>
-                  <td>{oneIn(result.perfect.games, result.perfect.bonusStarts[id] ?? 0)}</td>
+                  {strategies.map((s) => (
+                    <td key={s}>{oneIn(result[s]?.games ?? 0, result[s]?.bonusStarts[id] ?? 0)}</td>
+                  ))}
                 </tr>
               ))}
               <tr>
                 <td>リプレイ</td>
-                <td>{oneIn(result.naive.games, result.naive.replayCount)}</td>
-                <td>{oneIn(result.perfect.games, result.perfect.replayCount)}</td>
+                {strategies.map((s) => (
+                  <td key={s}>{oneIn(result[s]?.games ?? 0, result[s]?.replayCount ?? 0)}</td>
+                ))}
               </tr>
+              {machine.nav && (
+                <tr>
+                  <td>AT 滞在率</td>
+                  {strategies.map((s) => (
+                    <td key={s}>{(((result[s]?.atGames ?? 0) / (result[s]?.games ?? 1)) * 100).toFixed(1)}%</td>
+                  ))}
+                </tr>
+              )}
             </tbody>
           </table>
         )}
-        {result && (
+        {result && result.naive && result.perfect && (
           <p className="panel-note">
-            完全打ちとの差 {((result.perfect.payoutRate - result.naive.payoutRate) * 100).toFixed(1)}pt が技術介入度の指標
+            完全打ちとの差 {((result.perfect.payoutRate - result.naive.payoutRate) * 100).toFixed(1)}pt が技術介入度（ナビ・目押し）の指標
           </p>
         )}
       </div>

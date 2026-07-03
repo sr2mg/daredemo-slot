@@ -154,7 +154,7 @@
 |---|---|
 | `roles[].kind` | `replay` / `small` |
 | `roles[].pullIn` | `guaranteed` / `{ missable: { targetRate } }` |
-| `nav.correct` | `{ order }` / `{ position: { reel, range } }` のユニオン |
+| `nav.correct` | 設計上は `{ order }` / `{ position: { reel, range } }` のユニオン。**MVP 実装は `correctFirst`（第 1 停止リール番号・3 択）のみ** |
 | `nav.onMiss.type` | `lose` / `reduced`（replay 役は `reduced` のみ） |
 | `bonuses[].kind` | `bb` / `rb` / `sb` |
 | `bonuses[].end` | `games` / `jacCount` / `wins` / `maxPayout` の組み合わせ |
@@ -191,7 +191,7 @@ WebUI の保存ボタンは単なる書き出しではなく、**検証パイプ
 
 ## WebUI 構成
 
-- **機種エディタ**: 5 軸に対応したフォーム + プリセット選択（[01](01-machine-model.md) のプリセット表）。プリセットは初期値を埋めるだけで、以後は全項目編集可
+- **機種エディタ**: 5 軸に対応したフォーム + プリセット選択（[01](01-machine-model.md) のプリセット表）。プリセットは初期値を埋めるだけで、以後は全項目編集可。**MVP 実装は機種定義 JSON の直接編集**（プリセットを開く → JSON を編集 → 保存で検証パイプライン → localStorage にカスタム機種として永続化 → 即プレイ）。フォーム化は将来
 - **プレイヤー画面**: リール描画（回転は一定速・押下時刻→コマ番号の量子化は [03](03-reel-control.md) に従う）、レバー/ストップ操作（キーボード対応）、クレジット表示、ナビ表示、データカウンタ（ゲーム数・ボーナス履歴・差枚グラフ）、機種ごとの遊び方ガイド、教材モード（成立フラグ・内部状態の可視化、次ゲームの抽選を上書きする強制フラグ）
 - **配列ビューア**: 縦帯表示 + 役ごとの引き込み率注記（[04](04-reel-layout.md)）
 - 保存先: MVP はブラウザ localStorage + JSON エクスポート/インポート。共有機能（URL 化等）は将来
