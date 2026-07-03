@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { checkCompliance, RULESETS } from '../core/compliance.js';
+import { planCompliance, RULESETS } from '../core/compliance.js';
 import type { ComplianceResult, RulesetId } from '../core/compliance.js';
+import { runComplianceParallel } from './compliance-runner.js';
 import { describeMachine } from '../core/describe.js';
 import { simulate } from '../core/sim.js';
 import type { SimResult, StrategyName } from '../core/sim.js';
@@ -189,18 +190,37 @@ export function SpecPanel({ machine }: { machine: MachineDef }) {
 
 export function CompliancePanel({ machine }: { machine: MachineDef }) {
   const [ruleset, setRuleset] = useState<RulesetId>('yon');
-  const [setting, setSetting] = useState(1);
+  const [setting, setSetting] = useState<'all' | number>('all');
   const [mode, setMode] = useState<'quick' | 'standard'>('quick');
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<ComplianceResult | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [results, setResults] = useState<ComplianceResult[]>([]);
   const settings = machine.lottery.settings ?? 1;
 
   const run = () => {
     setBusy(true);
-    setTimeout(() => {
-      setResult(checkCompliance(machine, { ruleset, setting, mode, seed: Date.now() >>> 0 }));
-      setBusy(false);
-    }, 30);
+    setResults([]);
+    setProgress(null);
+    const targets = setting === 'all' ? Array.from({ length: settings }, (_, i) => i + 1) : [setting];
+    const seed = Date.now() >>> 0;
+    void (async () => {
+      try {
+        // Worker プールで並列実行（メインスレッドを塞がないので試験中も操作できる）
+        const perSetting = planCompliance({ ruleset, mode }).tasks.length;
+        const total = perSetting * targets.length;
+        let doneBase = 0;
+        for (const s of targets) {
+          const result = await runComplianceParallel(machine, { ruleset, setting: s, mode, seed }, (done) =>
+            setProgress({ done: doneBase + done, total }),
+          );
+          doneBase += perSetting;
+          setResults((prev) => [...prev, result]);
+        }
+      } finally {
+        setBusy(false);
+        setProgress(null);
+      }
+    })();
   };
 
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -214,6 +234,7 @@ export function CompliancePanel({ machine }: { machine: MachineDef }) {
         <p className="panel-note">
           保通協の出玉率基準の近似チェック。上限は完全打ち試行の最大値、下限は適当打ち試行の最小値で判定します
           （初期状態からの独立試行ウィンドウによる教材的な近似で、実際の試験手続きの再現ではありません）。
+          試行は CPU コア数ぶんの Worker で並列実行され、試験中も画面は操作できます。
         </p>
         <div className="panel-controls">
           <select value={ruleset} onChange={(e) => setRuleset(e.target.value as RulesetId)} disabled={busy}>
@@ -222,7 +243,12 @@ export function CompliancePanel({ machine }: { machine: MachineDef }) {
             ))}
           </select>
           {settings > 1 && (
-            <select value={setting} onChange={(e) => setSetting(Number(e.target.value))} disabled={busy}>
+            <select
+              value={String(setting)}
+              onChange={(e) => setSetting(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              disabled={busy}
+            >
+              <option value="all">全設定（1〜{settings}）</option>
               {Array.from({ length: settings }, (_, i) => i + 1).map((n) => (
                 <option key={n} value={n}>設定{n}</option>
               ))}
@@ -233,38 +259,53 @@ export function CompliancePanel({ machine }: { machine: MachineDef }) {
             <option value="standard">じっくり</option>
           </select>
           <button onClick={run} disabled={busy} data-testid="run-compliance">
-            {busy ? '試験中…' : '試験する'}
+            {busy
+              ? progress
+                ? `試験中… ${progress.done}/${progress.total}`
+                : '試験中…'
+              : '試験する'}
           </button>
         </div>
-        {result && (
+        {results.length > 0 && (
           <div data-testid="compliance-result">
-            <p className={result.pass ? 'badge-ok' : 'badge-ng'}>
-              {result.pass
-                ? `✓ ${RULESETS[result.ruleset].label}に適合（設定${result.setting}）`
-                : `✗ ${RULESETS[result.ruleset].label}に不適合（設定${result.setting}）`}
-            </p>
-            <table className="spec-table">
-              <thead>
-                <tr>
-                  <th>区間</th>
-                  <th>基準</th>
-                  <th>適当打ち（最小〜最大）</th>
-                  <th>完全打ち（最小〜最大）</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.spans.map((span) => (
-                  <tr key={span.games}>
-                    <td>{span.games.toLocaleString()}G × {span.naive.trials}回</td>
-                    <td>{range(span.min, span.max)}</td>
-                    <td>{pct(span.naive.min)} 〜 {pct(span.naive.max)}</td>
-                    <td>{pct(span.perfect.min)} 〜 {pct(span.perfect.max)}</td>
-                    <td className={span.pass ? 'ok' : 'ng'}>{span.pass ? '✓' : '✗'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {results.length > 1 && (
+              <p className={results.every((r) => r.pass) ? 'badge-ok' : 'badge-ng'}>
+                {results.every((r) => r.pass)
+                  ? `✓ 全設定で${RULESETS[ruleset].label}に適合`
+                  : `✗ 不適合の設定があります: ${results.filter((r) => !r.pass).map((r) => `設定${r.setting}`).join('・')}`}
+              </p>
+            )}
+            {results.map((result) => (
+              <div key={result.setting}>
+                <p className={result.pass ? 'badge-ok' : 'badge-ng'}>
+                  {result.pass
+                    ? `✓ ${RULESETS[result.ruleset].label}に適合（設定${result.setting}）`
+                    : `✗ ${RULESETS[result.ruleset].label}に不適合（設定${result.setting}）`}
+                </p>
+                <table className="spec-table">
+                  <thead>
+                    <tr>
+                      <th>区間</th>
+                      <th>基準</th>
+                      <th>適当打ち（最小〜最大）</th>
+                      <th>完全打ち（最小〜最大）</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.spans.map((span) => (
+                      <tr key={span.games}>
+                        <td>{span.games.toLocaleString()}G × {span.naive.trials}回</td>
+                        <td>{range(span.min, span.max)}</td>
+                        <td>{pct(span.naive.min)} 〜 {pct(span.naive.max)}</td>
+                        <td>{pct(span.perfect.min)} 〜 {pct(span.perfect.max)}</td>
+                        <td className={span.pass ? 'ok' : 'ng'}>{span.pass ? '✓' : '✗'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         )}
       </div>

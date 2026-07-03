@@ -87,41 +87,91 @@ export interface ComplianceOptions {
   trialsOverride?: Record<number, number>;
 }
 
-function measure(
-  machine: MachineDef,
-  games: number,
-  trials: number,
-  strategy: 'naive' | 'perfect',
-  setting: number,
-  seedBase: number,
-): StrategyStats {
-  let min = Infinity;
-  let max = -Infinity;
-  let sum = 0;
-  for (let t = 0; t < trials; t++) {
-    const result = simulate(machine, { games, strategy, seed: (seedBase + t * 7919) >>> 0, setting });
-    const rate = result.payoutRate;
-    if (rate < min) min = rate;
-    if (rate > max) max = rate;
-    sum += rate;
-  }
-  return { mean: sum / trials, min, max, trials };
+/** 1 試行ぶんのシミュレーションタスク（試行同士は独立 = 並列実行できる） */
+export interface ComplianceTask {
+  spanIndex: number;
+  strategy: 'naive' | 'perfect';
+  games: number;
+  seed: number;
+  setting: number;
 }
 
-export function checkCompliance(machine: MachineDef, opts: ComplianceOptions = {}): ComplianceResult {
+/** 試行計画。tasks を（順不同で）実行し assembleCompliance に渡すと判定になる */
+export interface CompliancePlan {
+  rulesetId: RulesetId;
+  setting: number;
+  tasks: ComplianceTask[];
+}
+
+/**
+ * 試行計画を立てる。シードはタスクごとに決定論的に割り当てるので、
+ * 逐次実行でも Worker 並列でも結果は完全に一致する。
+ */
+export function planCompliance(opts: ComplianceOptions = {}): CompliancePlan {
   const ruleset = RULESETS[opts.ruleset ?? 'yon'];
   const setting = opts.setting ?? 1;
   const mode = opts.mode ?? 'quick';
   const seed = opts.seed ?? 1;
 
-  const spans: ComplianceSpanResult[] = ruleset.spans.map((rule, i) => {
+  const tasks: ComplianceTask[] = [];
+  ruleset.spans.forEach((rule, i) => {
     const trials = opts.trialsOverride?.[rule.games] ?? TRIALS[mode][rule.games] ?? 3;
-    const naive = measure(machine, rule.games, trials, 'naive', setting, seed + i * 104729);
-    const perfect = measure(machine, rule.games, trials, 'perfect', setting, seed + i * 104729 + 31337);
+    for (const strategy of ['naive', 'perfect'] as const) {
+      const seedBase = seed + i * 104729 + (strategy === 'perfect' ? 31337 : 0);
+      for (let t = 0; t < trials; t++) {
+        tasks.push({ spanIndex: i, strategy, games: rule.games, seed: (seedBase + t * 7919) >>> 0, setting });
+      }
+    }
+  });
+  return { rulesetId: ruleset.id, setting, tasks };
+}
+
+/** 実行済みタスクの出玉率（plan.tasks と同じ並び）から判定を組み立てる */
+export function assembleCompliance(plan: CompliancePlan, rates: readonly number[]): ComplianceResult {
+  const ruleset = RULESETS[plan.rulesetId];
+  if (rates.length !== plan.tasks.length) {
+    throw new Error(`rates length mismatch: ${rates.length} != ${plan.tasks.length}`);
+  }
+
+  const stats = (spanIndex: number, strategy: 'naive' | 'perfect'): StrategyStats => {
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let trials = 0;
+    plan.tasks.forEach((task, i) => {
+      if (task.spanIndex !== spanIndex || task.strategy !== strategy) return;
+      const rate = rates[i]!;
+      if (rate < min) min = rate;
+      if (rate > max) max = rate;
+      sum += rate;
+      trials++;
+    });
+    return { mean: trials > 0 ? sum / trials : 0, min, max, trials };
+  };
+
+  const spans: ComplianceSpanResult[] = ruleset.spans.map((rule, i) => {
+    const naive = stats(i, 'naive');
+    const perfect = stats(i, 'perfect');
     const maxOk = rule.max === undefined || perfect.max < rule.max;
     const minOk = rule.min === undefined || naive.min >= rule.min;
     return { games: rule.games, min: rule.min, max: rule.max, naive, perfect, pass: maxOk && minOk };
   });
 
-  return { ruleset: ruleset.id, setting, spans, pass: spans.every((s) => s.pass) };
+  return { ruleset: ruleset.id, setting: plan.setting, spans, pass: spans.every((s) => s.pass) };
+}
+
+/** タスクを 1 個実行する（Worker 側でも UI 側でも同じ入口を使う） */
+export function runComplianceTask(machine: MachineDef, task: ComplianceTask): number {
+  return simulate(machine, {
+    games: task.games,
+    strategy: task.strategy,
+    seed: task.seed,
+    setting: task.setting,
+  }).payoutRate;
+}
+
+export function checkCompliance(machine: MachineDef, opts: ComplianceOptions = {}): ComplianceResult {
+  const plan = planCompliance(opts);
+  const rates = plan.tasks.map((task) => runComplianceTask(machine, task));
+  return assembleCompliance(plan, rates);
 }

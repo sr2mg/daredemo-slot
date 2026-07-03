@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { checkCompliance, RULESETS } from '../src/core/compliance.js';
+import {
+  assembleCompliance,
+  checkCompliance,
+  planCompliance,
+  RULESETS,
+  runComplianceTask,
+} from '../src/core/compliance.js';
 import { atBeast } from '../src/machines/at-beast.js';
 import { sampleAType } from '../src/machines/sample-a.js';
 import { stockBB } from '../src/machines/stock-bb.js';
@@ -18,6 +24,16 @@ describe('適合試験チェック', () => {
     const a = checkCompliance(sampleAType, { setting: 6, seed: 42, trialsOverride: FAST });
     const b = checkCompliance(sampleAType, { setting: 6, seed: 42, trialsOverride: FAST });
     expect(a).toEqual(b);
+  }, 120_000);
+
+  it('plan → 順不同実行 → assemble が逐次実行と完全一致する（Worker 並列の正当性）', () => {
+    const opts = { setting: 6, seed: 42, trialsOverride: FAST } as const;
+    const plan = planCompliance(opts);
+    // 実行順をシャッフルしても（= 並列でも）結果が変わらないことを確認する
+    const order = plan.tasks.map((_, i) => i).reverse();
+    const rates = new Array<number>(plan.tasks.length);
+    for (const i of order) rates[i] = runComplianceTask(sampleAType, plan.tasks[i]!);
+    expect(assembleCompliance(plan, rates)).toEqual(checkCompliance(sampleAType, opts));
   }, 120_000);
 
   it('全プリセットが設定 1・6 で 4 号機基準に適合する', () => {
