@@ -37,7 +37,7 @@ const missSeven: Strategy = (session) => {
   for (const reel of [0, 1, 2]) session.stopReel(reel, 10);
 };
 
-const BB_DRAW = 17308; // base テーブルの bb_red 単独当選域
+const BB_DRAW = 20301; // base テーブルの bb_red 単独当選域
 
 function run(
   machine: MachineDef,
@@ -49,8 +49,8 @@ function run(
 }
 
 describe('ボーナスのライフサイクルと RT', () => {
-  it('BB 当選 → 即入賞 → 20G 消化で終了 → RT 突入 → 50G で転落', () => {
-    const rng = new SeqRng([BB_DRAW, ...Array(20).fill(0)]);
+  it('BB 当選 → 即入賞 → 30G 消化で終了 → RT 突入 → 50G で転落', () => {
+    const rng = new SeqRng([BB_DRAW, ...Array(30).fill(0)]);
     let state = initialState();
 
     // ゲーム 1: BB 成立・完全打ちで同ゲーム入賞
@@ -61,9 +61,9 @@ describe('ボーナスのライフサイクルと RT', () => {
     expect(result.state.queue).toHaveLength(0);
     state = result.state;
 
-    // BB 中 20 ゲーム（bell 高確率テーブル）
+    // BB 中 30 ゲーム（bell 高確率テーブル）
     let ended: GameEvent | null = null;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       result = run(sampleAType, state, rng, perfect);
       state = result.state;
       if (result.event.bonusEnded !== null) ended = result.event;
@@ -161,10 +161,10 @@ describe('ストック機の蓋（性質 (c): 蓋 on 中にボーナスが入賞
 });
 
 describe('モード付き解除（吉宗型ストック機）', () => {
-  /** BB 残り 1 ゲーム・キューに次の BB がある状態 */
+  /** BB 残り 1 ゲーム・キューに次の BB がある状態（stockBB の BB は 24G 消化） */
   const bonusEnding = (mode: string): EngineState => ({
     setting: 1,
-    base: { type: 'bonus', run: { bonusId: 'bb_red', gamesPlayed: 19, totalPayout: 0, wins: 0 } },
+    base: { type: 'bonus', run: { bonusId: 'bb_red', gamesPlayed: 23, totalPayout: 0, wins: 0 } },
     rt: null,
     rtGames: 0,
     queue: ['bb_red'],
@@ -298,9 +298,9 @@ describe('設定差（オーバーレイ）', () => {
     const table6 = resolveTable(sampleAType, initialState(sampleAType, 6));
     const weightOf = (table: typeof table1, id: string) =>
       table.find((e) => e.roles.length === 1 && e.roles[0] === id)?.weight;
-    expect(weightOf(table1, 'bb_red')).toBe(200);
-    expect(weightOf(table6, 'bb_red')).toBe(300);
-    expect(weightOf(table6, 'rb')).toBe(356);
+    expect(weightOf(table1, 'bb_red')).toBe(210);
+    expect(weightOf(table6, 'bb_red')).toBe(450);
+    expect(weightOf(table6, 'rb')).toBe(330);
     expect(weightOf(table6, 'replay')).toBe(8978); // 上書きなし = 基底のまま
   });
 

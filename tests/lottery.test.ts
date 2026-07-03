@@ -25,21 +25,21 @@ describe('drawLottery', () => {
     // replay: [0, 8978)
     expect(drawLottery(table, stubRng(0))).toEqual(['replay']);
     expect(drawLottery(table, stubRng(8977))).toEqual(['replay']);
-    // bell: [8978, 15530)
+    // bell: [8978, 17978)
     expect(drawLottery(table, stubRng(8978))).toEqual(['bell']);
-    expect(drawLottery(table, stubRng(15529))).toEqual(['bell']);
-    // cherry: [15530, 16587)
-    expect(drawLottery(table, stubRng(15530))).toEqual(['cherry']);
-    // melon: [16587, 17242)
-    expect(drawLottery(table, stubRng(16587))).toEqual(['melon']);
-    // cherry+bb_red: [17242, 17308)
-    expect(drawLottery(table, stubRng(17242))).toEqual(['cherry', 'bb_red']);
-    // bb_red: [17308, 17508)
-    expect(drawLottery(table, stubRng(17308))).toEqual(['bb_red']);
-    // rb: [17508, 17781)
-    expect(drawLottery(table, stubRng(17780))).toEqual(['rb']);
-    // ハズレ: [17781, 65536)
-    expect(drawLottery(table, stubRng(17781))).toEqual([]);
+    expect(drawLottery(table, stubRng(17977))).toEqual(['bell']);
+    // cherry: [17978, 19035)
+    expect(drawLottery(table, stubRng(17978))).toEqual(['cherry']);
+    // melon: [19035, 20235)
+    expect(drawLottery(table, stubRng(19035))).toEqual(['melon']);
+    // cherry+bb_red: [20235, 20301)
+    expect(drawLottery(table, stubRng(20235))).toEqual(['cherry', 'bb_red']);
+    // bb_red: [20301, 20511)
+    expect(drawLottery(table, stubRng(20301))).toEqual(['bb_red']);
+    // rb: [20511, 20791)
+    expect(drawLottery(table, stubRng(20790))).toEqual(['rb']);
+    // ハズレ: [20791, 65536)
+    expect(drawLottery(table, stubRng(20791))).toEqual([]);
     expect(drawLottery(table, stubRng(65535))).toEqual([]);
   });
 

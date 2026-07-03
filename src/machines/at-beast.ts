@@ -29,6 +29,8 @@ export const atBeast: MachineDef = {
       id: 'bell_R', kind: 'small', payout: 8, pattern: ['bell', 'bell', 'bell'], pullIn: 'guaranteed',
       nav: { group: 'bell3', correctFirst: 2, onMiss: { type: 'reduced', roleRef: 'bell_weak' } },
     },
+    // 共通ベル（押し順不問。同じベル揃い 8 枚。適当打ちのベースを支える）
+    { id: 'bell', kind: 'small', payout: 8, pattern: ['bell', 'bell', 'bell'], pullIn: 'guaranteed' },
     // こぼしベル（押し順不正解時に入賞する 1 枚役）
     { id: 'bell_weak', kind: 'small', payout: 1, pattern: ['bell', 'bell', 'blank'], pullIn: 'guaranteed' },
     { id: 'cherry', kind: 'small', payout: 2, pattern: ['cherry', 'any', 'any'], pullIn: { missable: { targetRate: 0.35 } } },
@@ -44,24 +46,26 @@ export const atBeast: MachineDef = {
     settings: 6,
     base: [
       { roles: ['replay'], weight: 8978 },
-      { roles: ['bell_L'], weight: 5000 }, // 3 択合計 ≒1/4.4
-      { roles: ['bell_C'], weight: 5000 },
-      { roles: ['bell_R'], weight: 5000 },
+      { roles: ['bell_L'], weight: 2500 }, // 3 択合計 ≒1/8.7
+      { roles: ['bell_C'], weight: 2500 },
+      { roles: ['bell_R'], weight: 2500 },
+      { roles: ['bell'], weight: 7500 }, // 共通ベル ≒1/8.7（ベル合計 ≒1/4.4）
       { roles: ['cherry'], weight: 1057 },
-      { roles: ['melon'], weight: 655 },
-      { roles: ['bb_red'], weight: 250 },
+      { roles: ['melon'], weight: 800 },
+      { roles: ['bb_red'], weight: 260 },
     ],
-    // 設定差: チェリー確率（= AT 突入率）とボーナス確率
+    // 設定差: チェリー確率（= AT 突入率）・共通ベル・ボーナス確率
     settingOverrides: {
-      '2': [{ roles: ['cherry'], weight: 1100 }, { roles: ['bb_red'], weight: 260 }],
-      '3': [{ roles: ['cherry'], weight: 1150 }, { roles: ['bb_red'], weight: 270 }],
-      '4': [{ roles: ['cherry'], weight: 1210 }, { roles: ['bb_red'], weight: 282 }],
-      '5': [{ roles: ['cherry'], weight: 1280 }, { roles: ['bb_red'], weight: 296 }],
-      '6': [{ roles: ['cherry'], weight: 1365 }, { roles: ['bb_red'], weight: 312 }],
+      '2': [{ roles: ['cherry'], weight: 1100 }, { roles: ['bell'], weight: 7900 }, { roles: ['bb_red'], weight: 272 }],
+      '3': [{ roles: ['cherry'], weight: 1150 }, { roles: ['bell'], weight: 8300 }, { roles: ['bb_red'], weight: 286 }],
+      '4': [{ roles: ['cherry'], weight: 1210 }, { roles: ['bell'], weight: 8800 }, { roles: ['bb_red'], weight: 302 }],
+      '5': [{ roles: ['cherry'], weight: 1280 }, { roles: ['bell'], weight: 9350 }, { roles: ['bb_red'], weight: 320 }],
+      '6': [{ roles: ['cherry'], weight: 1365 }, { roles: ['bell'], weight: 10000 }, { roles: ['bb_red'], weight: 340 }],
     },
   },
   tables: {
-    in_bb: [{ roles: ['bell_L'], weight: 20000 }, { roles: ['bell_C'], weight: 20000 }, { roles: ['bell_R'], weight: 20000 }],
+    // BB 中は共通ベル高確率（押し順不問なので適当打ちでも取り切れる）
+    in_bb: [{ roles: ['bell'], weight: 60000 }],
   },
   nav: {
     at: {
