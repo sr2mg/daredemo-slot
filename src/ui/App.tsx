@@ -91,6 +91,10 @@ export function App() {
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
   const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
+  /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
+  const [betDone, setBetDone] = useState(false);
+  const betDoneRef = useRef(betDone);
+  betDoneRef.current = betDone;
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
   /** サブ基板モード（教材モードの覗き見用） */
@@ -157,6 +161,7 @@ export function App() {
     setNavDisplay(null);
     setAtRemaining(null);
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
+    setBetDone(false);
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -187,6 +192,14 @@ export function App() {
     [applyMachine],
   );
 
+  /** MAX BET（演出）。ベット音「ミ」を鳴らして BET 済み表示にする */
+  const pressBet = useCallback(() => {
+    if (phaseRef.current !== 'ready' || betDoneRef.current) return;
+    if (engineRef.current.pendingRebet) return; // 再遊技は自動ベット
+    sfxRef.current?.play('bet');
+    setBetDone(true);
+  }, []);
+
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
     // 強制フラグ（教材モード）: 次の 1 ゲームだけ抽選を上書き
@@ -196,7 +209,9 @@ export function App() {
     if (session.bet > creditRef.current) return; // クレジット不足
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
-    sfxRef.current?.play('lever');
+    // ベット済み・再遊技は「ラ」だけ、未ベットなら「ミ→ラ」を実機のリズムで
+    sfxRef.current?.play(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
+    setBetDone(false);
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
     setCredit((c) => c - session.bet);
@@ -295,10 +310,11 @@ export function App() {
       } else if (e.key === 'j') stopReel(0);
       else if (e.key === 'k') stopReel(1);
       else if (e.key === 'l') stopReel(2);
+      else if (e.key === 'b') pressBet();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [pullLever, stopReel]);
+  }, [pullLever, stopReel, pressBet]);
 
   // 告知ランプ: SB 以外のボーナスがキューにあるとき、モードに応じて点灯
   const bonusKinds = new Map(machine.bonuses.map((b) => [b.id, b.kind]));
@@ -398,6 +414,15 @@ export function App() {
         </div>
 
         <div className="controls">
+          <button
+            className="bet-btn"
+            onClick={pressBet}
+            disabled={phase !== 'ready' || betDone || engine.pendingRebet}
+            data-testid="bet"
+            title={engine.pendingRebet ? '再遊技（自動ベット）' : 'MAX BET'}
+          >
+            {betDone ? 'BET済' : engine.pendingRebet ? '再遊技' : 'BET (B)'}
+          </button>
           <button
             className="lever"
             onClick={pullLever}

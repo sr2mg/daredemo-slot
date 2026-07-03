@@ -106,11 +106,36 @@ const V_VIBES = 12;
 const V_SYNBASS = 13;
 const V_EGUITAR = 15;
 
-export type SfxName = 'lever' | 'reelStop' | 'replay' | 'payout' | 'kyuin' | 'fanfare' | 'siren' | 'rush';
+export type SfxName =
+  | 'bet'
+  | 'lever'
+  | 'betLever'
+  | 'reelStop'
+  | 'replay'
+  | 'payout'
+  | 'kyuin'
+  | 'fanfare'
+  | 'siren'
+  | 'rush';
+
+/**
+ * 大花火風のベット/レバー音階（記憶ベース: ベット=ミ、レバー=ラ）。
+ * 実機の正確なピッチ資料は未確認なので、違ったらここを直すだけで全体に反映される。
+ */
+export const BET_NOTE = 659.26; // E5（ミ）
+export const LEVER_NOTE = 880; // A5（ラ）
 
 /** 効果音の定義（すべてオリジナルのレジスタシーケンス。アルゼ風の文法で作曲） */
 export function buildSfxDefs(): Record<SfxName, SfxDef> {
-  const lever = new SeqBuilder().keyOn(0, V_SYNTH, 6, 660, 0).pitch(0, 880, 0.03).keyOff(0, 0.07);
+  // ベット「ペッ」とレバー「ピッ」: シンセの短い単音ビープ
+  const bet = new SeqBuilder().keyOn(0, V_SYNTH, 4, BET_NOTE, 0).keyOff(0, 0.055);
+  const lever = new SeqBuilder().keyOn(0, V_SYNTH, 4, LEVER_NOTE, 0).keyOff(0, 0.065);
+  // ベットせずにレバーを叩いたとき用: ミ→ラ を実機のリズムで連結
+  const betLever = new SeqBuilder()
+    .keyOn(0, V_SYNTH, 4, BET_NOTE, 0)
+    .keyOff(0, 0.055)
+    .keyOn(0, V_SYNTH, 4, LEVER_NOTE, 0.09)
+    .keyOff(0, 0.155);
 
   const reelStop = new SeqBuilder().keyOn(0, V_SYNBASS, 2, 175, 0).pitch(0, 147, 0.03).keyOff(0, 0.08);
 
@@ -170,7 +195,9 @@ export function buildSfxDefs(): Record<SfxName, SfxDef> {
   rush.keyOn(0, V_SYNTH, 3, 1047, 0.4).keyOn(1, V_SYNTH, 5, 784, 0.4).keyOff(0, 0.72).keyOff(1, 0.72);
 
   return {
-    lever: { duration: 0.15, events: lever.events },
+    bet: { duration: 0.1, events: bet.events },
+    lever: { duration: 0.12, events: lever.events },
+    betLever: { duration: 0.25, events: betLever.events },
     reelStop: { duration: 0.15, events: reelStop.events },
     replay: { duration: 0.35, events: replay.events },
     payout: { duration: 0.75, events: payout.events },

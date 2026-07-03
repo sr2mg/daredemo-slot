@@ -153,6 +153,12 @@ button:disabled {
   color: #fff;
 }
 
+.bet-btn {
+  background: #f9a825;
+  color: #333;
+  width: clamp(72px, 12vmin, 110px);
+}
+
 .stop-btn {
   background: #ffd54f;
   color: #333;
