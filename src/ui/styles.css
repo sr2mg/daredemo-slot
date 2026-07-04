@@ -657,6 +657,13 @@ button:disabled {
   border-radius: 10px;
 }
 
+.soundtest-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .credit-note {
   margin-top: 16px;
   text-align: center;

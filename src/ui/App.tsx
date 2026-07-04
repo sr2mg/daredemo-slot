@@ -11,6 +11,7 @@ import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js
 import { OPLL_VOICES } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
+import { SoundTestPanel } from './sound-test.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
@@ -514,6 +515,7 @@ export function App() {
       </div>
 
       <GuidePanel key={`guide-${machine.name}`} machine={machine} />
+      <SoundTestPanel player={sfxRef.current!} />
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
