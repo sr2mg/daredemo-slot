@@ -1,6 +1,6 @@
 import { buildBgmDefs } from './bgm.js';
 import type { BgmName } from './bgm.js';
-import type { OpllExports, SfxName } from './opll-core.js';
+import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
 import {
   buildSfxDefs,
   DEFAULT_BEEP_VOICE,
@@ -8,6 +8,7 @@ import {
   OPLL_IMPORTS,
   OPLL_RATE,
   renderSequence,
+  renderSequenceAsync,
 } from './opll-core.js';
 
 /**
@@ -22,7 +23,9 @@ import {
 const STORAGE_KEY = 'daredemo.sfx.v1';
 const VOICE_KEY = 'daredemo.sfxVoice.v1';
 const MASTER_GAIN = 0.5;
-const BGM_GAIN = 0.55; // マスターに対する BGM の相対音量
+const BGM_GAIN = 0.55; // マスターに対する BGM の相対音量（bgmVolume=0.5 のときの値）
+/** 自作 BGM 波形キャッシュの上限（1 曲 ≒ 1〜2.4MB） */
+const CUSTOM_BGM_CACHE_MAX = 6;
 
 /** ビープ音色の影響を受ける効果音（音色変更時はこれだけ作り直す） */
 const BEEP_NAMES: readonly SfxName[] = ['bet', 'lever', 'betLever'];
@@ -41,6 +44,15 @@ export class SfxPlayer {
   private loading: Promise<void> | null = null;
   private exports: OpllExports | null = null;
   private opll = 0;
+  /** 自作 BGM（OPLL レンダリング済み波形）のキャッシュ。キーは ComposeOptions の JSON */
+  private customBgm = new Map<string, Float32Array>();
+  /** BGM の世代。stopBgm/playBgm で進み、レンダリング待ちの再生を無効化する */
+  private bgmGen = 0;
+  /** BGM 音量 0..1（0.5 = 従来の内蔵 BGM 音量）。localStorage への永続化は呼び出し側 */
+  private bgmVolume = 0.5;
+  /** OPLL インスタンスは共有・ステートフルなので、レンダリングはこのキューで直列化する */
+  private renderJobs: { run: () => Promise<void>; priority: boolean }[] = [];
+  private pumping = false;
 
   constructor() {
     this.enabled = localStorage.getItem(STORAGE_KEY) !== 'off';
@@ -84,16 +96,47 @@ export class SfxPlayer {
   }
 
   /**
-   * BGM のレンダリング（1 曲 1〜2 秒かかるので、起動をブロックしないよう
-   * 効果音のあとにバックグラウンドで 1 曲ずつ行う）
+   * レンダリングキュー。優先ジョブ（自作 BGM の試聴・ボーナス開始）は
+   * 起動時の内蔵 BGM 一括レンダリングを追い越して先に実行される。
    */
-  private async renderBgmInBackground(): Promise<void> {
-    for (const [name, def] of Object.entries(buildBgmDefs())) {
-      await new Promise((r) => setTimeout(r, 50));
-      if (!this.exports) return;
-      this.bgmWaves[name as BgmName] = renderSequence(this.exports, this.opll, def);
+  private enqueueRender<T>(work: () => Promise<T>, priority = false): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const job = { priority, run: () => work().then(resolve, reject) };
+      if (priority) {
+        const i = this.renderJobs.findIndex((j) => !j.priority);
+        if (i < 0) this.renderJobs.push(job);
+        else this.renderJobs.splice(i, 0, job);
+      } else {
+        this.renderJobs.push(job);
+      }
+      void this.pump();
+    });
+  }
+
+  private async pump(): Promise<void> {
+    if (this.pumping) return;
+    this.pumping = true;
+    while (this.renderJobs.length > 0) {
+      const job = this.renderJobs.shift()!;
+      await job.run().catch(() => {
+        // 失敗はジョブごとの Promise 経由で呼び出し側へ伝わる。キューは止めない
+      });
     }
-    this.bgmBuffers = {};
+    this.pumping = false;
+  }
+
+  /**
+   * 内蔵 BGM のレンダリング（1 曲は実時間近くかかる）。起動をブロックしないよう
+   * 効果音のあとにキュー経由・チャンク分割で 1 曲ずつ行う
+   */
+  private renderBgmInBackground(): void {
+    for (const [name, def] of Object.entries(buildBgmDefs())) {
+      void this.enqueueRender(async () => {
+        if (!this.exports || this.bgmWaves[name as BgmName]) return;
+        this.bgmWaves[name as BgmName] = await renderSequenceAsync(this.exports, this.opll, def);
+        delete this.bgmBuffers[name as BgmName];
+      });
+    }
   }
 
   /** WASM 取得 + 効果音の事前レンダリング（BGM は続けてバックグラウンドで） */
@@ -105,9 +148,81 @@ export class SfxPlayer {
       this.exports = instance.exports as unknown as OpllExports;
       this.opll = this.exports.OPLL_new(OPLL_CLOCK, OPLL_RATE);
       this.renderSfx();
-      void this.renderBgmInBackground();
+      this.renderBgmInBackground();
     })();
     return this.loading;
+  }
+
+  /** BGM 音量（0..1。0.5 = 従来の内蔵 BGM 音量）。再生中でも即座に反映 */
+  setBgmVolume(v: number): void {
+    this.bgmVolume = Math.max(0, Math.min(1, v));
+    if (this.bgmGain) this.bgmGain.gain.value = this.effectiveBgmGain();
+  }
+
+  private effectiveBgmGain(): number {
+    return BGM_GAIN * (this.bgmVolume / 0.5);
+  }
+
+  /**
+   * 自作 BGM（OPLL 編曲済みシーケンス）をレンダリングしてキャッシュする。
+   * key は ComposeOptions の JSON（同じ曲は再レンダリングしない）
+   */
+  ensureComposedBgm(key: string, def: SfxDef, onProgress?: (ratio: number) => void): Promise<Float32Array> {
+    const cached = this.customBgm.get(key);
+    if (cached) return Promise.resolve(cached);
+    return this.enqueueRender(async () => {
+      await this.preload();
+      const again = this.customBgm.get(key);
+      if (again) return again;
+      if (!this.exports) throw new Error('OPLL 未初期化');
+      const wave = await renderSequenceAsync(this.exports, this.opll, def, onProgress);
+      this.customBgm.set(key, wave);
+      while (this.customBgm.size > CUSTOM_BGM_CACHE_MAX) {
+        this.customBgm.delete(this.customBgm.keys().next().value!);
+      }
+      return wave;
+    }, true);
+  }
+
+  /**
+   * 自作 BGM を（必要ならレンダリングしてから）ループ再生する。
+   * delaySec はファンファーレ後のイン用で、レンダリング待ちが延びた場合は残り時間だけ待つ。
+   * レンダリング完了前に stopBgm / playBgm / OFF が呼ばれたら鳴らさない（世代チェック）。
+   * 戻り値: 'played' = 鳴らした / 'failed' = 鳴らせない（フォールバック可）/
+   * 'superseded' = 待っている間に不要になった（フォールバックしてはいけない）
+   */
+  async playComposedBgm(
+    key: string,
+    def: SfxDef,
+    delaySec = 0,
+    opts: { loop?: boolean; onProgress?: (ratio: number) => void } = {},
+  ): Promise<'played' | 'failed' | 'superseded'> {
+    if (!this.enabled) return 'failed';
+    this.stopBgm();
+    const gen = this.bgmGen;
+    const requestedAt = performance.now();
+    let wave: Float32Array;
+    try {
+      wave = await this.ensureComposedBgm(key, def, opts.onProgress);
+    } catch {
+      return this.bgmGen === gen ? 'failed' : 'superseded';
+    }
+    if (this.bgmGen !== gen || !this.enabled) return 'superseded';
+    try {
+      const ctx = this.ensureCtx();
+      const buffer = ctx.createBuffer(1, wave.length, OPLL_RATE);
+      buffer.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = opts.loop ?? true;
+      source.connect(this.bgmGain!);
+      const remaining = Math.max(0, delaySec - (performance.now() - requestedAt) / 1000);
+      source.start(ctx.currentTime + remaining);
+      this.bgmSource = source;
+      return 'played';
+    } catch {
+      return 'failed'; // 音は演出。失敗してもゲームを止めない
+    }
   }
 
   private ensureCtx(): AudioContext {
@@ -117,7 +232,7 @@ export class SfxPlayer {
       this.gain.gain.value = MASTER_GAIN;
       this.gain.connect(this.ctx.destination);
       this.bgmGain = this.ctx.createGain();
-      this.bgmGain.gain.value = BGM_GAIN;
+      this.bgmGain.gain.value = this.effectiveBgmGain();
       this.bgmGain.connect(this.gain);
     }
     if (this.ctx.state === 'suspended') void this.ctx.resume();
@@ -150,6 +265,7 @@ export class SfxPlayer {
   }
 
   stopBgm(): void {
+    this.bgmGen++; // レンダリング待ちの自作 BGM 再生も無効化する
     try {
       this.bgmSource?.stop();
     } catch {

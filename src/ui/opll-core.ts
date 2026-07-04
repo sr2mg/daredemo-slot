@@ -274,3 +274,45 @@ export function renderSequence(
   for (let i = 0; i < total; i++) out[i] = out[i]! * scale;
   return out;
 }
+
+/**
+ * renderSequence の非同期版。レンダリングはサンプル単位で OPLL_calc を回すため
+ * ほぼ実時間かかる（12 秒の曲 ≒ 10 秒前後）。チャンクごとに制御をイベントループへ
+ * 返し、UI を固めずに進捗を報告する。
+ * 注意: OPLL インスタンスは共有・ステートフルなので、await を跨いで他のレンダリングと
+ * 同時実行してはいけない（呼び出し側 = SfxPlayer がキューで直列化する）。
+ */
+export async function renderSequenceAsync(
+  exports: OpllExports,
+  opll: number,
+  def: SfxDef,
+  onProgress?: (ratio: number) => void,
+  normalizePeak = 0.65,
+): Promise<Float32Array> {
+  exports.OPLL_reset(opll);
+  const total = Math.round(def.duration * OPLL_RATE);
+  const sorted = [...def.events].sort((a, b) => a.at - b.at);
+  const out = new Float32Array(total);
+  const chunk = Math.round(0.5 * OPLL_RATE); // 0.5 秒ぶんずつ
+  let next = 0;
+  let peak = 0;
+  for (let start = 0; start < total; start += chunk) {
+    const end = Math.min(total, start + chunk);
+    for (let i = start; i < end; i++) {
+      const t = i / OPLL_RATE;
+      while (next < sorted.length && sorted[next]!.at <= t) {
+        exports.OPLL_writeReg(opll, sorted[next]!.reg, sorted[next]!.val);
+        next++;
+      }
+      const v = exports.OPLL_calc(opll);
+      out[i] = v;
+      const abs = Math.abs(v);
+      if (abs > peak) peak = abs;
+    }
+    onProgress?.(end / total);
+    if (end < total) await new Promise((r) => setTimeout(r, 0));
+  }
+  const scale = peak > 0 ? normalizePeak / peak : 0;
+  for (let i = 0; i < total; i++) out[i] = out[i]! * scale;
+  return out;
+}

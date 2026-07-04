@@ -1,0 +1,78 @@
+import { describe, expect, it } from 'vitest';
+import { compose } from '../src/core/music/compose.js';
+import { arrangePiece } from '../src/ui/opll-arrange.js';
+
+const piece = compose({
+  progressionId: 'royal-pop',
+  styleId: 'eurobeat',
+  keyRoot: 0,
+  bpm: 170,
+  bars: 4,
+  seed: 42,
+});
+const def = arrangePiece(piece, 'eurobeat');
+const spb = 60 / 170;
+
+/** ch のキーオン（音色|音量レジスタ 0x30+ch への書き込み）を時刻順で返す */
+const keyOns = (ch: number) => def.events.filter((e) => e.reg === 0x30 + ch).sort((a, b) => a.at - b.at);
+
+describe('arrangePiece（Piece → OPLL レジスタ列）', () => {
+  it('ループ長は拍数どおり、全イベントが曲中に収まる', () => {
+    expect(def.duration).toBeCloseTo(piece.beats * spb, 9);
+    expect(def.bpm).toBe(170);
+    expect(def.bars).toBe(4);
+    for (const e of def.events) {
+      expect(e.at).toBeGreaterThanOrEqual(0);
+      expect(e.at).toBeLessThanOrEqual(def.duration);
+    }
+  });
+
+  it('リード（ch2）はメロディと同数のキーオン、強拍が弱拍より大きい音量', () => {
+    const lead = keyOns(2);
+    expect(lead.length).toBe(piece.melody.length);
+    for (let i = 0; i < lead.length; i++) {
+      const inBar = piece.melody[i]!.beat % 4;
+      const vol = lead[i]!.val & 15; // 下位ニブル（0=最大）
+      expect(vol, `beat=${piece.melody[i]!.beat}`).toBe(inBar === 0 || inBar === 2 ? 2 : 4);
+    }
+  });
+
+  it('チャンネルエコー（ch5）: 同数のキーオンが 8 分遅れ（ループ境界は頭に折り返し）', () => {
+    const echo = keyOns(5);
+    expect(echo.length).toBe(piece.melody.length);
+    const expected = piece.melody
+      .map((n) => (n.beat * spb + spb / 2) % def.duration)
+      .sort((a, b) => a - b);
+    const actual = echo.map((e) => e.at).sort((a, b) => a - b);
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i]).toBeCloseTo(expected[i]!, 6);
+    }
+    // エコーはリードより小さい音量
+    expect(echo[0]!.val & 15).toBeGreaterThan(2);
+  });
+
+  it('長い音符にはソフトウェアビブラート（F ナンバーの追加書き込み）が入る', () => {
+    // keyOn 1 回につき 0x12 は 1 回書かれる。それを超えるぶんがビブラート
+    const fnumWrites = def.events.filter((e) => e.reg === 0x12).length;
+    expect(piece.melody.some((n) => n.dur >= 1)).toBe(true); // 前提: 長音がある
+    expect(fnumWrites).toBeGreaterThan(piece.melody.length);
+  });
+
+  it('バッキング（ch3）とベース（ch4）が鳴る', () => {
+    expect(keyOns(3).length).toBeGreaterThan(0);
+    expect(keyOns(4).length).toBe(piece.bass.length);
+  });
+
+  it('同時刻のドラムはビットを合成して 1 回で叩く（キック+スネアが 1 書き込み）', () => {
+    // ユーロビートは 2 拍目（step4）にキックとスネアが重なる
+    const merged = def.events.find((e) => e.reg === 0x0e && e.val === (0x20 | 0x10 | 0x08));
+    expect(merged).toBeDefined();
+  });
+
+  it('未知のスタイルはユーロビートの音色にフォールバック', () => {
+    const fallback = arrangePiece(piece, 'nazo-style');
+    const lead = fallback.events.filter((e) => e.reg === 0x32);
+    expect(lead.length).toBeGreaterThan(0);
+    expect(lead[0]!.val >> 4).toBe(10); // リード音色 = シンセ(10): 上位ニブル
+  });
+});
