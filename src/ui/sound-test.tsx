@@ -1,11 +1,11 @@
-import type { BgmName } from './bgm.js';
 import type { SfxName } from './opll-core.js';
 import type { SfxPlayer } from './sfx-player.js';
 
 /**
  * サウンドテスト（レトロゲームのサウンドテストモード風）。
- * 効果音と BGM を単体で試聴できる。ボタンクリックはユーザー操作なので
+ * 効果音を単体で試聴できる。ボタンクリックはユーザー操作なので
  * AudioContext の自動再生制限もここで解除される。
+ * BGM の試聴は「BGM 作成」パネルで（プリセット曲も自作曲もそちらに並ぶ）。
  */
 
 const SFX_ITEMS: readonly { name: SfxName; label: string }[] = [
@@ -21,21 +21,15 @@ const SFX_ITEMS: readonly { name: SfxName; label: string }[] = [
   { name: 'rush', label: 'ラッシュ（AT・CT突入）' },
 ];
 
-const BGM_ITEMS: readonly { name: BgmName; label: string }[] = [
-  { name: 'bb', label: 'BB中BGM（草競馬）' },
-  { name: 'rb', label: 'RB中BGM（チャールダーシュ）' },
-  { name: 'rb2', label: 'RB候補2（ジムノペディ第1番）' },
-  { name: 'rb3', label: 'RB候補3（別れの曲）' },
-];
-
 export function SoundTestPanel({ player }: { player: SfxPlayer }) {
   return (
     <details className="panel">
       <summary>サウンドテスト（OPLL）</summary>
       <div className="panel-body">
         <p className="panel-note">
-          効果音と BGM を単体で試聴できます。「効果音（OPLL）」のチェックが OFF のときは鳴りません。
-          ベット/レバーの音色は上のドロップダウンの選択が反映されます。
+          効果音を単体で試聴できます。「効果音（OPLL）」のチェックが OFF のときは鳴りません。
+          ベット/レバーの音色は上のドロップダウンの選択が反映されます。BGM の試聴は下の
+          「BGM 作成」パネルでどうぞ。
         </p>
         <div className="soundtest-grid">
           {SFX_ITEMS.map((item) => (
@@ -48,21 +42,6 @@ export function SoundTestPanel({ player }: { player: SfxPlayer }) {
               ♪ {item.label}
             </button>
           ))}
-        </div>
-        <div className="panel-controls">
-          {BGM_ITEMS.map((item) => (
-            <button
-              key={item.name}
-              className="form-mini-btn"
-              onClick={() => player.playBgm(item.name)}
-              data-testid={`soundtest-bgm-${item.name}`}
-            >
-              ▶ {item.label}
-            </button>
-          ))}
-          <button className="form-mini-btn" onClick={() => player.stopBgm()} data-testid="soundtest-bgm-stop">
-            ■ BGM 停止
-          </button>
         </div>
       </div>
     </details>

@@ -1,10 +1,13 @@
 import type { ComposeOptions } from '../core/music/compose.js';
-import type { BgmName } from './bgm.js';
 
 /**
- * 自作 BGM ライブラリと BB/RB への割り当ての永続化層。
+ * BGM ライブラリと BB/RB への割り当ての永続化層。
  * 曲はレンダリング結果ではなく ComposeOptions（進行・スロット選択・シード）で保存する。
- * compose() が決定論なので、これだけで同じ曲が完全に再現できる（保存サイズも極小）。
+ * compose() が決定論なのでこれだけで同じ曲が完全に再現できる（保存サイズも極小）。
+ *
+ * デフォルト BGM も同じ仕組みのプリセット曲（固定シードの ComposeOptions）。
+ * かつては PD クラシックの採譜（草競馬・チャールダーシュ等）を内蔵していたが、
+ * 作曲エンジン + OPLL 編曲で置き換えて削除した。
  *
  * App 側は再生の瞬間に localStorage から読み直すため、パネルと App の間で
  * React 状態を同期する必要がない。
@@ -16,7 +19,7 @@ export interface SavedSong {
   options: ComposeOptions;
 }
 
-/** 割り当て値: 'builtin:<BgmName>' か 'song:<SavedSong.id>' */
+/** 割り当て値: 'preset:<id>' か 'song:<SavedSong.id>' */
 export interface BgmAssign {
   bb: string;
   rb: string;
@@ -26,15 +29,38 @@ const SONGS_KEY = 'daredemo.bgmSongs.v1';
 const ASSIGN_KEY = 'daredemo.bgmAssign.v1';
 const VOLUME_KEY = 'daredemo.bgmComposer.volume.v1';
 
-export const DEFAULT_ASSIGN: BgmAssign = { bb: 'builtin:bb', rb: 'builtin:rb' };
-
-/** 割り当てドロップダウンに出す内蔵曲（sound-test.tsx の試聴リストと同じ曲目） */
-export const BUILTIN_BGM: readonly { name: BgmName; label: string }[] = [
-  { name: 'bb', label: '内蔵: 草競馬' },
-  { name: 'rb', label: '内蔵: チャールダーシュ' },
-  { name: 'rb2', label: '内蔵: ジムノペディ第1番' },
-  { name: 'rb3', label: '内蔵: 別れの曲' },
+/**
+ * プリセット曲（デフォルト BGM）。固定シードなので全員の環境で同じ曲になる。
+ * BB = 田中・真部進行の 8 小節 A+A'、RB = 王道ポップの 4 小節ループ。
+ */
+export const PRESET_SONGS: readonly SavedSong[] = [
+  {
+    id: 'preset-bb',
+    name: 'プリセット: 疾走（BB 向き）',
+    options: {
+      progressionId: 'tanaka-manabe',
+      styleId: 'eurobeat',
+      keyRoot: 0,
+      bpm: 170,
+      bars: 8,
+      seed: 20260704,
+    },
+  },
+  {
+    id: 'preset-rb',
+    name: 'プリセット: 軽快（RB 向き）',
+    options: {
+      progressionId: 'royal-pop',
+      styleId: 'eurobeat',
+      keyRoot: 0,
+      bpm: 170,
+      bars: 4,
+      seed: 777,
+    },
+  },
 ];
+
+export const DEFAULT_ASSIGN: BgmAssign = { bb: 'preset:preset-bb', rb: 'preset:preset-rb' };
 
 export function loadSongs(): SavedSong[] {
   try {
@@ -53,12 +79,19 @@ export function saveSongs(songs: SavedSong[]): void {
   }
 }
 
+/** 旧形式（'builtin:*' = 削除済みの内蔵曲）はプリセットへ読み替える */
+function normalizeChoice(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  if (value.startsWith('builtin:')) return fallback;
+  return value;
+}
+
 export function loadAssign(): BgmAssign {
   try {
     const parsed = JSON.parse(localStorage.getItem(ASSIGN_KEY) ?? 'null') as Partial<BgmAssign> | null;
     return {
-      bb: typeof parsed?.bb === 'string' ? parsed.bb : DEFAULT_ASSIGN.bb,
-      rb: typeof parsed?.rb === 'string' ? parsed.rb : DEFAULT_ASSIGN.rb,
+      bb: normalizeChoice(parsed?.bb, DEFAULT_ASSIGN.bb),
+      rb: normalizeChoice(parsed?.rb, DEFAULT_ASSIGN.rb),
     };
   } catch {
     return { ...DEFAULT_ASSIGN };
@@ -73,7 +106,7 @@ export function saveAssign(assign: BgmAssign): void {
   }
 }
 
-/** BGM 作成パネルの音量（0..100）。ゲーム中の自作 BGM も同じ音量で鳴らす */
+/** BGM 音量（0..100）。ゲーム中の BGM も試聴も同じ音量で鳴らす */
 export function loadBgmVolume(): number {
   const raw = localStorage.getItem(VOLUME_KEY);
   const v = raw === null ? NaN : Number(raw);
@@ -88,19 +121,20 @@ export function saveBgmVolume(volume: number): void {
   }
 }
 
-/** 割り当て値を解決する。曲が消えている等の不正値は内蔵のデフォルト曲へフォールバック */
-export function resolveAssign(
-  slot: 'bb' | 'rb',
-): { kind: 'builtin'; name: BgmName } | { kind: 'song'; song: SavedSong } {
+/**
+ * 割り当て値を曲に解決する。自作曲が消えている等の不正値は
+ * そのスロットのデフォルトプリセットへフォールバック。
+ */
+export function resolveAssign(slot: 'bb' | 'rb'): SavedSong {
+  const fallback = PRESET_SONGS.find((p) => `preset:${p.id}` === DEFAULT_ASSIGN[slot])!;
   const choice = loadAssign()[slot];
   if (choice.startsWith('song:')) {
     const id = choice.slice('song:'.length);
-    const song = loadSongs().find((s) => s.id === id);
-    if (song) return { kind: 'song', song };
+    return loadSongs().find((s) => s.id === id) ?? fallback;
   }
-  if (choice.startsWith('builtin:')) {
-    const name = choice.slice('builtin:'.length);
-    if (BUILTIN_BGM.some((b) => b.name === name)) return { kind: 'builtin', name: name as BgmName };
+  if (choice.startsWith('preset:')) {
+    const id = choice.slice('preset:'.length);
+    return PRESET_SONGS.find((p) => p.id === id) ?? fallback;
   }
-  return { kind: 'builtin', name: slot };
+  return fallback;
 }

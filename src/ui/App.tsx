@@ -319,27 +319,19 @@ export function App() {
         const sfx = sfxRef.current;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
           playSfx('fanfare');
-          // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当てに従い、
-          // 自作曲も内蔵曲も同じ OPLL（emu2413）で鳴らす。自作曲は通常キャッシュ済みだが、
+          // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当て
+          //（自作曲 or プリセット曲）を OPLL（emu2413）で鳴らす。通常はキャッシュ済みだが、
           // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
-          const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
-          const assigned = resolveAssign(slot);
-          if (assigned.kind === 'song' && sfx?.enabled) {
+          if (sfx?.enabled) {
+            const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
+            const song = resolveAssign(slot);
             try {
-              const piece = compose(assigned.song.options);
-              const def = arrangePiece(piece, assigned.song.options.styleId);
-              void sfx
-                .playComposedBgm(JSON.stringify(assigned.song.options), def, 1.05)
-                .then((result) => {
-                  // レンダリング失敗時だけ内蔵曲にフォールバック
-                  //（superseded = ボーナス終了等で不要になった場合は何も鳴らさない）
-                  if (result === 'failed' && sfx.enabled) sfx.playBgm(slot);
-                });
+              const piece = compose(song.options);
+              const def = arrangePiece(piece, song.options.styleId);
+              void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
             } catch {
-              sfx?.playBgm(slot, 1.05);
+              // 保存データ破損等。音は演出なので無音で続行する
             }
-          } else if (assigned.kind === 'builtin') {
-            sfx?.playBgm(assigned.name, 1.05);
           }
         } else if (event.replayWon) playSfx('replay');
         else if (event.payout > 0) playSfx('payout');
@@ -367,14 +359,13 @@ export function App() {
     void (async () => {
       await sfx.preload();
       for (const slot of ['bb', 'rb'] as const) {
-        const assigned = resolveAssign(slot);
-        if (assigned.kind !== 'song') continue;
+        const song = resolveAssign(slot);
         try {
-          const piece = compose(assigned.song.options);
-          const def = arrangePiece(piece, assigned.song.options.styleId);
-          void sfx.ensureComposedBgm(JSON.stringify(assigned.song.options), def);
+          const piece = compose(song.options);
+          const def = arrangePiece(piece, song.options.styleId);
+          void sfx.ensureComposedBgm(JSON.stringify(song.options), def);
         } catch {
-          // 壊れた保存データはボーナス開始時に内蔵曲へフォールバックされる
+          // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
         }
       }
     })();

@@ -3,10 +3,11 @@ import { compose, defaultChoiceFor, validatePiece } from '../core/music/compose.
 import type { ComposeOptions, Piece } from '../core/music/compose.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
 import {
-  BUILTIN_BGM,
+  DEFAULT_ASSIGN,
   loadAssign,
   loadBgmVolume,
   loadSongs,
+  PRESET_SONGS,
   saveAssign,
   saveBgmVolume,
   saveSongs,
@@ -141,10 +142,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     const next = songs.filter((s) => s.id !== id);
     setSongs(next);
     saveSongs(next);
-    // 割り当て中の曲を消したら内蔵のデフォルトに戻す
+    // 割り当て中の曲を消したらデフォルトのプリセットに戻す
     const fixed: BgmAssign = {
-      bb: assign.bb === `song:${id}` ? 'builtin:bb' : assign.bb,
-      rb: assign.rb === `song:${id}` ? 'builtin:rb' : assign.rb,
+      bb: assign.bb === `song:${id}` ? DEFAULT_ASSIGN.bb : assign.bb,
+      rb: assign.rb === `song:${id}` ? DEFAULT_ASSIGN.rb : assign.rb,
     };
     if (fixed.bb !== assign.bb || fixed.rb !== assign.rb) {
       setAssign(fixed);
@@ -157,15 +158,15 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     setAssign(next);
     saveAssign(next);
     // 割り当てた曲は先にレンダリングしておく（ボーナス開始時に待たせない）
-    if (value.startsWith('song:')) {
-      const song = songs.find((s) => `song:${s.id}` === value);
-      if (song) {
-        try {
-          const p = compose(song.options);
-          void player.ensureComposedBgm(JSON.stringify(song.options), arrangePiece(p, song.options.styleId));
-        } catch {
-          // 壊れた保存データはボーナス開始時に内蔵曲へフォールバックされる
-        }
+    const song = value.startsWith('song:')
+      ? songs.find((s) => `song:${s.id}` === value)
+      : PRESET_SONGS.find((p) => `preset:${p.id}` === value);
+    if (song) {
+      try {
+        const p = compose(song.options);
+        void player.ensureComposedBgm(JSON.stringify(song.options), arrangePiece(p, song.options.styleId));
+      } catch {
+        // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
       }
     }
   };
@@ -180,9 +181,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         onChange={(e) => updateAssign(slot, e.target.value)}
         data-testid={`st-assign-${slot}`}
       >
-        {BUILTIN_BGM.map((b) => (
-          <option key={b.name} value={`builtin:${b.name}`}>
-            {b.label}
+        {PRESET_SONGS.map((p) => (
+          <option key={p.id} value={`preset:${p.id}`}>
+            {p.name}
           </option>
         ))}
         {songs.map((s) => (
@@ -339,9 +340,22 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
           </div>
         )}
 
-        {songs.length > 0 && (
-          <div className="song-list" data-testid="st-song-list">
-            {songs.map((s) => (
+        <div className="song-list" data-testid="st-song-list">
+          {PRESET_SONGS.map((p) => (
+            <div key={p.id} className="song-row">
+              <span className="song-name">{p.name}</span>
+              <span className="song-summary">{songSummary(p.options)}</span>
+              <button
+                className="form-mini-btn"
+                onClick={() => void playOptions(p.options)}
+                disabled={progress !== null}
+                data-testid={`st-song-play-${p.id}`}
+              >
+                ▶ 試聴
+              </button>
+            </div>
+          ))}
+          {songs.map((s) => (
               <div key={s.id} className="song-row">
                 <span className="song-name">★ {s.name}</span>
                 <span className="song-summary">{songSummary(s.options)}</span>
@@ -362,17 +376,16 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 </button>
               </div>
             ))}
-          </div>
-        )}
+        </div>
 
         <div className="panel-controls">
           {assignSelect('bb')}
           {assignSelect('rb')}
         </div>
         <p className="panel-note">
-          再生は内蔵曲と同じ OPLL（YM2413）音源。アクセント・チャンネルエコー・ビブラートも
-          当時のレジスタ操作だけで掛けています。🔊 は BGM 全体の音量（内蔵曲にも効きます）。
-          保存した曲は BB/RB 中の BGM に割り当てられます（ボーナス開始のファンファーレ後に流れます）。
+          再生は OPLL（YM2413）音源。アクセント・チャンネルエコー・ビブラートも当時のレジスタ操作
+          だけで掛けています。🔊 は BGM 全体の音量。デフォルト BGM も同じ作曲エンジンの
+          プリセット曲（固定シード）で、BB/RB への割り当てはボーナス開始のファンファーレ後に流れます。
           コードは小節ごとの選択制（同じ機能の代理和音）なので、どれを選んでも破綻しません。
         </p>
       </div>
