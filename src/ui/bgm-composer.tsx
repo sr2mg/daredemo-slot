@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { compose, defaultChoiceFor, validatePiece } from '../core/music/compose.js';
 import type { ComposeOptions, Piece } from '../core/music/compose.js';
-import { MusicPlayer } from '../core/music/player.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
 import {
   BUILTIN_BGM,
@@ -13,6 +12,8 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
+import { arrangePiece } from './opll-arrange.js';
+import type { SfxPlayer } from './sfx-player.js';
 
 /**
  * BGM 作成（作曲）パネル。既製曲を試聴する SoundTestPanel（sound-test.tsx）とは別物で、
@@ -21,6 +22,8 @@ import type { BgmAssign, SavedSong } from './bgm-library.js';
  * コード進行は「小節スロット + 選択肢」方式なので、選ぶだけで破綻しない進行が組める。
  * メロディはシード付きで決定論生成し、強拍コードトーン検証を通した結果を表示する。
  *
+ * 再生は内蔵曲と同じ OPLL（emu2413）: Piece を opll-arrange.ts で編曲してレンダリングする。
+ * レンダリングはほぼ実時間かかるため進捗を表示し、結果はキャッシュされる。
  * 作った曲は名前を付けてリストに保存でき（実体は ComposeOptions のみ）、
  * BB/RB のゲーム中 BGM に割り当てられる（App.tsx がボーナス開始時に読む）。
  */
@@ -36,7 +39,7 @@ function songSummary(options: ComposeOptions): string {
   return `${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
 }
 
-export function BgmComposerPanel() {
+export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [bars, setBars] = useState<4 | 8>(4);
   const [progId, setProgId] = useState('royal-pop');
   const [styleId, setStyleId] = useState('eurobeat');
@@ -54,16 +57,13 @@ export function BgmComposerPanel() {
   const [songs, setSongs] = useState<SavedSong[]>(loadSongs);
   const [assign, setAssign] = useState<BgmAssign>(loadAssign);
   const [songName, setSongName] = useState('');
+  /** OPLL レンダリングの進捗（0..1）。null = レンダリング中でない */
+  const [progress, setProgress] = useState<number | null>(null);
 
-  const playerRef = useRef<MusicPlayer | null>(null);
   useEffect(() => {
-    playerRef.current = new MusicPlayer();
-    return () => playerRef.current?.dispose();
-  }, []);
-  useEffect(() => {
-    playerRef.current?.setVolume(volume / 100);
+    player.setBgmVolume(volume / 100);
     saveBgmVolume(volume);
-  }, [volume]);
+  }, [player, volume]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
   const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);
@@ -89,26 +89,35 @@ export function BgmComposerPanel() {
   };
 
   const stop = () => {
-    playerRef.current?.stop();
+    player.stopBgm();
     setPlaying(false);
   };
 
-  const playOptions = (opts: ComposeOptions) => {
+  const playOptions = async (opts: ComposeOptions) => {
     try {
       const p = compose(opts);
-      setError('');
+      setError(player.enabled ? '' : '「効果音（OPLL）」が OFF のため音は鳴りません（このタブ上部で ON にできます）');
       setSeed(opts.seed);
       setPiece(p);
       setLastOpts(opts);
-      playerRef.current?.play(p, { loop, onEnd: () => setPlaying(false) });
-      setPlaying(true);
+      setPlaying(false);
+      if (!player.enabled) return;
+      const def = arrangePiece(p, opts.styleId);
+      setProgress(0);
+      const result = await player.playComposedBgm(JSON.stringify(opts), def, 0, {
+        loop,
+        onProgress: setProgress,
+      });
+      setProgress(null);
+      setPlaying(result === 'played');
     } catch (e) {
+      setProgress(null);
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
   const composeAndPlay = (nextSeed: number) => {
-    playOptions({
+    void playOptions({
       progressionId: prog.id,
       styleId,
       keyRoot,
@@ -147,6 +156,18 @@ export function BgmComposerPanel() {
     const next = { ...assign, [slot]: value };
     setAssign(next);
     saveAssign(next);
+    // 割り当てた曲は先にレンダリングしておく（ボーナス開始時に待たせない）
+    if (value.startsWith('song:')) {
+      const song = songs.find((s) => `song:${s.id}` === value);
+      if (song) {
+        try {
+          const p = compose(song.options);
+          void player.ensureComposedBgm(JSON.stringify(song.options), arrangePiece(p, song.options.styleId));
+        } catch {
+          // 壊れた保存データはボーナス開始時に内蔵曲へフォールバックされる
+        }
+      }
+    }
   };
 
   const violations = piece ? validatePiece(piece) : [];
@@ -256,10 +277,10 @@ export function BgmComposerPanel() {
         </div>
 
         <div className="panel-controls">
-          <button onClick={() => composeAndPlay(newSeed())} data-testid="st-compose">
+          <button onClick={() => composeAndPlay(newSeed())} disabled={progress !== null} data-testid="st-compose">
             🎲 作曲して再生
           </button>
-          <button onClick={() => composeAndPlay(seed)} disabled={!piece} data-testid="st-replay">
+          <button onClick={() => composeAndPlay(seed)} disabled={!piece || progress !== null} data-testid="st-replay">
             ▶ 同じメロディで再生
           </button>
           <button onClick={stop} disabled={!playing} data-testid="st-stop">
@@ -283,6 +304,11 @@ export function BgmComposerPanel() {
           </label>
         </div>
 
+        {progress !== null && (
+          <p className="panel-note" data-testid="st-progress">
+            🎛 OPLL（YM2413）で演奏を仕込んでいます… {Math.round(progress * 100)}%
+          </p>
+        )}
         {error && <p className="badge-ng">{error}</p>}
         {piece && (
           <div data-testid="st-result">
@@ -321,7 +347,8 @@ export function BgmComposerPanel() {
                 <span className="song-summary">{songSummary(s.options)}</span>
                 <button
                   className="form-mini-btn"
-                  onClick={() => playOptions(s.options)}
+                  onClick={() => void playOptions(s.options)}
+                  disabled={progress !== null}
                   data-testid={`st-song-play-${s.id}`}
                 >
                   ▶ 試聴
@@ -343,9 +370,10 @@ export function BgmComposerPanel() {
           {assignSelect('rb')}
         </div>
         <p className="panel-note">
+          再生は内蔵曲と同じ OPLL（YM2413）音源。アクセント・チャンネルエコー・ビブラートも
+          当時のレジスタ操作だけで掛けています。🔊 は BGM 全体の音量（内蔵曲にも効きます）。
           保存した曲は BB/RB 中の BGM に割り当てられます（ボーナス開始のファンファーレ後に流れます）。
-          決定順は「尺 → キー/BPM → スタイル → コード進行 → メロディ」。コードは小節ごとの選択制
-          （同じ機能の代理和音）なので、どれを選んでも破綻しません。
+          コードは小節ごとの選択制（同じ機能の代理和音）なので、どれを選んでも破綻しません。
         </p>
       </div>
     </details>

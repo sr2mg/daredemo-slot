@@ -106,9 +106,8 @@ const DRUM_BITS: Record<string, number> = {
   h: 0x01, // ハイハット
 };
 
-/** リズムモード有効化 + ドラムパターン。パターン長（秒）を返す */
-export function compileDrums(b: SeqBuilder, pattern: string, bpm: number, step = 8): number {
-  // ch6〜8 のリズム用 fnum/blk 初期化（定番値）とリズム音量、リズムモード ON
+/** リズムモードの初期化（ch6〜8 の fnum/blk 定番値・リズム音量・モード ON）*/
+export function initRhythmMode(b: SeqBuilder): void {
   b.raw(0x16, 0x20, 0)
     .raw(0x17, 0x50, 0)
     .raw(0x18, 0xc0, 0)
@@ -119,6 +118,11 @@ export function compileDrums(b: SeqBuilder, pattern: string, bpm: number, step =
     .raw(0x37, 0x24, 0) //  HH(上位) / SD(下位)
     .raw(0x38, 0x24, 0) //  TOM(上位) / CYM(下位)
     .raw(0x0e, 0x20, 0);
+}
+
+/** リズムモード有効化 + ドラムパターン。パターン長（秒）を返す */
+export function compileDrums(b: SeqBuilder, pattern: string, bpm: number, step = 8): number {
+  initRhythmMode(b);
 
   const stepDur = (60 / bpm) * (4 / step);
   const tokens = pattern.replace(/\|/g, ' ').trim().split(/\s+/);

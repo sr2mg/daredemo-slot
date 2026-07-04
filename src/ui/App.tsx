@@ -8,11 +8,11 @@ import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
-import { MusicPlayer } from '../core/music/player.js';
 import { buildSfxEvents } from '../core/music/sfx-design.js';
 import { SfxDesignPlayer } from '../core/music/sfx-play.js';
 import { BgmComposerPanel } from './bgm-composer.js';
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
+import { arrangePiece } from './opll-arrange.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
 import { resolveSfxAssign } from './sfx-library.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
@@ -116,9 +116,6 @@ export function App() {
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
-  /** 自作 BGM（BGM 作成パネルで保存した曲）のゲーム中再生用プレイヤー */
-  const musicRef = useRef<MusicPlayer | null>(null);
-  if (musicRef.current === null) musicRef.current = new MusicPlayer();
   /** 自作効果音（効果音作成パネル）のゲーム中再生用プレイヤー */
   const sfxDesignRef = useRef<SfxDesignPlayer | null>(null);
   if (sfxDesignRef.current === null) sfxDesignRef.current = new SfxDesignPlayer();
@@ -225,7 +222,6 @@ export function App() {
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
     setBetDone(false);
     sfxRef.current?.stopBgm();
-    musicRef.current?.stop();
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -324,18 +320,22 @@ export function App() {
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
           playSfx('fanfare');
           // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当てに従い、
-          // 自作曲なら MusicPlayer、内蔵曲なら OPLL で鳴らす（起動直前に片方を止める）
+          // 自作曲も内蔵曲も同じ OPLL（emu2413）で鳴らす。自作曲は通常キャッシュ済みだが、
+          // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
           const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
           const assigned = resolveAssign(slot);
-          musicRef.current?.stop();
-          sfx?.stopBgm();
           if (assigned.kind === 'song' && sfx?.enabled) {
             try {
               const piece = compose(assigned.song.options);
-              musicRef.current!.setVolume(loadBgmVolume() / 100);
-              musicRef.current!.play(piece, { loop: true, delaySec: 1.05 });
+              const def = arrangePiece(piece, assigned.song.options.styleId);
+              void sfx
+                .playComposedBgm(JSON.stringify(assigned.song.options), def, 1.05)
+                .then((result) => {
+                  // レンダリング失敗時だけ内蔵曲にフォールバック
+                  //（superseded = ボーナス終了等で不要になった場合は何も鳴らさない）
+                  if (result === 'failed' && sfx.enabled) sfx.playBgm(slot);
+                });
             } catch {
-              // 保存データが壊れていたら内蔵曲にフォールバック（音は演出。ゲームを止めない）
               sfx?.playBgm(slot, 1.05);
             }
           } else if (assigned.kind === 'builtin') {
@@ -343,10 +343,7 @@ export function App() {
           }
         } else if (event.replayWon) playSfx('replay');
         else if (event.payout > 0) playSfx('payout');
-        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') {
-          sfx?.stopBgm();
-          musicRef.current?.stop();
-        }
+        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
         if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
           playSfx('kyuin');
         }
@@ -361,9 +358,26 @@ export function App() {
     [pushLog, playSfx],
   );
 
-  // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）
+  // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）。
+  // BB/RB に割り当て済みの自作 BGM も先に OPLL レンダリングしておく
   useEffect(() => {
-    void sfxRef.current?.preload();
+    const sfx = sfxRef.current;
+    if (!sfx) return;
+    sfx.setBgmVolume(loadBgmVolume() / 100);
+    void (async () => {
+      await sfx.preload();
+      for (const slot of ['bb', 'rb'] as const) {
+        const assigned = resolveAssign(slot);
+        if (assigned.kind !== 'song') continue;
+        try {
+          const piece = compose(assigned.song.options);
+          const def = arrangePiece(piece, assigned.song.options.styleId);
+          void sfx.ensureComposedBgm(JSON.stringify(assigned.song.options), def);
+        } catch {
+          // 壊れた保存データはボーナス開始時に内蔵曲へフォールバックされる
+        }
+      }
+    })();
   }, []);
 
   // 共有リンク（#m=...）からの機種読み込み
@@ -634,8 +648,7 @@ export function App() {
               checked={sfxOn}
               onChange={(e) => {
                 setSfxOn(e.target.checked);
-                sfxRef.current?.setEnabled(e.target.checked);
-                if (!e.target.checked) musicRef.current?.stop(); // 自作 BGM も同じトグルで止める
+                sfxRef.current?.setEnabled(e.target.checked); // 自作 BGM も同じ経路なので一緒に止まる
               }}
               data-testid="sfx-toggle"
             />
@@ -662,7 +675,7 @@ export function App() {
           </select>
         </div>
         <SoundTestPanel player={sfxRef.current!} />
-        <BgmComposerPanel />
+        <BgmComposerPanel player={sfxRef.current!} />
         <SfxDesignerPanel />
         <p className="panel-note credit-note">
           音源コア:{' '}
