@@ -7,7 +7,10 @@ import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
+import { compose } from '../core/music/compose.js';
+import { MusicPlayer } from '../core/music/player.js';
 import { BgmComposerPanel } from './bgm-composer.js';
+import { loadBgmVolume, resolveAssign } from './bgm-library.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import { OPLL_VOICES } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
@@ -93,6 +96,9 @@ export function App() {
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
+  /** 自作 BGM（BGM 作成パネルで保存した曲）のゲーム中再生用プレイヤー */
+  const musicRef = useRef<MusicPlayer | null>(null);
+  if (musicRef.current === null) musicRef.current = new MusicPlayer();
   const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
   const [beepVoice, setBeepVoice] = useState(() => sfxRef.current!.beepVoice);
   /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
@@ -167,6 +173,7 @@ export function App() {
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
     setBetDone(false);
     sfxRef.current?.stopBgm();
+    musicRef.current?.stop();
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -264,11 +271,30 @@ export function App() {
         const sfx = sfxRef.current;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
           sfx?.play('fanfare');
-          // ファンファーレが鳴り終わる頃に BGM イン（BB/RB で曲が変わる）
-          sfx?.playBgm(kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb', 1.05);
+          // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当てに従い、
+          // 自作曲なら MusicPlayer、内蔵曲なら OPLL で鳴らす（起動直前に片方を止める）
+          const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
+          const assigned = resolveAssign(slot);
+          musicRef.current?.stop();
+          sfx?.stopBgm();
+          if (assigned.kind === 'song' && sfx?.enabled) {
+            try {
+              const piece = compose(assigned.song.options);
+              musicRef.current!.setVolume(loadBgmVolume() / 100);
+              musicRef.current!.play(piece, { loop: true, delaySec: 1.05 });
+            } catch {
+              // 保存データが壊れていたら内蔵曲にフォールバック（音は演出。ゲームを止めない）
+              sfx?.playBgm(slot, 1.05);
+            }
+          } else if (assigned.kind === 'builtin') {
+            sfx?.playBgm(assigned.name, 1.05);
+          }
         } else if (event.replayWon) sfx?.play('replay');
         else if (event.payout > 0) sfx?.play('payout');
-        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
+        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') {
+          sfx?.stopBgm();
+          musicRef.current?.stop();
+        }
         if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
           sfx?.play('kyuin');
         }
@@ -489,6 +515,7 @@ export function App() {
             onChange={(e) => {
               setSfxOn(e.target.checked);
               sfxRef.current?.setEnabled(e.target.checked);
+              if (!e.target.checked) musicRef.current?.stop(); // 自作 BGM も同じトグルで止める
             }}
             data-testid="sfx-toggle"
           />

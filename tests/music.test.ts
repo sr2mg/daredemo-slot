@@ -80,6 +80,12 @@ describe('compose', () => {
     expect(validatePiece(piece)).toEqual([]);
   });
 
+  it('ComposeOptions は JSON 往復で同じ曲を再現する（BGM ライブラリの保存形式）', () => {
+    const opts = { ...base, progressionId: 'tanaka-manabe', bars: 8 as const, choice: defaultChoiceFor(PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!, 8) };
+    const roundTripped = JSON.parse(JSON.stringify(opts)) as typeof opts;
+    expect(compose(roundTripped)).toEqual(compose(opts));
+  });
+
   it('尺より長い進行はエラー（カノン風 8 小節を RB に使えない）', () => {
     expect(() => compose({ ...base, progressionId: 'canon', bars: 4 })).toThrow();
   });

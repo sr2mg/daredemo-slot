@@ -31,8 +31,12 @@ export class MusicPlayer {
     }
   }
 
-  /** piece を再生。loop=false のときは 1 周で自動停止し onEnd を呼ぶ */
-  play(piece: Piece, loop: boolean, onEnd?: () => void): void {
+  /**
+   * piece を再生。loop=false のときは 1 周で自動停止し onEnd を呼ぶ。
+   * delaySec はファンファーレ後に BGM をインさせる用途（SfxPlayer.playBgm と同じ意味）
+   */
+  play(piece: Piece, opts: { loop?: boolean; onEnd?: () => void; delaySec?: number } = {}): void {
+    const { loop = false, onEnd, delaySec = 0 } = opts;
     this.stop();
     const ctx = (this.ctx ??= new AudioContext());
     void ctx.resume(); // ユーザー操作起点なら再開できる
@@ -43,7 +47,7 @@ export class MusicPlayer {
 
     const secPerBeat = 60 / piece.bpm;
     const durSec = piece.beats * secPerBeat;
-    let nextStart = ctx.currentTime + 0.05;
+    let nextStart = ctx.currentTime + 0.05 + delaySec;
     this.scheduleIteration(piece, nextStart, secPerBeat);
     nextStart += durSec;
 
