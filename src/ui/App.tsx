@@ -9,10 +9,15 @@ import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
 import { MusicPlayer } from '../core/music/player.js';
+import { buildSfxEvents } from '../core/music/sfx-design.js';
+import { SfxDesignPlayer } from '../core/music/sfx-play.js';
 import { BgmComposerPanel } from './bgm-composer.js';
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
+import { SfxDesignerPanel } from './sfx-designer.js';
+import { resolveSfxAssign } from './sfx-library.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import { OPLL_VOICES } from './opll-core.js';
+import type { SfxName } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
 import { SoundTestPanel } from './sound-test.js';
@@ -99,6 +104,9 @@ export function App() {
   /** 自作 BGM（BGM 作成パネルで保存した曲）のゲーム中再生用プレイヤー */
   const musicRef = useRef<MusicPlayer | null>(null);
   if (musicRef.current === null) musicRef.current = new MusicPlayer();
+  /** 自作効果音（効果音作成パネル）のゲーム中再生用プレイヤー */
+  const sfxDesignRef = useRef<SfxDesignPlayer | null>(null);
+  if (sfxDesignRef.current === null) sfxDesignRef.current = new SfxDesignPlayer();
   const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
   const [beepVoice, setBeepVoice] = useState(() => sfxRef.current!.beepVoice);
   /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
@@ -152,6 +160,25 @@ export function App() {
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => [line, ...prev].slice(0, 10));
+  }, []);
+
+  /**
+   * 効果音の再生入口。効果音作成パネルで契機に自作音が割り当てられていればそちらを、
+   * なければ内蔵の OPLL 音を鳴らす。ON/OFF は OPLL 側のトグルに従う
+   */
+  const playSfx = useCallback((name: SfxName) => {
+    const sfx = sfxRef.current;
+    if (!sfx?.enabled) return;
+    const design = resolveSfxAssign(name);
+    if (design) {
+      try {
+        sfxDesignRef.current!.play(buildSfxEvents(design), design.wave);
+        return;
+      } catch {
+        // 保存データが壊れていたら内蔵音にフォールバック
+      }
+    }
+    sfx.play(name);
   }, []);
 
   const applyMachine = useCallback((next: MachineDef, sel?: 'random' | number) => {
@@ -208,9 +235,9 @@ export function App() {
   const pressBet = useCallback(() => {
     if (phaseRef.current !== 'ready' || betDoneRef.current) return;
     if (engineRef.current.pendingRebet) return; // 再遊技は自動ベット
-    sfxRef.current?.play('bet');
+    playSfx('bet');
     setBetDone(true);
-  }, []);
+  }, [playSfx]);
 
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
@@ -222,7 +249,7 @@ export function App() {
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
     // ベット済み・再遊技は「ラ」だけ、未ベットなら「ミ→ラ」を実機のリズムで
-    sfxRef.current?.play(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
+    playSfx(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
     setBetDone(false);
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
@@ -230,7 +257,7 @@ export function App() {
     setLastEvent(null);
     setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
     setPhase('spinning');
-  }, []);
+  }, [playSfx]);
 
   const stopReel = useCallback(
     (reel: number) => {
@@ -239,7 +266,7 @@ export function App() {
       if (reelsRef.current[reel]!.stopped) return;
       const push = reelsRef.current[reel]!.top;
       const stopEvent = session.stopReel(reel, push);
-      sfxRef.current?.play('reelStop');
+      playSfx('reelStop');
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
@@ -270,7 +297,7 @@ export function App() {
         // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
         const sfx = sfxRef.current;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
-          sfx?.play('fanfare');
+          playSfx('fanfare');
           // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当てに従い、
           // 自作曲なら MusicPlayer、内蔵曲なら OPLL で鳴らす（起動直前に片方を止める）
           const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
@@ -289,24 +316,24 @@ export function App() {
           } else if (assigned.kind === 'builtin') {
             sfx?.playBgm(assigned.name, 1.05);
           }
-        } else if (event.replayWon) sfx?.play('replay');
-        else if (event.payout > 0) sfx?.play('payout');
+        } else if (event.replayWon) playSfx('replay');
+        else if (event.payout > 0) playSfx('payout');
         if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') {
           sfx?.stopBgm();
           musicRef.current?.stop();
         }
         if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
-          sfx?.play('kyuin');
+          playSfx('kyuin');
         }
-        if (event.lidReleased) sfx?.play('siren');
-        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) sfx?.play('rush');
+        if (event.lidReleased) playSfx('siren');
+        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) playSfx('rush');
         if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
         if (event.rtExited) parts.push(`RT 終了`);
         if (parts.length > 0) pushLog(parts.join(' '));
       }
     },
-    [pushLog],
+    [pushLog, playSfx],
   );
 
   // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）
@@ -545,6 +572,7 @@ export function App() {
       <GuidePanel key={`guide-${machine.name}`} machine={machine} />
       <SoundTestPanel player={sfxRef.current!} />
       <BgmComposerPanel />
+      <SfxDesignerPanel />
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
