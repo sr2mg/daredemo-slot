@@ -39,6 +39,9 @@ export function initialState(machine?: MachineDef, setting = 1): EngineState {
     base: { type: 'normal' },
     rt: null,
     rtGames: 0,
+    ct: null,
+    ctGames: 0,
+    ctPayout: 0,
     queue: [],
     lid: false,
     lidReleaseIn: null,
@@ -199,6 +202,11 @@ export class GameSession {
     // --- 入賞制御に乗る役集合 = 当該ゲームの小役・リプレイ + キュー先頭（蓋 off 時） ---
     const active = new Set(this.flags.filter((id) => !bonusIds.has(id)));
     if (s.base.type === 'normal' && !s.lid && s.queue.length > 0) active.add(s.queue[0]!);
+    // CT 中は freeRoles が成立フラグに関係なく制御対象（抽選ではなく制御を変える遊技状態）
+    if (s.base.type === 'normal' && s.ct !== null) {
+      const ctDef = machine.ct?.find((c) => c.id === s.ct);
+      for (const id of ctDef?.freeRoles ?? []) active.add(id);
+    }
     this.active = [...active];
     this.effective = active;
     this.ctxCache = ctxCache;
@@ -298,13 +306,24 @@ export class GameSession {
     let bonusStarted: RoleId | null = null;
     let bonusEnded: RoleId | null = null;
     let modeChanged: string | null = null;
+    let ctExited: string | null = null;
     const wonBonus = wins.find((id) => bonusIds.has(id)) ?? null;
     if (wonBonus !== null) {
-      // キュー先頭の入賞 = 放出。RT はボーナス作動でリセット
+      // キュー先頭の入賞 = 放出
       s.queue.shift();
       s.base = { type: 'bonus', run: { bonusId: wonBonus, gamesPlayed: 0, totalPayout: 0, wins: 0 } };
-      s.rt = null;
-      s.rtGames = 0;
+      // RT / CT は BB・RB の作動でリセット。SB（普通役物・1 ゲーム）は状態を壊さない
+      // （SB 高確率 RT = 集中〔2〜3号機〕を SB の連続入賞が横切れるようにするため）
+      if (bonusDefOf(machine, wonBonus).kind !== 'sb') {
+        s.rt = null;
+        s.rtGames = 0;
+        if (s.ct !== null) {
+          ctExited = s.ct;
+          s.ct = null;
+          s.ctGames = 0;
+          s.ctPayout = 0;
+        }
+      }
       bonusStarted = wonBonus;
     } else if (s.base.type === 'bonus') {
       const run = s.base.run;
@@ -336,7 +355,27 @@ export class GameSession {
       }
     }
 
-    // --- RT 遷移（exit → entry の順で評価） ---
+    // --- CT の進行・終了（ゲーム数 / 獲得枚数 / パンク役入賞） ---
+    if (s.ct !== null && s.base.type === 'normal' && bonusStarted === null) {
+      s.ctGames += 1;
+      s.ctPayout += payout;
+      const ctDef = machine.ct?.find((c) => c.id === s.ct);
+      const end = ctDef?.end;
+      const punked = end?.punkRoles?.some((id) => wins.includes(id)) ?? false;
+      if (
+        !ctDef ||
+        punked ||
+        (end?.games !== undefined && s.ctGames >= end.games) ||
+        (end?.maxPayout !== undefined && s.ctPayout >= end.maxPayout)
+      ) {
+        ctExited = s.ct;
+        s.ct = null;
+        s.ctGames = 0;
+        s.ctPayout = 0;
+      }
+    }
+
+    // --- RT / CT 遷移（exit → entry の順で評価） ---
     let rtExited: string | null = null;
     if (s.rt !== null) {
       s.rtGames += 1;
@@ -349,6 +388,7 @@ export class GameSession {
     }
     this.rtEntered =
       applyRtEntry(machine, s, { queuedBonus: this.queuedBonus, bonusEnded, wins }) ?? this.rtEntered;
+    const ctEntered = applyCtEntry(machine, s, { queuedBonus: this.queuedBonus, bonusEnded, wins });
 
     return {
       state: s,
@@ -364,6 +404,8 @@ export class GameSession {
         bonusEnded,
         rtEntered: this.rtEntered,
         rtExited,
+        ctEntered,
+        ctExited,
         lidReleased: this.lidReleased,
         modeChanged,
       },
@@ -455,6 +497,21 @@ function applyRtEntry(machine: MachineDef, s: EngineState, ctx: TriggerContext):
       s.rt = rtDef.id;
       s.rtGames = 0;
       return rtDef.id;
+    }
+  }
+  return null;
+}
+
+/** entry 条件に合う最初の CT 状態へ入る（役物作動中は入らない） */
+function applyCtEntry(machine: MachineDef, s: EngineState, ctx: TriggerContext): string | null {
+  if (s.base.type === 'bonus') return null;
+  for (const ctDef of machine.ct ?? []) {
+    if (ctDef.id === s.ct) continue;
+    if (ctDef.entry.some((t) => matchTrigger(t, ctx, 0))) {
+      s.ct = ctDef.id;
+      s.ctGames = 0;
+      s.ctPayout = 0;
+      return ctDef.id;
     }
   }
   return null;

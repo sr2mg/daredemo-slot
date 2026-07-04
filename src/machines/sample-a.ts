@@ -112,8 +112,8 @@ export const sampleAType: MachineDef = {
   roles: sampleRoles,
   priority: 'role-first',
   bonuses: [
-    // BB: 20 ゲーム消化で終了（獲得目安 ≒ 20G × (60000/65536) × 8 枚 ≒ 146 枚）
-    { id: 'bb_red', kind: 'bb', end: { games: 20 }, tableRef: 'in_bb' },
+    // BB: 30 ゲーム消化で終了（獲得目安 ≒ 30G × (60000/65536) × 8 枚 ≒ 220 枚）
+    { id: 'bb_red', kind: 'bb', end: { games: 30 }, tableRef: 'in_bb' },
     // RB: 12 ゲーム or 8 回入賞で終了
     { id: 'rb', kind: 'rb', end: { games: 12, wins: 8 }, tableRef: 'in_rb' },
   ],
@@ -132,20 +132,20 @@ export const sampleAType: MachineDef = {
     base: [
       // 基底 = 設定 1
       { roles: ['replay'], weight: 8978 }, //  ≒1/7.3
-      { roles: ['bell'], weight: 6552 }, //    ≒1/10
+      { roles: ['bell'], weight: 9000 }, //    ≒1/7.3
       { roles: ['cherry'], weight: 1057 }, //  ≒1/62
-      { roles: ['melon'], weight: 655 }, //    ≒1/100
+      { roles: ['melon'], weight: 1200 }, //   ≒1/55（目押しできる人へのご褒美）
       { roles: ['cherry', 'bb_red'], weight: 66 },
-      { roles: ['bb_red'], weight: 200 }, //   ≒1/328
-      { roles: ['rb'], weight: 273 }, //       ≒1/240
+      { roles: ['bb_red'], weight: 210 }, //   ≒1/312
+      { roles: ['rb'], weight: 280 }, //       ≒1/234
     ],
-    // 設定差はボーナス確率のみ（差分上書き）
+    // 設定差はボーナス確率 + 高設定のベル（差分上書き）
     settingOverrides: {
-      '2': [{ roles: ['bb_red'], weight: 216 }, { roles: ['rb'], weight: 285 }],
-      '3': [{ roles: ['bb_red'], weight: 234 }, { roles: ['rb'], weight: 299 }],
-      '4': [{ roles: ['bb_red'], weight: 254 }, { roles: ['rb'], weight: 315 }],
-      '5': [{ roles: ['bb_red'], weight: 276 }, { roles: ['rb'], weight: 334 }],
-      '6': [{ roles: ['bb_red'], weight: 300 }, { roles: ['rb'], weight: 356 }],
+      '2': [{ roles: ['bb_red'], weight: 240 }, { roles: ['rb'], weight: 290 }],
+      '3': [{ roles: ['bb_red'], weight: 275 }, { roles: ['rb'], weight: 300 }],
+      '4': [{ roles: ['bb_red'], weight: 320 }, { roles: ['rb'], weight: 310 }],
+      '5': [{ roles: ['bb_red'], weight: 380 }, { roles: ['rb'], weight: 320 }],
+      '6': [{ roles: ['bb_red'], weight: 450 }, { roles: ['rb'], weight: 330 }, { roles: ['bell'], weight: 9600 }],
     },
   },
   tables: {

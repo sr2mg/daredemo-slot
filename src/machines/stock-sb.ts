@@ -46,11 +46,11 @@ export const stockSB: MachineDef = {
     ],
     // 設定差: SB 確率（= ストックの溜まりやすさ）
     settingOverrides: {
-      '2': [{ roles: ['sb_kin'], weight: 5150 }],
-      '3': [{ roles: ['sb_kin'], weight: 5320 }],
-      '4': [{ roles: ['sb_kin'], weight: 5510 }],
-      '5': [{ roles: ['sb_kin'], weight: 5720 }],
-      '6': [{ roles: ['sb_kin'], weight: 5960 }, { roles: ['bb_red'], weight: 180 }],
+      '2': [{ roles: ['sb_kin'], weight: 5300 }],
+      '3': [{ roles: ['sb_kin'], weight: 5650 }],
+      '4': [{ roles: ['sb_kin'], weight: 6050 }],
+      '5': [{ roles: ['sb_kin'], weight: 6500 }],
+      '6': [{ roles: ['sb_kin'], weight: 7000 }, { roles: ['bb_red'], weight: 260 }],
     },
   },
   tables: {

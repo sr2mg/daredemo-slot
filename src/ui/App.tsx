@@ -5,9 +5,13 @@ import type { NavDisplay } from '../core/nav.js';
 import { Xoshiro128 } from '../core/rng.js';
 import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
+import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
-import { guides } from './guides.js';
-import { CompliancePanel, LayoutPanel, SpecPanel } from './panels.js';
+import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
+import { OPLL_VOICES } from './opll-core.js';
+import { decodeMachine, parseShareHash } from './share.js';
+import { SfxPlayer } from './sfx-player.js';
+import { SoundTestPanel } from './sound-test.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
@@ -80,10 +84,24 @@ export function App() {
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [debug, setDebug] = useState(false);
-  const [guideOpen, setGuideOpen] = useState(true);
   const [forceSel, setForceSel] = useState('');
+  /** 告知演出: なし（リーチ目を自力で探す）/ フラグ成立で点灯 / 放出可能で点灯 */
+  const [noticeMode, setNoticeMode] = useState<'none' | 'flag' | 'release'>('none');
+  /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
+  const [flashKey, setFlashKey] = useState(0);
+  /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
+  const sfxRef = useRef<SfxPlayer | null>(null);
+  if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
+  const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
+  const [beepVoice, setBeepVoice] = useState(() => sfxRef.current!.beepVoice);
+  /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
+  const [betDone, setBetDone] = useState(false);
+  const betDoneRef = useRef(betDone);
+  betDoneRef.current = betDone;
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
+  /** サブ基板モード（教材モードの覗き見用） */
+  const [atMode, setAtMode] = useState<string | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
   const [settingSel, setSettingSel] = useState<'random' | number>('random');
 
@@ -110,6 +128,8 @@ export function App() {
   forceSelRef.current = forceSel;
   const settingSelRef = useRef(settingSel);
   settingSelRef.current = settingSel;
+  const noticeModeRef = useRef(noticeMode);
+  noticeModeRef.current = noticeMode;
 
   // リール回転: 一定速でフレームを進める
   useEffect(() => {
@@ -143,6 +163,9 @@ export function App() {
     setForceSel('');
     setNavDisplay(null);
     setAtRemaining(null);
+    setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
+    setBetDone(false);
+    sfxRef.current?.stopBgm();
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -173,6 +196,14 @@ export function App() {
     [applyMachine],
   );
 
+  /** MAX BET（演出）。ベット音「ミ」を鳴らして BET 済み表示にする */
+  const pressBet = useCallback(() => {
+    if (phaseRef.current !== 'ready' || betDoneRef.current) return;
+    if (engineRef.current.pendingRebet) return; // 再遊技は自動ベット
+    sfxRef.current?.play('bet');
+    setBetDone(true);
+  }, []);
+
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
     // 強制フラグ（教材モード）: 次の 1 ゲームだけ抽選を上書き
@@ -182,6 +213,9 @@ export function App() {
     if (session.bet > creditRef.current) return; // クレジット不足
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
+    // ベット済み・再遊技は「ラ」だけ、未ベットなら「ミ→ラ」を実機のリズムで
+    sfxRef.current?.play(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
+    setBetDone(false);
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
     setCredit((c) => c - session.bet);
@@ -197,6 +231,7 @@ export function App() {
       if (reelsRef.current[reel]!.stopped) return;
       const push = reelsRef.current[reel]!.top;
       const stopEvent = session.stopReel(reel, push);
+      sfxRef.current?.play('reelStop');
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
@@ -211,14 +246,33 @@ export function App() {
         setNavDisplay(null);
         const navNotes = navRef.current?.onEvent(event) ?? [];
         setAtRemaining(navRef.current?.atRemainingGames ?? null);
+        setAtMode(navRef.current?.atMode ?? null);
         const parts: string[] = [...navNotes];
         if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
         if (event.lidReleased) parts.push('🔓 放出開始！');
+        if (event.ctEntered) parts.push('⚡ CT 突入！目押しで取り切れ！');
+        if (event.ctExited) parts.push('CT 終了');
         // SB（普通役物）は地味さが本体なので開始・終了を騒がない（実機も告知しない）
         const kindOf = (id: string) => machineRef.current.bonuses.find((b) => b.id === id)?.kind;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
           parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
+          setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
         }
+
+        // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
+        const sfx = sfxRef.current;
+        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
+          sfx?.play('fanfare');
+          // ファンファーレが鳴り終わる頃に BGM イン（BB/RB で曲が変わる）
+          sfx?.playBgm(kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb', 1.05);
+        } else if (event.replayWon) sfx?.play('replay');
+        else if (event.payout > 0) sfx?.play('payout');
+        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
+        if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
+          sfx?.play('kyuin');
+        }
+        if (event.lidReleased) sfx?.play('siren');
+        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) sfx?.play('rush');
         if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
         if (event.rtExited) parts.push(`RT 終了`);
@@ -227,6 +281,32 @@ export function App() {
     },
     [pushLog],
   );
+
+  // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）
+  useEffect(() => {
+    void sfxRef.current?.preload();
+  }, []);
+
+  // 共有リンク（#m=...）からの機種読み込み
+  useEffect(() => {
+    const payload = parseShareHash(location.hash);
+    if (!payload) return;
+    void decodeMachine(payload)
+      .then((def) => {
+        const { errors } = validateMachine(def);
+        if (errors.length > 0 || !checkLayout(def).ok) throw new Error('invalid shared machine');
+        // 同名の別内容カスタムがあるときは上書きせず別名にする
+        const existing = loadCustoms().find((c) => c.name === def.name);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(def)) {
+          def = { ...def, name: `${def.name}（共有）` };
+        }
+        saveCustom(def);
+        pushLog(`🔗 共有された機種「${def.name}」を読み込みました`);
+      })
+      .catch(() => pushLog('共有リンクの機種を読み込めませんでした（リンクが壊れています）'))
+      .finally(() => history.replaceState(null, '', location.pathname + location.search));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // キーボード操作
   useEffect(() => {
@@ -238,10 +318,17 @@ export function App() {
       } else if (e.key === 'j') stopReel(0);
       else if (e.key === 'k') stopReel(1);
       else if (e.key === 'l') stopReel(2);
+      else if (e.key === 'b') pressBet();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [pullLever, stopReel]);
+  }, [pullLever, stopReel, pressBet]);
+
+  // 告知ランプ: SB 以外のボーナスがキューにあるとき、モードに応じて点灯
+  const bonusKinds = new Map(machine.bonuses.map((b) => [b.id, b.kind]));
+  const pendingBonus = engine.queue.some((id) => bonusKinds.get(id) !== 'sb');
+  const lampOn =
+    noticeMode === 'flag' ? pendingBonus : noticeMode === 'release' ? pendingBonus && !engine.lid : false;
 
   const statusChips: string[] = [];
   if (engine.base.type === 'bonus') {
@@ -249,12 +336,14 @@ export function App() {
     statusChips.push(`${ROLE_LABEL[run.bonusId] ?? run.bonusId} 消化中 ${run.gamesPlayed}G / 獲得 ${run.totalPayout}枚`);
   }
   if (engine.rt !== null) statusChips.push(`RT中 ${engine.rtGames}G`);
+  if (engine.ct !== null) statusChips.push(`CT中 ${engine.ctGames}G / 獲得${engine.ctPayout}枚`);
   if (atRemaining !== null) statusChips.push(`AT中 残り${atRemaining}G`);
   if (debug) {
     if (engine.queue.length > 0) {
       statusChips.push(`内部中 ストック${engine.queue.length}個${engine.lid ? ` 蓋on(残${engine.lidReleaseIn ?? '?'}G)` : ' 放出可'}`);
     }
     if (engine.mode !== null) statusChips.push(`モード: ${engine.mode}`);
+    if (atMode !== null) statusChips.push(`ATモード: ${atMode}`);
   }
 
   return (
@@ -307,6 +396,10 @@ export function App() {
       </div>
 
       <div className="cabinet">
+        {flashKey > 0 && <div key={flashKey} className="bonus-flash" aria-hidden />}
+        <div className="lamp-row">
+          <span className={`notice-lamp ${lampOn ? 'lamp-on' : ''}`} data-testid="notice-lamp" title="告知ランプ" />
+        </div>
         {navDisplay && (
           <div className="nav-banner" data-testid="nav-banner">
             ナビ: {['左', '中', '右'][navDisplay.correctFirst]}から押せ！
@@ -329,6 +422,15 @@ export function App() {
         </div>
 
         <div className="controls">
+          <button
+            className="bet-btn"
+            onClick={pressBet}
+            disabled={phase !== 'ready' || betDone || engine.pendingRebet}
+            data-testid="bet"
+            title={engine.pendingRebet ? '再遊技（自動ベット）' : 'MAX BET'}
+          >
+            {betDone ? 'BET済' : engine.pendingRebet ? '再遊技' : 'BET (B)'}
+          </button>
           <button
             className="lever"
             onClick={pullLever}
@@ -372,29 +474,58 @@ export function App() {
         ))}
       </div>
 
-      {guides[machine.name] && (
-        <details
-          className="panel"
-          open={guideOpen}
-          onToggle={(e) => setGuideOpen((e.target as HTMLDetailsElement).open)}
+      <div className="force-row">
+        <label htmlFor="notice-select">告知演出:</label>
+        <select id="notice-select" value={noticeMode} onChange={(e) => setNoticeMode(e.target.value as typeof noticeMode)}>
+          <option value="none">なし（出目から自力で察知）</option>
+          <option value="flag">完全告知（ボーナス成立で点灯）</option>
+          <option value="release">放出告知（揃えられる状態で点灯）</option>
+        </select>
+        <label>
+          <input
+            type="checkbox"
+            checked={sfxOn}
+            onChange={(e) => {
+              setSfxOn(e.target.checked);
+              sfxRef.current?.setEnabled(e.target.checked);
+            }}
+            data-testid="sfx-toggle"
+          />
+          効果音（OPLL）
+        </label>
+        <label htmlFor="beep-voice">ビープ音色:</label>
+        <select
+          id="beep-voice"
+          value={beepVoice}
+          disabled={!sfxOn}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setBeepVoice(v);
+            sfxRef.current?.setBeepVoice(v);
+            sfxRef.current?.play('bet'); // 即試聴
+          }}
+          data-testid="beep-voice"
         >
-          <summary>この機種の遊び方</summary>
-          <div className="panel-body">
-            <p className="guide-summary">{guides[machine.name]!.summary}</p>
-            <ul className="guide-list">
-              {guides[machine.name]!.points.map((point) => (
-                <li key={point}>{point}</li>
-              ))}
-            </ul>
-            <p className="panel-note">操作: Space = レバー / J・K・L = 左・中・右停止</p>
-          </div>
-        </details>
-      )}
+          {OPLL_VOICES.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.id}: {v.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <GuidePanel key={`guide-${machine.name}`} machine={machine} />
+      <SoundTestPanel player={sfxRef.current!} />
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
       <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
-      <EditorPanel key={`edit-${machine.name}`} machine={machine} onSave={saveCustom} />
+      <EditorPanel
+        key={`edit-${machine.name}`}
+        machine={machine}
+        onSave={saveCustom}
+        defaultTier={customs.length === 0 ? 'easy' : 'normal'}
+      />
 
       <label className="debug-toggle">
         <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
@@ -423,6 +554,14 @@ export function App() {
           {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
         </div>
       )}
+      <p className="panel-note credit-note">
+        音源コア:{' '}
+        <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
+          emu2413
+        </a>{' '}
+        © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
+      </p>
+
       {debug && (
         <pre className="debug-panel" data-testid="debug">
           {JSON.stringify(

@@ -16,7 +16,8 @@ export const stockBB: MachineDef = {
   roles: sampleRoles,
   priority: 'role-first',
   bonuses: [
-    { id: 'bb_red', kind: 'bb', end: { games: 20 }, tableRef: 'in_bb' },
+    // BB: 24 ゲーム消化で終了（獲得目安 ≒ 176 枚。連チャンで波を作る）
+    { id: 'bb_red', kind: 'bb', end: { games: 24 }, tableRef: 'in_bb' },
     { id: 'rb', kind: 'rb', end: { games: 12, wins: 8 }, tableRef: 'in_rb' },
   ],
   rtStates: [],
@@ -67,18 +68,18 @@ export const stockBB: MachineDef = {
       { roles: ['replay'], weight: 8978 },
       { roles: ['bell'], weight: 6552 },
       { roles: ['cherry'], weight: 1057 },
-      { roles: ['melon'], weight: 655 },
+      { roles: ['melon'], weight: 1200 },
       { roles: ['cherry', 'bb_red'], weight: 66 },
       // ストック機なので成立自体は軽め（≒1/116）。出玉の波は蓋とモードが作る
       { roles: ['bb_red'], weight: 500 },
       { roles: ['rb'], weight: 273 },
     ],
     settingOverrides: {
-      '2': [{ roles: ['bb_red'], weight: 525 }],
-      '3': [{ roles: ['bb_red'], weight: 552 }],
-      '4': [{ roles: ['bb_red'], weight: 583 }],
-      '5': [{ roles: ['bb_red'], weight: 618 }],
-      '6': [{ roles: ['bb_red'], weight: 660 }, { roles: ['rb'], weight: 300 }],
+      '2': [{ roles: ['bb_red'], weight: 545 }],
+      '3': [{ roles: ['bb_red'], weight: 595 }],
+      '4': [{ roles: ['bb_red'], weight: 650 }],
+      '5': [{ roles: ['bb_red'], weight: 710 }],
+      '6': [{ roles: ['bb_red'], weight: 900 }, { roles: ['rb'], weight: 340 }],
     },
   },
   tables: {

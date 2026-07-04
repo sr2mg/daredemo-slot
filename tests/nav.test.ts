@@ -18,6 +18,8 @@ function eventWith(partial: Partial<GameEvent>): GameEvent {
     bonusEnded: null,
     rtEntered: null,
     rtExited: null,
+    ctEntered: null,
+    ctExited: null,
     lidReleased: false,
     modeChanged: null,
     ...partial,

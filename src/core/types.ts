@@ -43,6 +43,23 @@ export type AtTrigger =
   | { on: 'pureMiss'; prob: number }
   | { on: 'gamesCeiling'; n: number };
 
+/** サブ基板モードの移行契機。atEnd は AT 終了時に評価される */
+export type AtModeTransition =
+  | { on: 'roleHit'; of: RoleId; to: string; prob: number }
+  | { on: 'pureMiss'; to: string; prob: number }
+  | { on: 'atEnd'; to: string; prob: number };
+
+/**
+ * サブ基板の AT モード（高確/低確）。メイン基板の規制外でサブが勝手に持つ状態で、
+ * モードによって AT 抽選契機の当選率が変わる（4号機 AT 機の高確モードの再現）。
+ */
+export interface AtModeDef {
+  id: string;
+  /** このモード中の AT 抽選契機（省略時は at.triggers をそのまま使う） */
+  triggers?: readonly AtTrigger[];
+  transitions?: readonly AtModeTransition[];
+}
+
 export interface NavAtDef {
   triggers: readonly AtTrigger[];
   management:
@@ -94,6 +111,22 @@ export interface RtStateDef {
   replayWeights: Record<RoleId, number>;
   entry: readonly RtTrigger[];
   exit: readonly RtTrigger[];
+}
+
+// ===== CT（チャレンジタイム。4号機後期に認められた技術介入ゾーン） =====
+
+/**
+ * CT: 抽選テーブルではなく「リール制御」を変える遊技状態。
+ * CT 中は freeRoles が成立フラグに関係なく引き込み制御へ乗る
+ * （= 目押しできる人だけが取れる。技術介入の出玉ゾーン）。
+ */
+export interface CtDef {
+  id: string;
+  /** CT 中、常に制御対象になる役 */
+  freeRoles: readonly RoleId[];
+  entry: readonly RtTrigger[];
+  /** 終了条件（いずれか必須）。punkRoles はその役の入賞でパンク終了 */
+  end: { games?: number; maxPayout?: number; punkRoles?: readonly RoleId[] };
 }
 
 // ===== 軸 4: 持ち越し・放出 =====
@@ -149,6 +182,8 @@ export interface MachineDef {
   roles: readonly RoleDef[];
   bonuses: readonly BonusDef[];
   rtStates: readonly RtStateDef[];
+  /** CT（チャレンジタイム）の定義（任意） */
+  ct?: readonly CtDef[];
   carryover: CarryoverDef;
   /** 引き込み優先モード（docs/design/03-reel-control.md 優先度 4） */
   priority: 'role-first' | 'bonus-first';
@@ -169,7 +204,11 @@ export interface MachineDef {
   /** 打ち分けグループの定義（任意） */
   navGroups?: readonly { id: string }[];
   /** ナビ層（サブ基板）の定義（任意）。AT の状態管理はコアの外（NavLayer）が行う */
-  nav?: { at: NavAtDef };
+  nav?: {
+    at: NavAtDef;
+    /** AT 抽選の高確/低確モード（任意。サブ基板の内部状態） */
+    modes?: { initial: string; states: readonly AtModeDef[] };
+  };
 }
 
 // ===== エンジン状態と GameEvent =====
@@ -199,6 +238,12 @@ export interface EngineState {
   rt: string | null;
   /** 現在の RT での消化ゲーム数（games 契機の exit 用） */
   rtGames: number;
+  /** 現在の CT 状態 id（null = 非 CT） */
+  ct: string | null;
+  /** 現在の CT での消化ゲーム数 */
+  ctGames: number;
+  /** 現在の CT での獲得枚数（maxPayout 終了判定用） */
+  ctPayout: number;
   /** 持ち越しボーナスの FIFO キュー（先頭のみ入賞制御に乗る） */
   queue: RoleId[];
   /** 蓋（on の間はキュー先頭も蹴飛ばし対象） */
@@ -227,6 +272,8 @@ export interface GameEvent {
   bonusEnded: RoleId | null;
   rtEntered: string | null;
   rtExited: string | null;
+  ctEntered: string | null;
+  ctExited: string | null;
   lidReleased: boolean;
   /** モードが移行した場合の新モード id */
   modeChanged: string | null;
