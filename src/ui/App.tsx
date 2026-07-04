@@ -7,6 +7,7 @@ import type { EngineState, GameEvent, MachineDef } from '../core/types.js';
 import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
+import { BgmComposerPanel } from './bgm-composer.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import { OPLL_VOICES } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
@@ -516,6 +517,7 @@ export function App() {
 
       <GuidePanel key={`guide-${machine.name}`} machine={machine} />
       <SoundTestPanel player={sfxRef.current!} />
+      <BgmComposerPanel />
 
       <SpecPanel key={`spec-${machine.name}`} machine={machine} />
       <LayoutPanel key={`layout-${machine.name}`} machine={machine} />

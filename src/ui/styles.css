@@ -343,6 +343,95 @@ button:disabled {
   color: #888;
 }
 
+/* サウンドテスト */
+.slot-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.slot-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.slot-label {
+  font-size: 11px;
+  color: #888;
+}
+
+.slot-fixed {
+  font-family: 'Consolas', monospace;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #101018;
+  border: 1px solid #2e2e44;
+  color: #9fd;
+}
+
+.slot-item select {
+  font-family: 'Consolas', monospace;
+  font-size: 14px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
+.st-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #aaa;
+  font-family: 'Consolas', monospace;
+}
+
+.st-volume input[type='range'] {
+  width: 110px;
+  accent-color: #ffd54f;
+}
+
+.st-bpm,
+.st-loop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.st-bpm input {
+  width: 70px;
+  font-family: 'Consolas', monospace;
+  font-size: 14px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
+.chord-line {
+  font-family: 'Consolas', monospace;
+  font-size: clamp(15px, 2.4vmin, 19px);
+  color: #ffd54f;
+  margin-bottom: 6px;
+}
+
+.melody-line {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  color: #9fd;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
 .guide-summary {
   font-size: clamp(13px, 1.9vmin, 15px);
   color: #ddd;
