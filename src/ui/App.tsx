@@ -64,6 +64,21 @@ const FORCE_PURE_MISS = 'PURE_MISS';
 /** カスタム機種の localStorage キー */
 const CUSTOM_KEY = 'daredemo.customMachines.v1';
 
+/** ツールタブ。遊ぶ場所（筐体）は常時表示で、道具だけを役割別に分ける */
+type TabId = 'play' | 'sound' | 'build' | 'lab';
+const TAB_KEY = 'daredemo.activeTab.v1';
+const TABS: readonly { id: TabId; label: string }[] = [
+  { id: 'play', label: '🎮 あそぶ' },
+  { id: 'sound', label: '🎵 サウンド' },
+  { id: 'build', label: '🔧 機種づくり' },
+  { id: 'lab', label: '🔬 検定・実測' },
+];
+
+function loadTab(): TabId {
+  const v = localStorage.getItem(TAB_KEY);
+  return TABS.some((t) => t.id === v) ? (v as TabId) : 'play';
+}
+
 function loadCustoms(): MachineDef[] {
   try {
     return JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? '[]') as MachineDef[];
@@ -119,6 +134,16 @@ export function App() {
   const [atMode, setAtMode] = useState<string | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
   const [settingSel, setSettingSel] = useState<'random' | number>('random');
+  const [tab, setTab] = useState<TabId>(loadTab);
+
+  const selectTab = useCallback((next: TabId) => {
+    setTab(next);
+    try {
+      localStorage.setItem(TAB_KEY, next);
+    } catch {
+      // 保存できなくても切り替えには支障なし
+    }
+  }, []);
 
   /** ビルトイン + カスタム（同名カスタムはビルトインを上書き） */
   const allMachines = useMemo(() => {
@@ -528,110 +553,140 @@ export function App() {
         ))}
       </div>
 
-      <div className="force-row">
-        <label htmlFor="notice-select">告知演出:</label>
-        <select id="notice-select" value={noticeMode} onChange={(e) => setNoticeMode(e.target.value as typeof noticeMode)}>
-          <option value="none">なし（出目から自力で察知）</option>
-          <option value="flag">完全告知（ボーナス成立で点灯）</option>
-          <option value="release">放出告知（揃えられる状態で点灯）</option>
-        </select>
-        <label>
-          <input
-            type="checkbox"
-            checked={sfxOn}
-            onChange={(e) => {
-              setSfxOn(e.target.checked);
-              sfxRef.current?.setEnabled(e.target.checked);
-              if (!e.target.checked) musicRef.current?.stop(); // 自作 BGM も同じトグルで止める
-            }}
-            data-testid="sfx-toggle"
-          />
-          効果音（OPLL）
-        </label>
-        <label htmlFor="beep-voice">ビープ音色:</label>
-        <select
-          id="beep-voice"
-          value={beepVoice}
-          disabled={!sfxOn}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            setBeepVoice(v);
-            sfxRef.current?.setBeepVoice(v);
-            sfxRef.current?.play('bet'); // 即試聴
-          }}
-          data-testid="beep-voice"
-        >
-          {OPLL_VOICES.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.id}: {v.label}
-            </option>
-          ))}
-        </select>
+      {/* ツールタブ: 遊ぶ場所（上の筐体）は常時表示、道具は役割別に分ける。
+          切り替えは hidden で行い、アンマウントしない（実測結果や再生状態を保つ） */}
+      <div className="tab-bar" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`tab-btn ${tab === t.id ? 'tab-btn-active' : ''}`}
+            onClick={() => selectTab(t.id)}
+            data-testid={`tab-${t.id}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <GuidePanel key={`guide-${machine.name}`} machine={machine} />
-      <SoundTestPanel player={sfxRef.current!} />
-      <BgmComposerPanel />
-      <SfxDesignerPanel />
-
-      <SpecPanel key={`spec-${machine.name}`} machine={machine} />
-      <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
-      <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
-      <EditorPanel
-        key={`edit-${machine.name}`}
-        machine={machine}
-        onSave={saveCustom}
-        defaultTier={customs.length === 0 ? 'easy' : 'normal'}
-      />
-
-      <label className="debug-toggle">
-        <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
-        成立フラグを見る（ネタバレ・教材モード）
-      </label>
-      {debug && (
+      <div className="tab-content" hidden={tab !== 'play'}>
         <div className="force-row">
-          <label htmlFor="force-select">強制フラグ:</label>
+          <label htmlFor="notice-select">告知演出:</label>
           <select
-            id="force-select"
-            value={forceSel}
-            onChange={(e) => setForceSel(e.target.value)}
-            data-testid="force-select"
+            id="notice-select"
+            value={noticeMode}
+            onChange={(e) => setNoticeMode(e.target.value as typeof noticeMode)}
           >
-            <option value="">なし（通常抽選）</option>
-            <option value={FORCE_PURE_MISS}>純ハズレ</option>
-            {machine.lottery.base.map((entry) => {
-              const value = entry.roles.join('+');
-              return (
-                <option key={value} value={value}>
-                  {entry.roles.map((r) => ROLE_LABEL[r] ?? r).join(' + ')}
-                </option>
-              );
-            })}
+            <option value="none">なし（出目から自力で察知）</option>
+            <option value="flag">完全告知（ボーナス成立で点灯）</option>
+            <option value="release">放出告知（揃えられる状態で点灯）</option>
           </select>
-          {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
+          <label className="debug-inline">
+            <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
+            成立フラグを見る（ネタバレ・教材モード）
+          </label>
         </div>
-      )}
-      <p className="panel-note credit-note">
-        音源コア:{' '}
-        <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
-          emu2413
-        </a>{' '}
-        © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
-      </p>
+        {debug && (
+          <div className="force-row">
+            <label htmlFor="force-select">強制フラグ:</label>
+            <select
+              id="force-select"
+              value={forceSel}
+              onChange={(e) => setForceSel(e.target.value)}
+              data-testid="force-select"
+            >
+              <option value="">なし（通常抽選）</option>
+              <option value={FORCE_PURE_MISS}>純ハズレ</option>
+              {machine.lottery.base.map((entry) => {
+                const value = entry.roles.join('+');
+                return (
+                  <option key={value} value={value}>
+                    {entry.roles.map((r) => ROLE_LABEL[r] ?? r).join(' + ')}
+                  </option>
+                );
+              })}
+            </select>
+            {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
+          </div>
+        )}
+        <GuidePanel key={`guide-${machine.name}`} machine={machine} />
+        {debug && (
+          <pre className="debug-panel" data-testid="debug">
+            {JSON.stringify(
+              {
+                成立フラグ: sessionRef.current?.flags ?? lastEvent?.flags ?? [],
+                制御対象: sessionRef.current?.active ?? [],
+                エンジン状態: engine,
+              },
+              null,
+              2,
+            )}
+          </pre>
+        )}
+      </div>
 
-      {debug && (
-        <pre className="debug-panel" data-testid="debug">
-          {JSON.stringify(
-            {
-              成立フラグ: sessionRef.current?.flags ?? lastEvent?.flags ?? [],
-              制御対象: sessionRef.current?.active ?? [],
-              エンジン状態: engine,
-            },
-            null,
-            2,
-          )}
-        </pre>
-      )}
+      <div className="tab-content" hidden={tab !== 'sound'}>
+        <div className="force-row">
+          <label>
+            <input
+              type="checkbox"
+              checked={sfxOn}
+              onChange={(e) => {
+                setSfxOn(e.target.checked);
+                sfxRef.current?.setEnabled(e.target.checked);
+                if (!e.target.checked) musicRef.current?.stop(); // 自作 BGM も同じトグルで止める
+              }}
+              data-testid="sfx-toggle"
+            />
+            効果音（OPLL）
+          </label>
+          <label htmlFor="beep-voice">ビープ音色:</label>
+          <select
+            id="beep-voice"
+            value={beepVoice}
+            disabled={!sfxOn}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setBeepVoice(v);
+              sfxRef.current?.setBeepVoice(v);
+              sfxRef.current?.play('bet'); // 即試聴
+            }}
+            data-testid="beep-voice"
+          >
+            {OPLL_VOICES.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.id}: {v.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <SoundTestPanel player={sfxRef.current!} />
+        <BgmComposerPanel />
+        <SfxDesignerPanel />
+        <p className="panel-note credit-note">
+          音源コア:{' '}
+          <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
+            emu2413
+          </a>{' '}
+          © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
+        </p>
+      </div>
+
+      <div className="tab-content" hidden={tab !== 'build'}>
+        <EditorPanel
+          key={`edit-${machine.name}`}
+          machine={machine}
+          onSave={saveCustom}
+          defaultTier={customs.length === 0 ? 'easy' : 'normal'}
+        />
+      </div>
+
+      <div className="tab-content" hidden={tab !== 'lab'}>
+        <SpecPanel key={`spec-${machine.name}`} machine={machine} />
+        <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
+        <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
+      </div>
     </div>
   );
 }
