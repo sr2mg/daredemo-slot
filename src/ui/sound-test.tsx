@@ -22,9 +22,10 @@ const SFX_ITEMS: readonly { name: SfxName; label: string }[] = [
 ];
 
 const BGM_ITEMS: readonly { name: BgmName; label: string }[] = [
-  { name: 'bb', label: 'BB中BGM（チャールダーシュ）' },
-  { name: 'rb', label: 'RB中BGM（ジムノペディ第1番）' },
-  { name: 'rb2', label: 'RB候補2（別れの曲）' },
+  { name: 'bb', label: 'BB中BGM（草競馬）' },
+  { name: 'rb', label: 'RB中BGM（チャールダーシュ）' },
+  { name: 'rb2', label: 'RB候補2（ジムノペディ第1番）' },
+  { name: 'rb3', label: 'RB候補3（別れの曲）' },
 ];
 
 export function SoundTestPanel({ player }: { player: SfxPlayer }) {
