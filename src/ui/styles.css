@@ -383,6 +383,64 @@ button:disabled {
   border: 1px solid #3a3a55;
 }
 
+.song-name-input {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+  min-width: 240px;
+}
+
+.song-list {
+  margin-bottom: 12px;
+}
+
+.song-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-left: 2px solid #3a3a55;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.song-name {
+  color: #ffd54f;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.song-summary {
+  color: #888;
+  font-size: 12px;
+  flex: 1;
+  min-width: 180px;
+}
+
+.song-delete {
+  color: #ff8a80;
+}
+
+.assign-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assign-item select {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
 .st-volume {
   display: flex;
   align-items: center;

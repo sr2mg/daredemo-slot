@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { compose, defaultChoiceFor, validatePiece } from '../core/music/compose.js';
-import type { Piece } from '../core/music/compose.js';
+import type { ComposeOptions, Piece } from '../core/music/compose.js';
 import { MusicPlayer } from '../core/music/player.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
+import {
+  BUILTIN_BGM,
+  loadAssign,
+  loadBgmVolume,
+  loadSongs,
+  saveAssign,
+  saveBgmVolume,
+  saveSongs,
+} from './bgm-library.js';
+import type { BgmAssign, SavedSong } from './bgm-library.js';
 
 /**
  * BGM 作成（作曲）パネル。既製曲を試聴する SoundTestPanel（sound-test.tsx）とは別物で、
@@ -10,16 +20,20 @@ import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/t
  * 決定順序を UI にそのまま並べる: 用途(尺) → BPM/キー → スタイル → コード進行(スロット選択) → 作曲。
  * コード進行は「小節スロット + 選択肢」方式なので、選ぶだけで破綻しない進行が組める。
  * メロディはシード付きで決定論生成し、強拍コードトーン検証を通した結果を表示する。
+ *
+ * 作った曲は名前を付けてリストに保存でき（実体は ComposeOptions のみ）、
+ * BB/RB のゲーム中 BGM に割り当てられる（App.tsx がボーナス開始時に読む）。
  */
 
 const newSeed = (): number => (Math.random() * 0xffff_ffff) >>> 0;
 
-const VOLUME_KEY = 'daredemo.bgmComposer.volume.v1';
+const newSongId = (): string => `s${Date.now().toString(36)}${newSeed().toString(36)}`;
 
-function loadVolume(): number {
-  const raw = localStorage.getItem(VOLUME_KEY);
-  const v = raw === null ? NaN : Number(raw);
-  return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 50;
+/** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
+function songSummary(options: ComposeOptions): string {
+  const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
+  const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
+  return `${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
 }
 
 export function BgmComposerPanel() {
@@ -32,9 +46,14 @@ export function BgmComposerPanel() {
   const [seed, setSeed] = useState(newSeed);
   const [loop, setLoop] = useState(true);
   const [piece, setPiece] = useState<Piece | null>(null);
+  /** 最後に compose した正確なオプション（保存はこれを使う。UI をいじっただけでは変わらない） */
+  const [lastOpts, setLastOpts] = useState<ComposeOptions | null>(null);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
-  const [volume, setVolume] = useState(loadVolume);
+  const [volume, setVolume] = useState(loadBgmVolume);
+  const [songs, setSongs] = useState<SavedSong[]>(loadSongs);
+  const [assign, setAssign] = useState<BgmAssign>(loadAssign);
+  const [songName, setSongName] = useState('');
 
   const playerRef = useRef<MusicPlayer | null>(null);
   useEffect(() => {
@@ -43,11 +62,7 @@ export function BgmComposerPanel() {
   }, []);
   useEffect(() => {
     playerRef.current?.setVolume(volume / 100);
-    try {
-      localStorage.setItem(VOLUME_KEY, String(volume));
-    } catch {
-      // 保存失敗しても鳴らせればよい
-    }
+    saveBgmVolume(volume);
   }, [volume]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
@@ -78,28 +93,85 @@ export function BgmComposerPanel() {
     setPlaying(false);
   };
 
-  const composeAndPlay = (nextSeed: number, nextChoice?: number[]) => {
+  const playOptions = (opts: ComposeOptions) => {
     try {
-      const p = compose({
-        progressionId: prog.id,
-        styleId,
-        keyRoot,
-        bpm,
-        bars,
-        seed: nextSeed,
-        choice: nextChoice ?? choice,
-      });
+      const p = compose(opts);
       setError('');
-      setSeed(nextSeed);
+      setSeed(opts.seed);
       setPiece(p);
-      playerRef.current?.play(p, loop, () => setPlaying(false));
+      setLastOpts(opts);
+      playerRef.current?.play(p, { loop, onEnd: () => setPlaying(false) });
       setPlaying(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
+  const composeAndPlay = (nextSeed: number) => {
+    playOptions({
+      progressionId: prog.id,
+      styleId,
+      keyRoot,
+      bpm,
+      bars,
+      seed: nextSeed,
+      choice: [...choice],
+    });
+  };
+
+  const saveSong = () => {
+    if (!lastOpts) return;
+    const name = songName.trim() || songSummary(lastOpts);
+    const next = [...songs, { id: newSongId(), name, options: lastOpts }];
+    setSongs(next);
+    saveSongs(next);
+    setSongName('');
+  };
+
+  const deleteSong = (id: string) => {
+    const next = songs.filter((s) => s.id !== id);
+    setSongs(next);
+    saveSongs(next);
+    // 割り当て中の曲を消したら内蔵のデフォルトに戻す
+    const fixed: BgmAssign = {
+      bb: assign.bb === `song:${id}` ? 'builtin:bb' : assign.bb,
+      rb: assign.rb === `song:${id}` ? 'builtin:rb' : assign.rb,
+    };
+    if (fixed.bb !== assign.bb || fixed.rb !== assign.rb) {
+      setAssign(fixed);
+      saveAssign(fixed);
+    }
+  };
+
+  const updateAssign = (slot: 'bb' | 'rb', value: string) => {
+    const next = { ...assign, [slot]: value };
+    setAssign(next);
+    saveAssign(next);
+  };
+
   const violations = piece ? validatePiece(piece) : [];
+
+  const assignSelect = (slot: 'bb' | 'rb') => (
+    <label className="assign-item">
+      <span className="slot-label">{slot.toUpperCase()} 中の BGM</span>
+      <select
+        value={assign[slot]}
+        onChange={(e) => updateAssign(slot, e.target.value)}
+        data-testid={`st-assign-${slot}`}
+      >
+        {BUILTIN_BGM.map((b) => (
+          <option key={b.name} value={`builtin:${b.name}`}>
+            {b.label}
+          </option>
+        ))}
+        {songs.map((s) => (
+          <option key={s.id} value={`song:${s.id}`}>
+            ★ {s.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 
   return (
     <details className="panel">
@@ -225,9 +297,53 @@ export function BgmComposerPanel() {
               )}
               （同じシード + 同じ設定なら同じ曲になります）
             </p>
+            <div className="panel-controls">
+              <input
+                type="text"
+                className="song-name-input"
+                placeholder={lastOpts ? songSummary(lastOpts) : '曲名'}
+                value={songName}
+                onChange={(e) => setSongName(e.target.value)}
+                data-testid="st-song-name"
+              />
+              <button onClick={saveSong} disabled={!lastOpts} data-testid="st-save">
+                💾 リストに保存
+              </button>
+            </div>
           </div>
         )}
+
+        {songs.length > 0 && (
+          <div className="song-list" data-testid="st-song-list">
+            {songs.map((s) => (
+              <div key={s.id} className="song-row">
+                <span className="song-name">★ {s.name}</span>
+                <span className="song-summary">{songSummary(s.options)}</span>
+                <button
+                  className="form-mini-btn"
+                  onClick={() => playOptions(s.options)}
+                  data-testid={`st-song-play-${s.id}`}
+                >
+                  ▶ 試聴
+                </button>
+                <button
+                  className="form-mini-btn song-delete"
+                  onClick={() => deleteSong(s.id)}
+                  data-testid={`st-song-delete-${s.id}`}
+                >
+                  🗑 削除
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="panel-controls">
+          {assignSelect('bb')}
+          {assignSelect('rb')}
+        </div>
         <p className="panel-note">
+          保存した曲は BB/RB 中の BGM に割り当てられます（ボーナス開始のファンファーレ後に流れます）。
           決定順は「尺 → キー/BPM → スタイル → コード進行 → メロディ」。コードは小節ごとの選択制
           （同じ機能の代理和音）なので、どれを選んでも破綻しません。
         </p>
