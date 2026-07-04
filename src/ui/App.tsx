@@ -164,6 +164,7 @@ export function App() {
     setAtRemaining(null);
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
     setBetDone(false);
+    sfxRef.current?.stopBgm();
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -259,9 +260,13 @@ export function App() {
 
         // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
         const sfx = sfxRef.current;
-        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') sfx?.play('fanfare');
-        else if (event.replayWon) sfx?.play('replay');
+        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
+          sfx?.play('fanfare');
+          // ファンファーレが鳴り終わる頃に BGM イン（BB/RB で曲が変わる）
+          sfx?.playBgm(kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb', 1.05);
+        } else if (event.replayWon) sfx?.play('replay');
         else if (event.payout > 0) sfx?.play('payout');
+        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
         if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
           sfx?.play('kyuin');
         }

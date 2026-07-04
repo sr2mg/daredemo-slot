@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { buildBgmDefs } from '../src/ui/bgm.js';
+import { compileDrums, compileMmlTrack, compileSong } from '../src/ui/mml.js';
 import type { OpllExports } from '../src/ui/opll-core.js';
 import {
   buildSfxDefs,
@@ -81,6 +83,64 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
     expect(fnumLoOf(defs.betLever, 0)).toEqual([note(659.26), note(880)]); // ベット→レバー
     expect(fnumLoOf(defs.betLever, 1)).toEqual([note(392.0), note(523.25)]);
     expect(defs.betLever.duration).toBeGreaterThan(defs.lever.duration);
+  });
+
+  it('MML: 音名・長さ・オクターブ・付点・休符を解釈する', () => {
+    const b = new SeqBuilder();
+    // 120BPM: 四分 = 0.5 秒。c d e c で 2.0 秒
+    const len = compileMmlTrack(b, { ch: 0, voice: 7, vol: 3, mml: 'l4 c d e c' }, 120);
+    expect(len).toBeCloseTo(2.0, 6);
+    const keyOns = b.events.filter((e) => e.reg === 0x20 && (e.val & 0x10) !== 0);
+    expect(keyOns).toHaveLength(4);
+    // 先頭は C4 = 261.63Hz
+    const firstFnumLo = b.events.find((e) => e.reg === 0x10)!.val;
+    expect(firstFnumLo).toBe(freqToFnum(261.63).fnum & 0xff);
+
+    // 付点とオクターブ記号と半音
+    const b2 = new SeqBuilder();
+    const len2 = compileMmlTrack(b2, { ch: 1, voice: 7, vol: 3, mml: 'l8 o5 c. > f+16 < r4' }, 120);
+    expect(len2).toBeCloseTo(0.25 * 1.5 + 0.125 + 0.5, 6);
+    expect(() => compileMmlTrack(new SeqBuilder(), { ch: 0, voice: 7, vol: 3, mml: 'c x' }, 120)).toThrow(
+      'MML パースエラー',
+    );
+  });
+
+  it('ドラム DSL: リズムモードを有効化し、トークンごとにリトリガーする', () => {
+    const b = new SeqBuilder();
+    const len = compileDrums(b, 'bh - s -', 120, 8);
+    expect(len).toBeCloseTo(0.25 * 4, 6);
+    const rhythmWrites = b.events.filter((e) => e.reg === 0x0e);
+    expect(rhythmWrites[0]!.val).toBe(0x20); // リズムモード ON
+    // 2 トークンぶんのクリア→トリガー（+ 初期化 1 回）
+    expect(rhythmWrites.filter((e) => e.val > 0x20)).toHaveLength(2);
+    expect(rhythmWrites.some((e) => e.val === (0x20 | 0x10 | 0x01))).toBe(true); // b+h
+  });
+
+  it('compileSong はトラック長のズレを検出する', () => {
+    expect(() =>
+      compileSong({ bpm: 120, bars: 2, tracks: [{ ch: 0, voice: 7, vol: 3, mml: 'l4 c d e c' }] }),
+    ).toThrow('長さが合いません');
+  });
+
+  it('BB/RB の BGM がループ長ぴったりでレンダリングされる', { timeout: 120_000 }, () => {
+    const bgm = buildBgmDefs();
+    expect(bgm.bb.duration).toBeCloseTo((8 * 4 * 60) / 138, 3);
+    expect(bgm.rb.duration).toBeCloseTo((4 * 4 * 60) / 126, 3);
+    for (const [name, def] of Object.entries(bgm)) {
+      const wave = renderSequence(exports, opll, def);
+      expect(wave.length, name).toBe(Math.round(def.duration * OPLL_RATE));
+      let peak = 0;
+      let energy = 0;
+      for (const v of wave) {
+        expect(Number.isNaN(v), name).toBe(false);
+        const abs = Math.abs(v);
+        if (abs > peak) peak = abs;
+        energy += abs;
+      }
+      expect(peak, name).toBeCloseTo(0.65, 2);
+      // 曲として鳴り続けている（平均振幅が無音でない）
+      expect(energy / wave.length, name).toBeGreaterThan(0.01);
+    }
   });
 
   it('ビープ音色を差し替えられる（既定はシンセサイザー 10 番）', () => {

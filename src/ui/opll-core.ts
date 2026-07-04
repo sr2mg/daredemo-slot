@@ -86,6 +86,12 @@ export class SeqBuilder {
     return this;
   }
 
+  /** 生のレジスタ書き込み（リズムモード等、ヘルパにない操作用） */
+  raw(reg: number, val: number, at: number): this {
+    this.events.push({ at, reg, val });
+    return this;
+  }
+
   /** 指数カーブのピッチスイープ（stepSec 刻み） */
   sweep(ch: number, from: number, to: number, start: number, end: number, stepSec = 0.01): this {
     const steps = Math.max(1, Math.floor((end - start) / stepSec));
