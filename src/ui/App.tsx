@@ -8,11 +8,16 @@ import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
-import { MusicPlayer } from '../core/music/player.js';
+import { buildSfxEvents } from '../core/music/sfx-design.js';
+import { SfxDesignPlayer } from '../core/music/sfx-play.js';
 import { BgmComposerPanel } from './bgm-composer.js';
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
+import { arrangePiece } from './opll-arrange.js';
+import { SfxDesignerPanel } from './sfx-designer.js';
+import { resolveSfxAssign } from './sfx-library.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import { OPLL_VOICES } from './opll-core.js';
+import type { SfxName } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
 import { SoundTestPanel } from './sound-test.js';
@@ -59,6 +64,21 @@ const FORCE_PURE_MISS = 'PURE_MISS';
 /** カスタム機種の localStorage キー */
 const CUSTOM_KEY = 'daredemo.customMachines.v1';
 
+/** ツールタブ。遊ぶ場所（筐体）は常時表示で、道具だけを役割別に分ける */
+type TabId = 'play' | 'sound' | 'build' | 'lab';
+const TAB_KEY = 'daredemo.activeTab.v1';
+const TABS: readonly { id: TabId; label: string }[] = [
+  { id: 'play', label: '🎮 あそぶ' },
+  { id: 'sound', label: '🎵 サウンド' },
+  { id: 'build', label: '🔧 機種づくり' },
+  { id: 'lab', label: '🔬 検定・実測' },
+];
+
+function loadTab(): TabId {
+  const v = localStorage.getItem(TAB_KEY);
+  return TABS.some((t) => t.id === v) ? (v as TabId) : 'play';
+}
+
 function loadCustoms(): MachineDef[] {
   try {
     return JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? '[]') as MachineDef[];
@@ -96,9 +116,9 @@ export function App() {
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
-  /** 自作 BGM（BGM 作成パネルで保存した曲）のゲーム中再生用プレイヤー */
-  const musicRef = useRef<MusicPlayer | null>(null);
-  if (musicRef.current === null) musicRef.current = new MusicPlayer();
+  /** 自作効果音（効果音作成パネル）のゲーム中再生用プレイヤー */
+  const sfxDesignRef = useRef<SfxDesignPlayer | null>(null);
+  if (sfxDesignRef.current === null) sfxDesignRef.current = new SfxDesignPlayer();
   const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
   const [beepVoice, setBeepVoice] = useState(() => sfxRef.current!.beepVoice);
   /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
@@ -111,6 +131,16 @@ export function App() {
   const [atMode, setAtMode] = useState<string | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
   const [settingSel, setSettingSel] = useState<'random' | number>('random');
+  const [tab, setTab] = useState<TabId>(loadTab);
+
+  const selectTab = useCallback((next: TabId) => {
+    setTab(next);
+    try {
+      localStorage.setItem(TAB_KEY, next);
+    } catch {
+      // 保存できなくても切り替えには支障なし
+    }
+  }, []);
 
   /** ビルトイン + カスタム（同名カスタムはビルトインを上書き） */
   const allMachines = useMemo(() => {
@@ -154,6 +184,25 @@ export function App() {
     setLog((prev) => [line, ...prev].slice(0, 10));
   }, []);
 
+  /**
+   * 効果音の再生入口。効果音作成パネルで契機に自作音が割り当てられていればそちらを、
+   * なければ内蔵の OPLL 音を鳴らす。ON/OFF は OPLL 側のトグルに従う
+   */
+  const playSfx = useCallback((name: SfxName) => {
+    const sfx = sfxRef.current;
+    if (!sfx?.enabled) return;
+    const design = resolveSfxAssign(name);
+    if (design) {
+      try {
+        sfxDesignRef.current!.play(buildSfxEvents(design), design.wave);
+        return;
+      } catch {
+        // 保存データが壊れていたら内蔵音にフォールバック
+      }
+    }
+    sfx.play(name);
+  }, []);
+
   const applyMachine = useCallback((next: MachineDef, sel?: 'random' | number) => {
     const settings = next.lottery.settings ?? 1;
     const choice = sel ?? settingSelRef.current;
@@ -173,7 +222,6 @@ export function App() {
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
     setBetDone(false);
     sfxRef.current?.stopBgm();
-    musicRef.current?.stop();
   }, []);
 
   const allMachinesRef = useRef(allMachines);
@@ -208,9 +256,9 @@ export function App() {
   const pressBet = useCallback(() => {
     if (phaseRef.current !== 'ready' || betDoneRef.current) return;
     if (engineRef.current.pendingRebet) return; // 再遊技は自動ベット
-    sfxRef.current?.play('bet');
+    playSfx('bet');
     setBetDone(true);
-  }, []);
+  }, [playSfx]);
 
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
@@ -222,7 +270,7 @@ export function App() {
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
     // ベット済み・再遊技は「ラ」だけ、未ベットなら「ミ→ラ」を実機のリズムで
-    sfxRef.current?.play(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
+    playSfx(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
     setBetDone(false);
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
@@ -230,7 +278,7 @@ export function App() {
     setLastEvent(null);
     setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
     setPhase('spinning');
-  }, []);
+  }, [playSfx]);
 
   const stopReel = useCallback(
     (reel: number) => {
@@ -239,7 +287,7 @@ export function App() {
       if (reelsRef.current[reel]!.stopped) return;
       const push = reelsRef.current[reel]!.top;
       const stopEvent = session.stopReel(reel, push);
-      sfxRef.current?.play('reelStop');
+      playSfx('reelStop');
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
@@ -270,48 +318,66 @@ export function App() {
         // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
         const sfx = sfxRef.current;
         if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
-          sfx?.play('fanfare');
+          playSfx('fanfare');
           // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当てに従い、
-          // 自作曲なら MusicPlayer、内蔵曲なら OPLL で鳴らす（起動直前に片方を止める）
+          // 自作曲も内蔵曲も同じ OPLL（emu2413）で鳴らす。自作曲は通常キャッシュ済みだが、
+          // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
           const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
           const assigned = resolveAssign(slot);
-          musicRef.current?.stop();
-          sfx?.stopBgm();
           if (assigned.kind === 'song' && sfx?.enabled) {
             try {
               const piece = compose(assigned.song.options);
-              musicRef.current!.setVolume(loadBgmVolume() / 100);
-              musicRef.current!.play(piece, { loop: true, delaySec: 1.05 });
+              const def = arrangePiece(piece, assigned.song.options.styleId);
+              void sfx
+                .playComposedBgm(JSON.stringify(assigned.song.options), def, 1.05)
+                .then((result) => {
+                  // レンダリング失敗時だけ内蔵曲にフォールバック
+                  //（superseded = ボーナス終了等で不要になった場合は何も鳴らさない）
+                  if (result === 'failed' && sfx.enabled) sfx.playBgm(slot);
+                });
             } catch {
-              // 保存データが壊れていたら内蔵曲にフォールバック（音は演出。ゲームを止めない）
               sfx?.playBgm(slot, 1.05);
             }
           } else if (assigned.kind === 'builtin') {
             sfx?.playBgm(assigned.name, 1.05);
           }
-        } else if (event.replayWon) sfx?.play('replay');
-        else if (event.payout > 0) sfx?.play('payout');
-        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') {
-          sfx?.stopBgm();
-          musicRef.current?.stop();
-        }
+        } else if (event.replayWon) playSfx('replay');
+        else if (event.payout > 0) playSfx('payout');
+        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
         if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
-          sfx?.play('kyuin');
+          playSfx('kyuin');
         }
-        if (event.lidReleased) sfx?.play('siren');
-        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) sfx?.play('rush');
+        if (event.lidReleased) playSfx('siren');
+        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) playSfx('rush');
         if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
         if (event.rtEntered) parts.push(`RT 突入`);
         if (event.rtExited) parts.push(`RT 終了`);
         if (parts.length > 0) pushLog(parts.join(' '));
       }
     },
-    [pushLog],
+    [pushLog, playSfx],
   );
 
-  // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）
+  // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）。
+  // BB/RB に割り当て済みの自作 BGM も先に OPLL レンダリングしておく
   useEffect(() => {
-    void sfxRef.current?.preload();
+    const sfx = sfxRef.current;
+    if (!sfx) return;
+    sfx.setBgmVolume(loadBgmVolume() / 100);
+    void (async () => {
+      await sfx.preload();
+      for (const slot of ['bb', 'rb'] as const) {
+        const assigned = resolveAssign(slot);
+        if (assigned.kind !== 'song') continue;
+        try {
+          const piece = compose(assigned.song.options);
+          const def = arrangePiece(piece, assigned.song.options.styleId);
+          void sfx.ensureComposedBgm(JSON.stringify(assigned.song.options), def);
+        } catch {
+          // 壊れた保存データはボーナス開始時に内蔵曲へフォールバックされる
+        }
+      }
+    })();
   }, []);
 
   // 共有リンク（#m=...）からの機種読み込み
@@ -501,109 +567,139 @@ export function App() {
         ))}
       </div>
 
-      <div className="force-row">
-        <label htmlFor="notice-select">告知演出:</label>
-        <select id="notice-select" value={noticeMode} onChange={(e) => setNoticeMode(e.target.value as typeof noticeMode)}>
-          <option value="none">なし（出目から自力で察知）</option>
-          <option value="flag">完全告知（ボーナス成立で点灯）</option>
-          <option value="release">放出告知（揃えられる状態で点灯）</option>
-        </select>
-        <label>
-          <input
-            type="checkbox"
-            checked={sfxOn}
-            onChange={(e) => {
-              setSfxOn(e.target.checked);
-              sfxRef.current?.setEnabled(e.target.checked);
-              if (!e.target.checked) musicRef.current?.stop(); // 自作 BGM も同じトグルで止める
-            }}
-            data-testid="sfx-toggle"
-          />
-          効果音（OPLL）
-        </label>
-        <label htmlFor="beep-voice">ビープ音色:</label>
-        <select
-          id="beep-voice"
-          value={beepVoice}
-          disabled={!sfxOn}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            setBeepVoice(v);
-            sfxRef.current?.setBeepVoice(v);
-            sfxRef.current?.play('bet'); // 即試聴
-          }}
-          data-testid="beep-voice"
-        >
-          {OPLL_VOICES.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.id}: {v.label}
-            </option>
-          ))}
-        </select>
+      {/* ツールタブ: 遊ぶ場所（上の筐体）は常時表示、道具は役割別に分ける。
+          切り替えは hidden で行い、アンマウントしない（実測結果や再生状態を保つ） */}
+      <div className="tab-bar" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`tab-btn ${tab === t.id ? 'tab-btn-active' : ''}`}
+            onClick={() => selectTab(t.id)}
+            data-testid={`tab-${t.id}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <GuidePanel key={`guide-${machine.name}`} machine={machine} />
-      <SoundTestPanel player={sfxRef.current!} />
-      <BgmComposerPanel />
-
-      <SpecPanel key={`spec-${machine.name}`} machine={machine} />
-      <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
-      <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
-      <EditorPanel
-        key={`edit-${machine.name}`}
-        machine={machine}
-        onSave={saveCustom}
-        defaultTier={customs.length === 0 ? 'easy' : 'normal'}
-      />
-
-      <label className="debug-toggle">
-        <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
-        成立フラグを見る（ネタバレ・教材モード）
-      </label>
-      {debug && (
+      <div className="tab-content" hidden={tab !== 'play'}>
         <div className="force-row">
-          <label htmlFor="force-select">強制フラグ:</label>
+          <label htmlFor="notice-select">告知演出:</label>
           <select
-            id="force-select"
-            value={forceSel}
-            onChange={(e) => setForceSel(e.target.value)}
-            data-testid="force-select"
+            id="notice-select"
+            value={noticeMode}
+            onChange={(e) => setNoticeMode(e.target.value as typeof noticeMode)}
           >
-            <option value="">なし（通常抽選）</option>
-            <option value={FORCE_PURE_MISS}>純ハズレ</option>
-            {machine.lottery.base.map((entry) => {
-              const value = entry.roles.join('+');
-              return (
-                <option key={value} value={value}>
-                  {entry.roles.map((r) => ROLE_LABEL[r] ?? r).join(' + ')}
-                </option>
-              );
-            })}
+            <option value="none">なし（出目から自力で察知）</option>
+            <option value="flag">完全告知（ボーナス成立で点灯）</option>
+            <option value="release">放出告知（揃えられる状態で点灯）</option>
           </select>
-          {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
+          <label className="debug-inline">
+            <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
+            成立フラグを見る（ネタバレ・教材モード）
+          </label>
         </div>
-      )}
-      <p className="panel-note credit-note">
-        音源コア:{' '}
-        <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
-          emu2413
-        </a>{' '}
-        © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
-      </p>
+        {debug && (
+          <div className="force-row">
+            <label htmlFor="force-select">強制フラグ:</label>
+            <select
+              id="force-select"
+              value={forceSel}
+              onChange={(e) => setForceSel(e.target.value)}
+              data-testid="force-select"
+            >
+              <option value="">なし（通常抽選）</option>
+              <option value={FORCE_PURE_MISS}>純ハズレ</option>
+              {machine.lottery.base.map((entry) => {
+                const value = entry.roles.join('+');
+                return (
+                  <option key={value} value={value}>
+                    {entry.roles.map((r) => ROLE_LABEL[r] ?? r).join(' + ')}
+                  </option>
+                );
+              })}
+            </select>
+            {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
+          </div>
+        )}
+        <GuidePanel key={`guide-${machine.name}`} machine={machine} />
+        {debug && (
+          <pre className="debug-panel" data-testid="debug">
+            {JSON.stringify(
+              {
+                成立フラグ: sessionRef.current?.flags ?? lastEvent?.flags ?? [],
+                制御対象: sessionRef.current?.active ?? [],
+                エンジン状態: engine,
+              },
+              null,
+              2,
+            )}
+          </pre>
+        )}
+      </div>
 
-      {debug && (
-        <pre className="debug-panel" data-testid="debug">
-          {JSON.stringify(
-            {
-              成立フラグ: sessionRef.current?.flags ?? lastEvent?.flags ?? [],
-              制御対象: sessionRef.current?.active ?? [],
-              エンジン状態: engine,
-            },
-            null,
-            2,
-          )}
-        </pre>
-      )}
+      <div className="tab-content" hidden={tab !== 'sound'}>
+        <div className="force-row">
+          <label>
+            <input
+              type="checkbox"
+              checked={sfxOn}
+              onChange={(e) => {
+                setSfxOn(e.target.checked);
+                sfxRef.current?.setEnabled(e.target.checked); // 自作 BGM も同じ経路なので一緒に止まる
+              }}
+              data-testid="sfx-toggle"
+            />
+            効果音（OPLL）
+          </label>
+          <label htmlFor="beep-voice">ビープ音色:</label>
+          <select
+            id="beep-voice"
+            value={beepVoice}
+            disabled={!sfxOn}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setBeepVoice(v);
+              sfxRef.current?.setBeepVoice(v);
+              sfxRef.current?.play('bet'); // 即試聴
+            }}
+            data-testid="beep-voice"
+          >
+            {OPLL_VOICES.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.id}: {v.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <SoundTestPanel player={sfxRef.current!} />
+        <BgmComposerPanel player={sfxRef.current!} />
+        <SfxDesignerPanel />
+        <p className="panel-note credit-note">
+          音源コア:{' '}
+          <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
+            emu2413
+          </a>{' '}
+          © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
+        </p>
+      </div>
+
+      <div className="tab-content" hidden={tab !== 'build'}>
+        <EditorPanel
+          key={`edit-${machine.name}`}
+          machine={machine}
+          onSave={saveCustom}
+          defaultTier={customs.length === 0 ? 'easy' : 'normal'}
+        />
+      </div>
+
+      <div className="tab-content" hidden={tab !== 'lab'}>
+        <SpecPanel key={`spec-${machine.name}`} machine={machine} />
+        <LayoutPanel key={`layout-${machine.name}`} machine={machine} />
+        <CompliancePanel key={`comp-${machine.name}`} machine={machine} />
+      </div>
     </div>
   );
 }
