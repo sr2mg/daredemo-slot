@@ -9,15 +9,11 @@ import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
-import { buildSfxEvents } from '../core/music/sfx-design.js';
-import { SfxDesignPlayer } from '../core/music/sfx-play.js';
 import { BgmComposerPanel } from './bgm-composer.js';
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
 import { arrangePiece } from './opll-arrange.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
-import { resolveSfxAssign } from './sfx-library.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
-import { OPLL_VOICES } from './opll-core.js';
 import type { SfxName } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
@@ -119,11 +115,7 @@ export function App() {
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
-  /** 自作効果音（効果音作成パネル）のゲーム中再生用プレイヤー */
-  const sfxDesignRef = useRef<SfxDesignPlayer | null>(null);
-  if (sfxDesignRef.current === null) sfxDesignRef.current = new SfxDesignPlayer();
   const [sfxOn, setSfxOn] = useState(() => sfxRef.current!.enabled);
-  const [beepVoice, setBeepVoice] = useState(() => sfxRef.current!.beepVoice);
   /** BET 済みか（演出用。クレジットの投入自体はレバー ON 時に行われる） */
   const [betDone, setBetDone] = useState(false);
   const betDoneRef = useRef(betDone);
@@ -188,22 +180,11 @@ export function App() {
   }, []);
 
   /**
-   * 効果音の再生入口。効果音作成パネルで契機に自作音が割り当てられていればそちらを、
-   * なければ内蔵の OPLL 音を鳴らす。ON/OFF は OPLL 側のトグルに従う
+   * 効果音の再生入口。割り当て（自作 or プリセット）の解決とレンダリングは
+   * SfxPlayer が起動時・割り当て変更時に済ませているので、ここは鳴らすだけ
    */
   const playSfx = useCallback((name: SfxName) => {
-    const sfx = sfxRef.current;
-    if (!sfx?.enabled) return;
-    const design = resolveSfxAssign(name);
-    if (design) {
-      try {
-        sfxDesignRef.current!.play(buildSfxEvents(design), design.wave);
-        return;
-      } catch {
-        // 保存データが壊れていたら内蔵音にフォールバック
-      }
-    }
-    sfx.play(name);
+    sfxRef.current?.play(name);
   }, []);
 
   const applyMachine = useCallback((next: MachineDef, sel?: 'random' | number) => {
@@ -730,29 +711,13 @@ export function App() {
             />
             効果音（OPLL）
           </label>
-          <label htmlFor="beep-voice">ビープ音色:</label>
-          <select
-            id="beep-voice"
-            value={beepVoice}
-            disabled={!sfxOn}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              setBeepVoice(v);
-              sfxRef.current?.setBeepVoice(v);
-              sfxRef.current?.play('bet'); // 即試聴
-            }}
-            data-testid="beep-voice"
-          >
-            {OPLL_VOICES.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.id}: {v.label}
-              </option>
-            ))}
-          </select>
+          <span className="panel-note">
+            ベット/レバー等の音色変更は「効果音作成」パネルで（レシピ・音色を選んで契機に割り当て）
+          </span>
         </div>
         <SoundTestPanel player={sfxRef.current!} />
         <BgmComposerPanel player={sfxRef.current!} />
-        <SfxDesignerPanel />
+        <SfxDesignerPanel player={sfxRef.current!} />
         <p className="panel-note credit-note">
           音源コア:{' '}
           <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">

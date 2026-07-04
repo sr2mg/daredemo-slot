@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { compileDrums, compileMmlTrack, compileSong } from '../src/ui/mml.js';
 import type { OpllExports } from '../src/ui/opll-core.js';
 import {
-  buildSfxDefs,
   freqToFnum,
   OPLL_CLOCK,
   OPLL_IMPORTS,
@@ -11,6 +10,8 @@ import {
   renderSequence,
   SeqBuilder,
 } from '../src/ui/opll-core.js';
+import { arrangeSfx } from '../src/ui/sfx-arrange.js';
+import { ASSIGNABLE_SFX, PRESET_SFX } from '../src/ui/sfx-library.js';
 
 const wasmBytes = readFileSync(new URL('../src/ui/emu2413.wasm', import.meta.url));
 const { instance } = await WebAssembly.instantiate(wasmBytes, OPLL_IMPORTS);
@@ -47,11 +48,10 @@ describe('emu2413 WASM（OPLL 音源コア）', () => {
   });
 });
 
-describe('効果音プリセット（アルゼ風オリジナル定義）', () => {
-  const defs = buildSfxDefs();
-
-  it('全効果音が鳴る波形にレンダリングされる（NaN なし・十分な音量）', { timeout: 30_000 }, () => {
-    for (const [name, def] of Object.entries(defs)) {
+describe('効果音プリセット（レシピ生成 + OPLL）', () => {
+  it('全契機のプリセットが鳴る波形にレンダリングされる（NaN なし・十分な音量）', { timeout: 30_000 }, () => {
+    for (const { name } of ASSIGNABLE_SFX) {
+      const def = arrangeSfx(PRESET_SFX[name]);
       const wave = renderSequence(exports, opll, def);
       expect(wave.length, name).toBe(Math.round(def.duration * OPLL_RATE));
       let peak = 0;
@@ -63,25 +63,6 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
       expect(peak, name).toBeCloseTo(0.65, 2); // 正規化ピーク
       expect(peak, name).toBeLessThanOrEqual(1);
     }
-  });
-
-  it('キュインはピッチスイープのイベントを大量に含む', () => {
-    expect(defs.kyuin.events.length).toBeGreaterThan(50);
-    expect(defs.kyuin.duration).toBeGreaterThan(1);
-  });
-
-  it('ベット=G4+E5・レバーオン=C5+A5 の 2 音ハモリ（大花火風）', () => {
-    // fnum 下位バイト（reg 0x10=ch0 / 0x11=ch1）でピッチが区別できる
-    const fnumLoOf = (def: (typeof defs)['bet'], ch: number) =>
-      def.events.filter((e) => e.reg === 0x10 + ch).map((e) => e.val);
-    const note = (freq: number) => freqToFnum(freq).fnum & 0xff;
-    expect(fnumLoOf(defs.bet, 0)).toEqual([note(659.26)]); //  E5
-    expect(fnumLoOf(defs.bet, 1)).toEqual([note(392.0)]); //   G4
-    expect(fnumLoOf(defs.lever, 0)).toEqual([note(880)]); //   A5
-    expect(fnumLoOf(defs.lever, 1)).toEqual([note(523.25)]); // C5
-    expect(fnumLoOf(defs.betLever, 0)).toEqual([note(659.26), note(880)]); // ベット→レバー
-    expect(fnumLoOf(defs.betLever, 1)).toEqual([note(392.0), note(523.25)]);
-    expect(defs.betLever.duration).toBeGreaterThan(defs.lever.duration);
   });
 
   it('MML: 音名・長さ・オクターブ・付点・休符を解釈する', () => {
@@ -121,18 +102,9 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
     ).toThrow('長さが合いません');
   });
 
-  it('ビープ音色を差し替えられる（既定はシンセサイザー 10 番）', () => {
-    const voiceOf = (def: (typeof defs)['bet']) =>
-      def.events.filter((e) => e.reg >= 0x30 && e.reg <= 0x31).map((e) => e.val >> 4);
-    expect(voiceOf(defs.bet)).toEqual([10, 10]); // ch0/ch1 とも既定音色
-    const clarinet = buildSfxDefs({ beepVoice: 5 });
-    expect(voiceOf(clarinet.bet)).toEqual([5, 5]);
-    expect(voiceOf(clarinet.lever)).toEqual([5, 5]);
-    // ビープ以外の効果音は影響を受けない
-    expect(clarinet.fanfare.events).toEqual(defs.fanfare.events);
-    // 波形も実際に変わる
-    const a = renderSequence(exports, opll, defs.bet);
-    const b = renderSequence(exports, opll, clarinet.bet);
-    expect(a).not.toEqual(b);
+  it('デザインの音色を差し替えると波形が実際に変わる', () => {
+    const synth = renderSequence(exports, opll, arrangeSfx({ ...PRESET_SFX.bet, voice: 10 }));
+    const clarinet = renderSequence(exports, opll, arrangeSfx({ ...PRESET_SFX.bet, voice: 5 }));
+    expect(synth).not.toEqual(clarinet);
   });
 });

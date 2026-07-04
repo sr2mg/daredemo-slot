@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { buildSfxEvents, SFX_RECIPES } from '../core/music/sfx-design.js';
+import { useState } from 'react';
+import { SFX_RECIPES } from '../core/music/sfx-design.js';
 import type { SfxDesign } from '../core/music/sfx-design.js';
-import { SfxDesignPlayer } from '../core/music/sfx-play.js';
 import { NOTE_NAMES } from '../core/music/theory.js';
+import { OPLL_VOICES } from './opll-core.js';
+import type { SfxName } from './opll-core.js';
+import type { SfxPlayer } from './sfx-player.js';
 import {
   ASSIGNABLE_SFX,
   loadSfxAssign,
   loadSfxDesigns,
+  PRESET_SFX,
   saveSfxAssign,
   saveSfxDesigns,
 } from './sfx-library.js';
@@ -14,16 +17,17 @@ import type { SavedSfx, SfxAssign } from './sfx-library.js';
 
 /**
  * 効果音作成（レシピから）パネル。
- * レシピ = 効果音理論のテンプレ（確定 = V→I 上行 / 煽り = 解決しない半音上昇 /
- * 操作確認 = 4度上行 / キャンセル = 下行 / 警告 = トライトーンへのベンド）。
- * レシピを選び、基準音・速さ・音色だけ調整して作る。保存した音はゲーム内の
- * 各契機（ファンファーレ・キュイン等）に割り当てられる（App.tsx が再生時に読む）。
+ * レシピ = 効果音理論のテンプレ（確定 = V→I 上行 / 操作ビープ = 6度ハモリ /
+ * 警告 = トライトーンへのベンド など）。レシピを選び、基準音・速さ・OPLL 音色だけ
+ * 調整して作る。試聴・ゲーム内再生とも OPLL（emu2413）でレンダリングされる。
+ * ゲームの既定効果音も同じレシピのプリセット（PRESET_SFX）なので、
+ * ベット音等を差し替えたいときはここで作って契機に割り当てる。
  */
 
 const newId = (): string => `x${Date.now().toString(36)}${((Math.random() * 0xffff_ffff) >>> 0).toString(36)}`;
 
-/** 基準音の選択肢（C5〜C6。警告系は高めが貫通する） */
-const ROOT_CHOICES = [72, 74, 76, 77, 79, 81, 83, 84];
+/** 基準音の選択肢（低域 = 停止音系 〜 高域 = 告知系） */
+const ROOT_CHOICES = [48, 53, 60, 67, 72, 74, 76, 77, 79, 81, 84, 96];
 
 const SPEED_CHOICES = [
   { value: 0.75, label: 'ゆっくり' },
@@ -32,54 +36,40 @@ const SPEED_CHOICES = [
   { value: 1.8, label: '最速' },
 ];
 
-const WAVE_CHOICES: readonly { value: SfxDesign['wave']; label: string }[] = [
-  { value: 'square', label: '矩形波（ピコピコ）' },
-  { value: 'triangle', label: '三角波（まるい）' },
-  { value: 'sawtooth', label: 'ノコギリ波（ブラス風）' },
-  { value: 'sine', label: 'サイン波（ポー）' },
-];
-
 const noteLabel = (midi: number): string => `${NOTE_NAMES[midi % 12]!}${Math.floor(midi / 12) - 1}`;
 
 function designSummary(design: SfxDesign): string {
   const recipe = SFX_RECIPES.find((r) => r.id === design.recipeId)?.name ?? design.recipeId;
   const speed = SPEED_CHOICES.find((s) => s.value === design.speed)?.label ?? design.speed;
-  const wave = WAVE_CHOICES.find((w) => w.value === design.wave)?.label.split('（')[0] ?? design.wave;
-  return `${recipe} / ${noteLabel(design.rootMidi)} / ${speed} / ${wave}`;
+  const voice = OPLL_VOICES.find((v) => v.id === design.voice)?.label.split('（')[0] ?? design.voice;
+  return `${recipe} / ${noteLabel(design.rootMidi)} / ${speed} / ${voice}`;
 }
 
-export function SfxDesignerPanel() {
+export function SfxDesignerPanel({ player }: { player: SfxPlayer }) {
   const [recipeId, setRecipeId] = useState(SFX_RECIPES[0]!.id);
   const [rootMidi, setRootMidi] = useState(SFX_RECIPES[0]!.defaultRoot);
   const [speed, setSpeed] = useState(1);
-  const [wave, setWave] = useState<SfxDesign['wave']>('square');
+  const [voice, setVoice] = useState(SFX_RECIPES[0]!.defaultVoice);
   const [designs, setDesigns] = useState<SavedSfx[]>(loadSfxDesigns);
   const [assign, setAssign] = useState<SfxAssign>(loadSfxAssign);
   const [sfxName, setSfxName] = useState('');
   const [error, setError] = useState('');
 
-  const playerRef = useRef<SfxDesignPlayer | null>(null);
-  useEffect(() => {
-    playerRef.current = new SfxDesignPlayer();
-    return () => playerRef.current?.dispose();
-  }, []);
-
   const recipe = SFX_RECIPES.find((r) => r.id === recipeId)!;
-  const current: SfxDesign = { recipeId, rootMidi, speed, wave };
+  const current: SfxDesign = { recipeId, rootMidi, speed, voice };
 
   const selectRecipe = (id: string) => {
     setRecipeId(id);
-    // レシピごとに効果的な音域が違うので推奨値に合わせる（警告系は高め）
-    setRootMidi(SFX_RECIPES.find((r) => r.id === id)!.defaultRoot);
+    // レシピごとに効果的な音域・音色が違うので推奨値に合わせる
+    const next = SFX_RECIPES.find((r) => r.id === id)!;
+    setRootMidi(next.defaultRoot);
+    setVoice(next.defaultVoice);
   };
 
   const preview = (design: SfxDesign) => {
-    try {
-      playerRef.current?.play(buildSfxEvents(design), design.wave);
-      setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+    void player.previewDesign(design).then((ok) => {
+      setError(ok ? '' : '再生できませんでした（レシピか保存データが不正かも）');
+    });
   };
 
   const saveCurrent = () => {
@@ -94,13 +84,14 @@ export function SfxDesignerPanel() {
     const next = designs.filter((d) => d.id !== id);
     setDesigns(next);
     saveSfxDesigns(next);
-    // 割り当て中の音を消したら内蔵（OPLL）に戻す
+    // 割り当て中の音を消したらプリセットに戻し、ゲーム用の波形を作り直す
     const fixed: SfxAssign = { ...assign };
     let changed = false;
-    for (const key of Object.keys(fixed) as (keyof SfxAssign)[]) {
+    for (const key of Object.keys(fixed) as SfxName[]) {
       if (fixed[key] === `custom:${id}`) {
         delete fixed[key];
         changed = true;
+        player.refreshSfx(key);
       }
     }
     if (changed) {
@@ -109,12 +100,13 @@ export function SfxDesignerPanel() {
     }
   };
 
-  const updateAssign = (name: string, value: string) => {
+  const updateAssign = (name: SfxName, value: string) => {
     const next: SfxAssign = { ...assign };
-    if (value === 'builtin') delete next[name as keyof SfxAssign];
-    else next[name as keyof SfxAssign] = value;
+    if (value === 'preset') delete next[name];
+    else next[name] = value;
     setAssign(next);
     saveSfxAssign(next);
+    player.refreshSfx(name); // ゲーム用の波形を新しい割り当てで作り直す
   };
 
   return (
@@ -143,14 +135,10 @@ export function SfxDesignerPanel() {
               </option>
             ))}
           </select>
-          <select
-            value={wave}
-            onChange={(e) => setWave(e.target.value as SfxDesign['wave'])}
-            data-testid="fx-wave"
-          >
-            {WAVE_CHOICES.map((w) => (
-              <option key={w.value} value={w.value}>
-                {w.label}
+          <select value={voice} onChange={(e) => setVoice(Number(e.target.value))} data-testid="fx-voice">
+            {OPLL_VOICES.map((v) => (
+              <option key={v.id} value={v.id}>
+                音色: {v.label}
               </option>
             ))}
           </select>
@@ -201,11 +189,11 @@ export function SfxDesignerPanel() {
             <label key={item.name} className="assign-item">
               <span className="slot-label">{item.label}</span>
               <select
-                value={assign[item.name] ?? 'builtin'}
+                value={assign[item.name] ?? 'preset'}
                 onChange={(e) => updateAssign(item.name, e.target.value)}
                 data-testid={`fx-assign-${item.name}`}
               >
-                <option value="builtin">内蔵（OPLL）</option>
+                <option value="preset">既定（{designSummary(PRESET_SFX[item.name])}）</option>
                 {designs.map((d) => (
                   <option key={d.id} value={`custom:${d.id}`}>
                     ★ {d.name}
@@ -216,8 +204,8 @@ export function SfxDesignerPanel() {
           ))}
         </div>
         <p className="panel-note">
-          保存した音はゲーム内の各契機に割り当てられます。割り当てない契機は内蔵の OPLL 音のまま。
-          レシピは効果音理論のテンプレなので、どのパラメータでも「意味」は保たれます。
+          ゲームの既定効果音もすべてこのレシピのプリセットで、再生は OPLL（emu2413）。
+          差し替えたい契機に自作の音を割り当ててください（割り当て解除 = 既定に戻す）。
         </p>
       </div>
     </details>

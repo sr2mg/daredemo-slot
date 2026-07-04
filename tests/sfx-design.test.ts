@@ -6,7 +6,7 @@ const design = (recipeId: string, over: Partial<SfxDesign> = {}): SfxDesign => (
   recipeId,
   rootMidi: SFX_RECIPES.find((r) => r.id === recipeId)!.defaultRoot,
   speed: 1,
-  wave: 'square',
+  voice: 10,
   ...over,
 });
 
@@ -68,9 +68,57 @@ describe('効果音レシピ', () => {
   });
 
   it('基準音を変えると全体が平行移動する', () => {
-    const base = tones(design('confirm'));
+    const base = tones(design('confirm', { rootMidi: 79 }));
     const up = tones(design('confirm', { rootMidi: 84 }));
     expect(up.map((e) => e.midi)).toEqual(base.map((e) => e.midi + 5));
+  });
+
+  it('操作ビープは長6度下のハモリ 2 音同時', () => {
+    const t = tones(design('beep2'));
+    expect(t).toHaveLength(2);
+    expect(t[0]!.t).toBe(t[1]!.t);
+    expect(Math.abs(t[0]!.midi - t[1]!.midi)).toBe(9); // 長6度
+  });
+
+  it('連結ビープは完全4度上のビープが続く（ベット→レバー）', () => {
+    const t = tones(design('beepChain'));
+    expect(t).toHaveLength(4);
+    const mains = t.filter((e) => [76, 81].includes(e.midi));
+    expect(mains.map((e) => e.midi)).toEqual([76, 81]); // E5 → A5 = 完全4度上行
+    expect(mains[1]!.t).toBeGreaterThan(mains[0]!.t);
+  });
+
+  it('停止音は低域の下行ベンド 1 発', () => {
+    const t = tones(design('thud'));
+    expect(t).toHaveLength(1);
+    expect(t[0]!.midi).toBeLessThan(60); // 低域
+    expect(t[0]!.midiTo!).toBeLessThan(t[0]!.midi); // 下行
+  });
+
+  it('コイン払い出しは 2 音の交互連打', () => {
+    const t = tones(design('coins'));
+    expect(t).toHaveLength(8);
+    const pitches = [...new Set(t.map((e) => e.midi))];
+    expect(pitches).toHaveLength(2);
+    expect(t[0]!.midi).not.toBe(t[1]!.midi); // 交互
+  });
+
+  it('サイレンは上下ベンドの反復（終わりは下行で着地）', () => {
+    const t = tones(design('siren'));
+    expect(t.length).toBeGreaterThanOrEqual(4);
+    expect(t[0]!.midiTo!).toBeGreaterThan(t[0]!.midi); // 上り
+    const last = t[t.length - 1]!;
+    expect(last.midiTo!).toBeLessThan(last.midi); // 下り
+    // 隣り合うベンドが連続している（レガート結合の前提）
+    expect(t[1]!.t).toBeCloseTo(t[0]!.t + t[0]!.dur, 9);
+  });
+
+  it('キュインは 2 オクターブ上昇 + デチューン重ね', () => {
+    const t = tones(design('kyuin'));
+    const sweepUp = t.find((e) => e.midiTo !== undefined && e.midiTo - e.midi === 24);
+    expect(sweepUp).toBeDefined(); // 2 オクターブ
+    const detuned = t.filter((e) => e.midi % 1 !== 0);
+    expect(detuned.length).toBeGreaterThan(0); // 小数 MIDI = デチューン声部
   });
 
   it('未知のレシピはエラー', () => {
