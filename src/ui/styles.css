@@ -425,6 +425,13 @@ button:disabled {
   color: #ff8a80;
 }
 
+.assign-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .assign-item {
   display: flex;
   flex-direction: column;
