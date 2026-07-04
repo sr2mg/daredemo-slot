@@ -17,6 +17,7 @@ import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js
 import type { SfxName } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
+import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
 import { SoundTestPanel } from './sound-test.js';
 
 /**
@@ -521,6 +522,7 @@ export function App() {
 
       <div className="cabinet">
         {flashKey > 0 && <div key={flashKey} className="bonus-flash" aria-hidden />}
+        {PANEL_IMAGE && <img className="panel-art" src={PANEL_IMAGE} alt="" />}
         <div className="lamp-row">
           <span className={`notice-lamp ${lampOn ? 'lamp-on' : ''}`} data-testid="notice-lamp" title="告知ランプ" />
         </div>
@@ -535,9 +537,10 @@ export function App() {
               {[0, 1, 2].map((row) => {
                 const symbol = strip[(reels[reel]!.top + row) % machine.frames]!;
                 const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
+                const img = SYMBOL_IMAGES[symbol];
                 return (
                   <div key={row} className={`cell ${view.className}`}>
-                    {view.text}
+                    {img ? <img className="cell-img" src={img} alt={view.text} /> : view.text}
                   </div>
                 );
               })}

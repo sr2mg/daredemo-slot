@@ -12,13 +12,17 @@
     "test": "vitest run",
     "test:all": "vitest run --mode all",
     "test:watch": "vitest",
+    "symbols": "vite-node tools/process-symbols.ts --",
+    "panel": "vite-node tools/process-panel.ts --",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
+    "pngjs": "^7.0.0",
     "typescript": "^5.5.0",
     "vite": "^7.3.6",
     "vitest": "^3.0.0"
