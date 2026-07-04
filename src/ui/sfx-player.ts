@@ -1,38 +1,30 @@
+import type { SfxDesign } from '../core/music/sfx-design.js';
 import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
-import {
-  buildSfxDefs,
-  DEFAULT_BEEP_VOICE,
-  OPLL_CLOCK,
-  OPLL_IMPORTS,
-  OPLL_RATE,
-  renderSequence,
-  renderSequenceAsync,
-} from './opll-core.js';
+import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from './opll-core.js';
+import { arrangeSfx } from './sfx-arrange.js';
+import { ASSIGNABLE_SFX, PRESET_SFX, resolveSfxAssign } from './sfx-library.js';
 
 /**
- * 効果音 + BGM プレイヤー。
- * - 起動時に emu2413 の WASM を取得し、全効果音を Float32Array に事前レンダリング
+ * 効果音 + BGM プレイヤー。音源はすべて OPLL（emu2413）。
+ * - 効果音は「割り当て解決（sfx-library）→ レシピ生成 → OPLL 変換（sfx-arrange）→
+ *   レンダリング」の単一経路。起動時に全契機ぶんを事前レンダリングする
  *   （AudioContext 不要なのでユーザー操作前にできる）
- * - BGM はすべて作曲エンジン + OPLL 編曲（opll-arrange.ts）のシーケンスを
+ * - BGM は作曲エンジン + OPLL 編曲（opll-arrange.ts）のシーケンスを
  *   ensureComposedBgm でレンダリングして鳴らす（プリセット曲も自作曲も同じ経路）
  * - AudioContext はブラウザの自動再生制限のため、最初の play()（= ユーザー操作起点）で生成
  * - BGM は AudioBufferSourceNode.loop でループ。効果音より少し下げてミックス
- * - ON/OFF・ビープ音色は localStorage に保存。音色変更時はビープだけ再レンダリング
  */
 
 const STORAGE_KEY = 'daredemo.sfx.v1';
-const VOICE_KEY = 'daredemo.sfxVoice.v1';
 const MASTER_GAIN = 0.5;
 const BGM_GAIN = 0.55; // マスターに対する BGM の相対音量（bgmVolume=0.5 のときの値）
 /** 自作 BGM 波形キャッシュの上限（1 曲 ≒ 1〜2.4MB） */
 const CUSTOM_BGM_CACHE_MAX = 6;
-
-/** ビープ音色の影響を受ける効果音（音色変更時はこれだけ作り直す） */
-const BEEP_NAMES: readonly SfxName[] = ['bet', 'lever', 'betLever'];
+/** 効果音試聴の波形キャッシュ上限（短いので軽い） */
+const PREVIEW_CACHE_MAX = 16;
 
 export class SfxPlayer {
   enabled: boolean;
-  beepVoice: number;
   private waves: Partial<Record<SfxName, Float32Array>> = {};
   private buffers: Partial<Record<SfxName, AudioBuffer>> = {};
   private ctx: AudioContext | null = null;
@@ -48,14 +40,14 @@ export class SfxPlayer {
   private bgmGen = 0;
   /** BGM 音量 0..1（0.5 = 従来の内蔵 BGM 音量）。localStorage への永続化は呼び出し側 */
   private bgmVolume = 0.5;
+  /** 効果音デザイン試聴の波形キャッシュ。キーは SfxDesign の JSON */
+  private previewCache = new Map<string, Float32Array>();
   /** OPLL インスタンスは共有・ステートフルなので、レンダリングはこのキューで直列化する */
   private renderJobs: { run: () => Promise<void>; priority: boolean }[] = [];
   private pumping = false;
 
   constructor() {
     this.enabled = localStorage.getItem(STORAGE_KEY) !== 'off';
-    const stored = Number(localStorage.getItem(VOICE_KEY));
-    this.beepVoice = Number.isInteger(stored) && stored >= 1 && stored <= 15 ? stored : DEFAULT_BEEP_VOICE;
   }
 
   setEnabled(on: boolean): void {
@@ -68,29 +60,65 @@ export class SfxPlayer {
     }
   }
 
-  /** ビープ（ベット/レバー）の音色を変更し、対象の波形だけ作り直す */
-  setBeepVoice(voice: number): void {
-    this.beepVoice = voice;
-    try {
-      localStorage.setItem(VOICE_KEY, String(voice));
-    } catch {
-      // 保存できなくても再生には支障なし
-    }
-    if (!this.exports) return;
-    const defs = buildSfxDefs({ beepVoice: this.beepVoice });
-    for (const name of BEEP_NAMES) {
-      this.waves[name] = renderSequence(this.exports, this.opll, defs[name]);
-      delete this.buffers[name];
-    }
-  }
-
+  /** 全契機の効果音を、現在の割り当て（自作 or プリセット）からレンダリングする */
   private renderSfx(): void {
     if (!this.exports) return;
-    const defs = buildSfxDefs({ beepVoice: this.beepVoice });
-    for (const [name, def] of Object.entries(defs)) {
-      this.waves[name as SfxName] = renderSequence(this.exports, this.opll, def);
+    for (const { name } of ASSIGNABLE_SFX) {
+      try {
+        this.waves[name] = renderSequence(this.exports, this.opll, arrangeSfx(resolveSfxAssign(name)));
+      } catch {
+        // 壊れた保存データ等はプリセットで再試行（プリセットは常に有効なレシピ）
+        this.waves[name] = renderSequence(this.exports, this.opll, arrangeSfx(PRESET_SFX[name]));
+      }
     }
     this.buffers = {};
+  }
+
+  /** 契機の割り当て変更後に、その効果音だけ作り直す（効果音作成パネルから呼ぶ） */
+  refreshSfx(name: SfxName): void {
+    void this.enqueueRender(async () => {
+      await this.preload();
+      if (!this.exports) return;
+      try {
+        this.waves[name] = renderSequence(this.exports, this.opll, arrangeSfx(resolveSfxAssign(name)));
+        delete this.buffers[name];
+      } catch {
+        // 不正データは既存の波形のまま（音は演出）
+      }
+    }, true);
+  }
+
+  /** 効果音デザインの試聴（エディタ用なので ON/OFF トグルに関わらず鳴らす） */
+  async previewDesign(design: SfxDesign): Promise<boolean> {
+    const key = JSON.stringify(design);
+    let wave = this.previewCache.get(key);
+    if (!wave) {
+      try {
+        wave = await this.enqueueRender(async () => {
+          await this.preload();
+          if (!this.exports) throw new Error('OPLL 未初期化');
+          return renderSequence(this.exports, this.opll, arrangeSfx(design));
+        }, true);
+      } catch {
+        return false;
+      }
+      this.previewCache.set(key, wave);
+      while (this.previewCache.size > PREVIEW_CACHE_MAX) {
+        this.previewCache.delete(this.previewCache.keys().next().value!);
+      }
+    }
+    try {
+      const ctx = this.ensureCtx();
+      const buffer = ctx.createBuffer(1, wave.length, OPLL_RATE);
+      buffer.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.gain!);
+      source.start();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
