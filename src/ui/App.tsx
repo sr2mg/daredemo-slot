@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GameSession, initialState } from '../core/game.js';
+import { playPerfect } from '../core/sim.js';
 import { NavLayer } from '../core/nav.js';
 import type { NavDisplay } from '../core/nav.js';
 import { Xoshiro128 } from '../core/rng.js';
@@ -109,6 +110,8 @@ export function App() {
   const [log, setLog] = useState<string[]>([]);
   const [debug, setDebug] = useState(false);
   const [forceSel, setForceSel] = useState('');
+  /** 即入賞（教材モード）の対象ボーナス */
+  const [instantSel, setInstantSel] = useState(() => machines[0]!.bonuses[0]?.id ?? '');
   /** 告知演出: なし（リーチ目を自力で探す）/ フラグ成立で点灯 / 放出可能で点灯 */
   const [noticeMode, setNoticeMode] = useState<'none' | 'flag' | 'release'>('none');
   /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
@@ -217,6 +220,7 @@ export function App() {
     setLastEvent(null);
     setLog([]);
     setForceSel('');
+    setInstantSel(next.bonuses[0]?.id ?? '');
     setNavDisplay(null);
     setAtRemaining(null);
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
@@ -280,6 +284,66 @@ export function App() {
     setPhase('spinning');
   }, [playSfx]);
 
+  /** 全リール停止後の精算と演出。通常プレイ（stopReel）と即入賞（教材モード）で共用 */
+  const settleSession = useCallback(
+    (session: GameSession): { state: EngineState; event: GameEvent } => {
+      const { state, event } = session.finish(rngRef.current);
+      sessionRef.current = null;
+      setEngine(state);
+      setCredit((c) => c + event.payout);
+      setLastEvent(event);
+      setPhase('ready');
+      setNavDisplay(null);
+      const navNotes = navRef.current?.onEvent(event) ?? [];
+      setAtRemaining(navRef.current?.atRemainingGames ?? null);
+      setAtMode(navRef.current?.atMode ?? null);
+      const parts: string[] = [...navNotes];
+      if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
+      if (event.lidReleased) parts.push('🔓 放出開始！');
+      if (event.ctEntered) parts.push('⚡ CT 突入！目押しで取り切れ！');
+      if (event.ctExited) parts.push('CT 終了');
+      // SB（普通役物）は地味さが本体なので開始・終了を騒がない（実機も告知しない）
+      const kindOf = (id: string) => machineRef.current.bonuses.find((b) => b.id === id)?.kind;
+      if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
+        parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
+        setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
+      }
+
+      // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
+      const sfx = sfxRef.current;
+      if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
+        playSfx('fanfare');
+        // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当て
+        //（自作曲 or プリセット曲）を OPLL（emu2413）で鳴らす。通常はキャッシュ済みだが、
+        // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
+        if (sfx?.enabled) {
+          const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
+          const song = resolveAssign(slot);
+          try {
+            const piece = compose(song.options);
+            const def = arrangePiece(piece, song.options.styleId);
+            void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
+          } catch {
+            // 保存データ破損等。音は演出なので無音で続行する
+          }
+        }
+      } else if (event.replayWon) playSfx('replay');
+      else if (event.payout > 0) playSfx('payout');
+      if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
+      if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
+        playSfx('kyuin');
+      }
+      if (event.lidReleased) playSfx('siren');
+      if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) playSfx('rush');
+      if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
+      if (event.rtEntered) parts.push(`RT 突入`);
+      if (event.rtExited) parts.push(`RT 終了`);
+      if (parts.length > 0) pushLog(parts.join(' '));
+      return { state, event };
+    },
+    [pushLog, playSfx],
+  );
+
   const stopReel = useCallback(
     (reel: number) => {
       const session = sessionRef.current;
@@ -291,63 +355,58 @@ export function App() {
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
+      if (session.isComplete) settleSession(session);
+    },
+    [playSfx, settleSession],
+  );
 
-      if (session.isComplete) {
-        const { state, event } = session.finish(rngRef.current);
-        sessionRef.current = null;
-        setEngine(state);
-        setCredit((c) => c + event.payout);
-        setLastEvent(event);
-        setPhase('ready');
-        setNavDisplay(null);
-        const navNotes = navRef.current?.onEvent(event) ?? [];
-        setAtRemaining(navRef.current?.atRemainingGames ?? null);
-        setAtMode(navRef.current?.atMode ?? null);
-        const parts: string[] = [...navNotes];
-        if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
-        if (event.lidReleased) parts.push('🔓 放出開始！');
-        if (event.ctEntered) parts.push('⚡ CT 突入！目押しで取り切れ！');
-        if (event.ctExited) parts.push('CT 終了');
-        // SB（普通役物）は地味さが本体なので開始・終了を騒がない（実機も告知しない）
-        const kindOf = (id: string) => machineRef.current.bonuses.find((b) => b.id === id)?.kind;
-        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
-          parts.push(`▶ ${ROLE_LABEL[event.bonusStarted] ?? event.bonusStarted} 開始！`);
-          setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
-        }
+  /**
+   * 即入賞（教材モード）: 対象ボーナスを強制成立させ、完全打ち（playPerfect）で
+   * 目押しを省略して揃える。抽選・制御・精算は通常プレイと同じ経路。
+   * ストック機は 1 ゲーム目で貯留に入るだけなので、蓋を強制開放して 2 ゲーム目で揃える。
+   * BB 中の挙動や BGM をすぐ確認したいとき用
+   */
+  const instantWin = useCallback(
+    (bonusId: string) => {
+      if (phaseRef.current !== 'ready') return;
+      const playOnce = (engine: EngineState, forceFlags: string[]) => {
+        const session = new GameSession(machineRef.current, engine, rngRef.current, undefined, forceFlags);
+        if (session.bet > creditRef.current) return null; // クレジット不足
+        sessionRef.current = session;
+        setBetDone(false);
+        setCredit((c) => c - session.bet);
+        playPerfect(session);
+        // stopped は押し順（打ち分けあり）なのでリール番号で引き直す
+        setReels(
+          machineRef.current.strips.map((_, reel) => {
+            const stop = session.stopped.find((s) => s.reel === reel)!;
+            return { top: stop.stopPosition, stopped: true };
+          }),
+        );
+        return settleSession(session);
+      };
 
-        // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
-        const sfx = sfxRef.current;
-        if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
-          playSfx('fanfare');
-          // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当て
-          //（自作曲 or プリセット曲）を OPLL（emu2413）で鳴らす。通常はキャッシュ済みだが、
-          // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
-          if (sfx?.enabled) {
-            const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
-            const song = resolveAssign(slot);
-            try {
-              const piece = compose(song.options);
-              const def = arrangePiece(piece, song.options.styleId);
-              void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
-            } catch {
-              // 保存データ破損等。音は演出なので無音で続行する
-            }
-          }
-        } else if (event.replayWon) playSfx('replay');
-        else if (event.payout > 0) playSfx('payout');
-        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
-        if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
-          playSfx('kyuin');
-        }
-        if (event.lidReleased) playSfx('siren');
-        if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) playSfx('rush');
-        if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
-        if (event.rtEntered) parts.push(`RT 突入`);
-        if (event.rtExited) parts.push(`RT 終了`);
-        if (parts.length > 0) pushLog(parts.join(' '));
+      // 貯留済みで蓋が閉まっていたら強制開放（教材モード。放出条件の学習は蓋を見ればできる）
+      let engine = engineRef.current;
+      if (engine.queue.includes(bonusId) && engine.lid) {
+        engine = { ...engine, lid: false, lidReleaseIn: null };
+        setEngine(engine);
+      }
+      let result = playOnce(engine, engine.queue.includes(bonusId) ? [] : [bonusId]);
+      if (result && result.event.bonusStarted !== bonusId && result.state.queue.includes(bonusId)) {
+        // ストック機: 1 ゲーム目は貯留入りしただけ。蓋を開けて純ハズレの 2 ゲーム目で揃える
+        const opened = { ...result.state, lid: false, lidReleaseIn: null };
+        setEngine(opened);
+        result = playOnce(opened, []);
+      }
+      if (result === null) return;
+      if (result.event.bonusStarted === bonusId) {
+        pushLog('⚡ 即入賞（教材モード・目押し省略）');
+      } else {
+        pushLog(`⚠ 即入賞できず（${ROLE_LABEL[bonusId] ?? bonusId} を揃えられる状態ではないかも）`);
       }
     },
-    [pushLog, playSfx],
+    [settleSession, pushLog],
   );
 
   // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）。
@@ -613,6 +672,32 @@ export function App() {
               })}
             </select>
             {forceSel !== '' && <span className="force-armed">次のレバーONで適用</span>}
+          </div>
+        )}
+        {debug && machine.bonuses.length > 0 && (
+          <div className="force-row">
+            <label htmlFor="instant-select">即入賞:</label>
+            <select
+              id="instant-select"
+              value={instantSel}
+              onChange={(e) => setInstantSel(e.target.value)}
+              data-testid="instant-select"
+            >
+              {machine.bonuses.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {ROLE_LABEL[b.id] ?? b.id}
+                </option>
+              ))}
+            </select>
+            <button
+              className="form-mini-btn"
+              onClick={() => instantWin(instantSel)}
+              disabled={phase !== 'ready' || instantSel === ''}
+              data-testid="instant-win"
+              title="対象ボーナスを強制成立させ、完全打ちで目押しを省略して 1 ゲームで揃える"
+            >
+              ⚡ 揃える（目押し省略）
+            </button>
           </div>
         )}
         <GuidePanel key={`guide-${machine.name}`} machine={machine} />
