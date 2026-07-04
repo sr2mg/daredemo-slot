@@ -1,7 +1,14 @@
 import type { Piece } from '../core/music/compose.js';
-import type { BgmDef } from './bgm.js';
 import { initRhythmMode } from './mml.js';
 import { SeqBuilder } from './opll-core.js';
+import type { SfxDef } from './opll-core.js';
+
+/** 編曲済み BGM（レジスタ列 + ループ検算用のメタ） */
+export interface ArrangedBgm extends SfxDef {
+  bpm: number;
+  /** 4/4 換算の小節数 */
+  bars: number;
+}
 
 /**
  * 作曲エンジンの Piece を OPLL（YM2413）のレジスタシーケンスへ編曲するコンバータ。
@@ -54,7 +61,7 @@ const VIBRATO_DEPTH_CENTS = 10;
 const VIBRATO_HZ = 5.5;
 const VIBRATO_DELAY_RATIO = 0.3; // 音の頭はまっすぐ、途中から揺らす（歌と同じ）
 
-export function arrangePiece(piece: Piece, styleId: string): BgmDef {
+export function arrangePiece(piece: Piece, styleId: string): ArrangedBgm {
   const voices = STYLE_VOICES[styleId] ?? DEFAULT_VOICES;
   const spb = 60 / piece.bpm;
   const duration = piece.beats * spb;
