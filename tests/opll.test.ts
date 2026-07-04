@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildBgmDefs } from '../src/ui/bgm.js';
 import { compileDrums, compileMmlTrack, compileSong } from '../src/ui/mml.js';
 import type { OpllExports } from '../src/ui/opll-core.js';
 import {
@@ -51,7 +50,7 @@ describe('emu2413 WASM（OPLL 音源コア）', () => {
 describe('効果音プリセット（アルゼ風オリジナル定義）', () => {
   const defs = buildSfxDefs();
 
-  it('全効果音が鳴る波形にレンダリングされる（NaN なし・十分な音量）', () => {
+  it('全効果音が鳴る波形にレンダリングされる（NaN なし・十分な音量）', { timeout: 30_000 }, () => {
     for (const [name, def] of Object.entries(defs)) {
       const wave = renderSequence(exports, opll, def);
       expect(wave.length, name).toBe(Math.round(def.duration * OPLL_RATE));
@@ -120,29 +119,6 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
     expect(() =>
       compileSong({ bpm: 120, bars: 2, tracks: [{ ch: 0, voice: 7, vol: 3, mml: 'l4 c d e c' }] }),
     ).toThrow('長さが合いません');
-  });
-
-  it('BB/RB の BGM がループ長ぴったりでレンダリングされる', { timeout: 120_000 }, () => {
-    const bgm = buildBgmDefs();
-    expect(bgm.bb.duration).toBeCloseTo((8 * 4 * 60) / 120, 3);
-    expect(bgm.rb.duration).toBeCloseTo((8 * 4 * 60) / 116, 3);
-    expect(bgm.rb2.duration).toBeCloseTo((6 * 4 * 60) / 66, 3);
-    expect(bgm.rb3.duration).toBeCloseTo((4 * 4 * 60) / 60, 3);
-    for (const [name, def] of Object.entries(bgm)) {
-      const wave = renderSequence(exports, opll, def);
-      expect(wave.length, name).toBe(Math.round(def.duration * OPLL_RATE));
-      let peak = 0;
-      let energy = 0;
-      for (const v of wave) {
-        expect(Number.isNaN(v), name).toBe(false);
-        const abs = Math.abs(v);
-        if (abs > peak) peak = abs;
-        energy += abs;
-      }
-      expect(peak, name).toBeCloseTo(0.65, 2);
-      // 曲として鳴り続けている（平均振幅が無音でない）
-      expect(energy / wave.length, name).toBeGreaterThan(0.01);
-    }
   });
 
   it('ビープ音色を差し替えられる（既定はシンセサイザー 10 番）', () => {

@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:all": "vitest run --mode all",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },

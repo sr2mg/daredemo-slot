@@ -1,5 +1,3 @@
-import { buildBgmDefs } from './bgm.js';
-import type { BgmName } from './bgm.js';
 import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
 import {
   buildSfxDefs,
@@ -13,8 +11,10 @@ import {
 
 /**
  * 効果音 + BGM プレイヤー。
- * - 起動時に emu2413 の WASM を取得し、全効果音と BGM を Float32Array に事前レンダリング
+ * - 起動時に emu2413 の WASM を取得し、全効果音を Float32Array に事前レンダリング
  *   （AudioContext 不要なのでユーザー操作前にできる）
+ * - BGM はすべて作曲エンジン + OPLL 編曲（opll-arrange.ts）のシーケンスを
+ *   ensureComposedBgm でレンダリングして鳴らす（プリセット曲も自作曲も同じ経路）
  * - AudioContext はブラウザの自動再生制限のため、最初の play()（= ユーザー操作起点）で生成
  * - BGM は AudioBufferSourceNode.loop でループ。効果音より少し下げてミックス
  * - ON/OFF・ビープ音色は localStorage に保存。音色変更時はビープだけ再レンダリング
@@ -35,8 +35,6 @@ export class SfxPlayer {
   beepVoice: number;
   private waves: Partial<Record<SfxName, Float32Array>> = {};
   private buffers: Partial<Record<SfxName, AudioBuffer>> = {};
-  private bgmWaves: Partial<Record<BgmName, Float32Array>> = {};
-  private bgmBuffers: Partial<Record<BgmName, AudioBuffer>> = {};
   private ctx: AudioContext | null = null;
   private gain: GainNode | null = null;
   private bgmGain: GainNode | null = null;
@@ -46,7 +44,7 @@ export class SfxPlayer {
   private opll = 0;
   /** 自作 BGM（OPLL レンダリング済み波形）のキャッシュ。キーは ComposeOptions の JSON */
   private customBgm = new Map<string, Float32Array>();
-  /** BGM の世代。stopBgm/playBgm で進み、レンダリング待ちの再生を無効化する */
+  /** BGM の世代。stopBgm で進み、レンダリング待ちの再生を無効化する */
   private bgmGen = 0;
   /** BGM 音量 0..1（0.5 = 従来の内蔵 BGM 音量）。localStorage への永続化は呼び出し側 */
   private bgmVolume = 0.5;
@@ -125,21 +123,7 @@ export class SfxPlayer {
     this.pumping = false;
   }
 
-  /**
-   * 内蔵 BGM のレンダリング（1 曲は実時間近くかかる）。起動をブロックしないよう
-   * 効果音のあとにキュー経由・チャンク分割で 1 曲ずつ行う
-   */
-  private renderBgmInBackground(): void {
-    for (const [name, def] of Object.entries(buildBgmDefs())) {
-      void this.enqueueRender(async () => {
-        if (!this.exports || this.bgmWaves[name as BgmName]) return;
-        this.bgmWaves[name as BgmName] = await renderSequenceAsync(this.exports, this.opll, def);
-        delete this.bgmBuffers[name as BgmName];
-      });
-    }
-  }
-
-  /** WASM 取得 + 効果音の事前レンダリング（BGM は続けてバックグラウンドで） */
+  /** WASM 取得 + 効果音の事前レンダリング（BGM は割り当て曲を App 側が ensureComposedBgm で先行レンダリング） */
   preload(): Promise<void> {
     this.loading ??= (async () => {
       const url = new URL('./emu2413.wasm', import.meta.url);
@@ -148,7 +132,6 @@ export class SfxPlayer {
       this.exports = instance.exports as unknown as OpllExports;
       this.opll = this.exports.OPLL_new(OPLL_CLOCK, OPLL_RATE);
       this.renderSfx();
-      this.renderBgmInBackground();
     })();
     return this.loading;
   }
@@ -237,31 +220,6 @@ export class SfxPlayer {
     }
     if (this.ctx.state === 'suspended') void this.ctx.resume();
     return this.ctx;
-  }
-
-  /** BGM をループ再生（既に鳴っていれば差し替え）。delaySec でファンファーレ後に開始できる */
-  playBgm(name: BgmName, delaySec = 0): void {
-    if (!this.enabled) return;
-    try {
-      const wave = this.bgmWaves[name];
-      if (!wave) return;
-      const ctx = this.ensureCtx();
-      this.stopBgm();
-      let buffer = this.bgmBuffers[name];
-      if (!buffer) {
-        buffer = ctx.createBuffer(1, wave.length, OPLL_RATE);
-        buffer.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
-        this.bgmBuffers[name] = buffer;
-      }
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      source.connect(this.bgmGain!);
-      source.start(ctx.currentTime + delaySec);
-      this.bgmSource = source;
-    } catch {
-      // 音は演出。失敗してもゲームを止めない
-    }
   }
 
   stopBgm(): void {
