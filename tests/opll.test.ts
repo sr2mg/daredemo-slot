@@ -124,8 +124,9 @@ describe('効果音プリセット（アルゼ風オリジナル定義）', () =
 
   it('BB/RB の BGM がループ長ぴったりでレンダリングされる', { timeout: 120_000 }, () => {
     const bgm = buildBgmDefs();
-    expect(bgm.bb.duration).toBeCloseTo((8 * 4 * 60) / 138, 3);
-    expect(bgm.rb.duration).toBeCloseTo((4 * 4 * 60) / 126, 3);
+    expect(bgm.bb.duration).toBeCloseTo((8 * 4 * 60) / 104, 3);
+    expect(bgm.rb.duration).toBeCloseTo((6 * 4 * 60) / 66, 3);
+    expect(bgm.rb2.duration).toBeCloseTo((4 * 4 * 60) / 60, 3);
     for (const [name, def] of Object.entries(bgm)) {
       const wave = renderSequence(exports, opll, def);
       expect(wave.length, name).toBe(Math.round(def.duration * OPLL_RATE));
