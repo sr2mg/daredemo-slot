@@ -184,6 +184,43 @@ export const SFX_RECIPES: SfxRecipe[] = [
     ],
   },
   {
+    id: 'coinIn',
+    name: 'コイン投入（3連上行）',
+    theory: 'トニック分散和音（ド・ミ・ソ）の3連ビープ = MAX BET 3 枚の可聴化 + 上行の肯定。全部コードトーンなので BGM と濁らない',
+    defaultRoot: 72, // C5
+    defaultVoice: 10, // シンセ
+    build: (root) => [
+      tone(0, 0.045, root, 0.42),
+      tone(0.06, 0.045, root + 4, 0.46),
+      tone(0.12, 0.06, root + 7, 0.5),
+    ],
+  },
+  {
+    id: 'leverStart',
+    name: 'レバーオン（始動ベンド）',
+    theory: 'ソ→ド（完全4度上行）のベンドと着地 = 「到着・始動」の記号を 100ms 級に圧縮',
+    defaultRoot: 79, // G5 → C6
+    defaultVoice: 10, // シンセ
+    build: (root) => [
+      tone(0, 0.05, root, 0.5, root + 5),
+      tone(0.05, 0.07, root + 5, 0.48), // 着地のド（変換時にレガート結合される）
+    ],
+  },
+  {
+    id: 'startChain',
+    name: 'ベット→レバー連結',
+    theory: 'コイン投入 3 連（ド・ミ・ソ）から始動ベンド（ソ→ド）へ。分散和音上行の連結 = 「投入 → 始動」',
+    defaultRoot: 72, // C5
+    defaultVoice: 10, // シンセ
+    build: (root) => [
+      tone(0, 0.045, root, 0.42),
+      tone(0.06, 0.045, root + 4, 0.46),
+      tone(0.12, 0.06, root + 7, 0.5),
+      tone(0.21, 0.05, root + 7, 0.5, root + 12),
+      tone(0.26, 0.07, root + 12, 0.48),
+    ],
+  },
+  {
     id: 'kyuin',
     name: 'キュイン（確定告知）',
     theory: '2オクターブの指数スイープ + 微上昇ホールド。デチューン 2 声で太らせる',

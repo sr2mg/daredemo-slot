@@ -121,6 +121,29 @@ describe('効果音レシピ', () => {
     expect(detuned.length).toBeGreaterThan(0); // 小数 MIDI = デチューン声部
   });
 
+  it('コイン投入はトニック分散和音（ド・ミ・ソ）の3連上行', () => {
+    const t = tones(design('coinIn'));
+    expect(t).toHaveLength(3);
+    expect(t.map((e) => e.midi - 72)).toEqual([0, 4, 7]); // 全部コードトーン
+    expect(t[0]!.t).toBeLessThan(t[1]!.t);
+    expect(t[1]!.t).toBeLessThan(t[2]!.t);
+  });
+
+  it('レバーオンは完全4度上行のベンド + 着地（レガート結合できる隣接タイミング）', () => {
+    const t = tones(design('leverStart'));
+    expect(t[0]!.midiTo! - t[0]!.midi).toBe(5); // ソ → ド
+    expect(t[1]!.midi).toBe(t[0]!.midiTo); // 着地音はベンドの終点
+    expect(t[1]!.t).toBeCloseTo(t[0]!.t + t[0]!.dur, 9); // 隙間なし = レガート
+  });
+
+  it('ベット→レバー連結は投入3連のあと始動ベンドがオクターブ上のドに着地する', () => {
+    const t = tones(design('startChain'));
+    expect(t).toHaveLength(5);
+    expect(t[t.length - 1]!.midi).toBe(72 + 12); // 高いドで着地
+    const bend = t.find((e) => e.midiTo !== undefined);
+    expect(bend!.midiTo! - bend!.midi).toBe(5); // 4度上行
+  });
+
   it('未知のレシピはエラー', () => {
     expect(() => buildSfxEvents(design('nazo'))).toThrow();
   });
