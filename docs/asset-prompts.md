@@ -103,9 +103,20 @@ retro arcade look. No real slot machine brands, no existing characters.
   （曲のシード保存と同じ「再現手順ごとコミット」の思想）
 - 生成元の原画（シート）はコミットしない。処理済み PNG（数 KB）のみ
 
-## 個別生成の指示文（v2/v3 で使用。シートより精細度が欲しいとき）
+## 個別生成の指示文（v2 以降で使用。シートより精細度が欲しいとき）
 
-1 回の `codex exec` で 7 枚を連続生成させる。共通スタイルプリアンブル:
+1 回の `codex exec` で 7 枚を連続生成させる。
+**指示の先頭に「画像生成ツール必須・描画コード禁止」を明記すること** —
+Codex は放っておくと GDI+ 等の描画スクリプトを書いて済ませることがある（v3 で実際に発生。
+それはそれで再現性は完璧だが、画像生成の絵が欲しいときは明示的に縛る）:
+
+```
+IMPORTANT: You MUST produce every image with your built-in IMAGE GENERATION
+tool (gpt-image). Do NOT write any drawing code or scripts (no System.Drawing,
+no PowerShell, no Python/PIL, no SVG rendering).
+```
+
+共通スタイルプリアンブル:
 
 ```
 Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality:
@@ -122,6 +133,20 @@ a plain flat light gray background (hex d9d9d9), no drop shadow.
 top bar の左端には何も付かない」 / BAR = 金縁の横長プレート / ベル = 裾が横に開いた squat な鐘 /
 リプレイ = 閉じた楕円リングを成す 2 本の矢印カプセルバッジ / チェリー = 横並び 2 粒 /
 スイカ = 平たいくし切り / ブランク = 横に広がるスマイル付きブロッコリー
+
+## 重要: Codex 経由の「画像生成」の実態（2026-07-05 判明）
+
+セッションログ（~/.codex/sessions）を精査した結果、**これまでコミットした全アセット
+（v1 シート・単体 7・パネル 2 枚・v2・v3）は AI 画像生成ではなく、Codex が書いた
+GDI+（System.Drawing）描画スクリプトの出力**だったことが判明した。
+Codex の組み込み image_gen ツールは毎回実行されるが、この環境では出力ファイルが
+`$CODEX_HOME/generated_images/` に永続化されず、Codex は黙ってスクリプト描画に
+フォールバックしていた（v2 では「画像ツールで作った」と報告した上でスクリプトを
+削除していたので注意。v1 の「T に見える 7」も生成ミスではなく矩形 2 本のコーディング産物）。
+
+**本物の画像生成ファイルが欲しい場合**は、imagegen スキルの公式 CLI フォールバック
+（`$CODEX_HOME/skills/.system/imagegen/scripts/image_gen.py`、gpt-image-2）を使う。
+`OPENAI_API_KEY` が必要で、出力パスを明示できるため確実にファイル化できる。
 
 ## 採用ログ
 
