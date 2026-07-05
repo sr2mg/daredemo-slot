@@ -10,7 +10,11 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  server: { port: Number(process.env['PORT']) || 5173 },
+  server: {
+    port: Number(process.env['PORT']) || 5173,
+    // モバイル実機確認用: ngrok 等のトンネル越しアクセスを許可（それ以外のホストは既定どおり拒否）
+    allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok.dev', '.trycloudflare.com'],
+  },
   test: {
     exclude: [
       '**/node_modules/**',
