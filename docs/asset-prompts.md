@@ -1,8 +1,13 @@
 # 画像アセット生成プロンプト仕様
 
 音を「OPLL という当時の制約ごと再現」したのと同じ発想で、絵にも様式制約を立てる。
-目標様式は **90 年代パチスロの印刷図柄 / ドット絵**（少数色・太い輪郭・小サイズで判読可能）。
-AI 生成のばらつきは後処理パイプライン（`npm run symbols`）が 16 色・64px に強制的に潰して均す。
+目標様式は **4 号機期の印刷シール調リール図柄**（白い縁取り + 黒キーライン + セル影 2〜3 段 +
+グロスハイライト。小サイズで即判読）。フラットすぎると「悪い意味で 2 号機っぽく」なるので、
+階調は必要（v1 の 64px・16 色フラットはこの理由で廃止）。
+AI 生成のばらつきは後処理パイプライン（`npm run symbols`）が 32 色・128px に量子化して均す。
+
+**背景は白でなくライトグレー（#d9d9d9）で生成すること。**
+シールの白縁が白背景だと背景除去（フラッドフィル）に食われる。
 
 ## 権利ルール（音楽の PD 限定方針と同じ）
 
@@ -18,21 +23,29 @@ AI 生成のばらつきは後処理パイプライン（`npm run symbols`）が
 ### プロンプト（英語推奨。gpt-image 系向け）
 
 ```
-Retro Japanese slot machine reel symbol sheet, 1990s pachislo style.
-A strict 4x2 grid of 8 cells on a plain white background, each symbol centered
-in its cell with generous margin, no grid lines, no text labels, no shadows.
-Style: bold black outlines, flat vivid colors (max ~12 colors total),
-screen-print / pixel-art hybrid look, high contrast, readable at small size.
+High-grade Japanese pachislo reel symbol sheet, premium 1990s slot machine
+print quality. A strict 4x2 grid of 8 cells on a plain flat light gray
+background (hex d9d9d9), each symbol centered with generous margin,
+no grid lines, no drop shadows on the background.
+Every symbol is drawn as a glossy printed sticker: a thick white outline
+border around the whole silhouette, a bold black keyline inside it,
+cel shading with 2-3 tones per color, bright glossy highlights, rich
+saturated colors, festival pop energy, detailed yet instantly readable
+at small size, perfectly consistent rendering style across all 8 cells
+like seals printed on a real reel strip.
 Cells in order (left to right, top to bottom):
-1. a bold red lucky number seven
-2. a black rectangular BAR badge with white "BAR" letters
-3. a golden bell
-4. a blue circular replay arrows icon (two arrows forming a circle)
-5. a pair of red cherries with a green stem
-6. a watermelon slice
-7. a single green broccoli (vegetable, used as a blank symbol)
-8. empty cell (plain white)
-No real slot machine brands, no existing characters, original design only.
+1. a bold red lucky number seven with a metallic two-tone red gradient and
+   a small star sparkle, clearly readable as the numeral 7 with the diagonal
+   descending from the right end of the top bar
+2. a black rounded-rectangle BAR badge with white BAR letters and a gold trim line
+3. a golden bell with a small red ribbon bow
+4. a blue enamel medal badge of two arrows forming a circle (replay icon)
+5. a pair of glossy red cherries with two green leaves
+6. a juicy red watermelon slice with green rind
+7. a cheerful cartoon green broccoli with a simple smiling face (vegetable mascot)
+8. empty cell, plain background only
+No real slot machine brands (no HANABI, no Aruze, no Juggler),
+no existing characters, original design only.
 ```
 
 - 推奨生成サイズ: 1536×1024 以上（横長）。数枚ガチャして一番揃っているものを採用
@@ -44,7 +57,7 @@ No real slot machine brands, no existing characters, original design only.
 npm run symbols -- sheet.png --grid 4x2 --names seven_red,bar,bell,replay,cherry,melon,blank,-
 ```
 
-- `-` は捨てセル。出力は `src/ui/assets/symbols/<図柄ID>.png`（64px・16 色・透過）
+- `-` は捨てセル。出力は `src/ui/assets/symbols/<図柄ID>.png`（128px・32 色・透過）
 - 図柄 ID はリール定義（machines/*.ts の strips）と一致させること:
   `seven_red / bar / bell / replay / cherry / melon / blank`
 - 検証 NG（背景が残る・消えすぎ）が出たら `--tolerance` を上下（既定 90。背景残り → 120、消えすぎ → 60）
@@ -52,8 +65,9 @@ npm run symbols -- sheet.png --grid 4x2 --names seven_red,bar,bell,replay,cherry
 
 ### 合格基準（パイプラインが機械検証）
 
-- 16 色以内 / 不透明率 10〜98% / 正方形
-- 目視: 3 コマ縦並び（実寸 64〜120px）で図柄が判別できる・輪郭が潰れていない
+- 32 色以内 / 不透明率 10〜98% / 正方形
+- 目視: 3 コマ縦並び（実寸 64〜120px）で図柄が判別できる・白縁が欠けていない・
+  参考実機級の「シールが貼ってある」立体感がある
 
 ## 2. 筐体上部パネル（1 枚絵）
 

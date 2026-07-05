@@ -13,8 +13,8 @@ const { PNG } = pngjs;
  * 使い方（npm run symbols -- <args>）:
  *   シート:  npm run symbols -- sheet.png --grid 4x2 --names seven_red,bar,bell,replay,cherry,melon,blank
  *   単体:    npm run symbols -- one.png --name bell
- * オプション: --out <dir>（既定 src/ui/assets/symbols） --size <px>（既定 64）
- *             --colors <n>（既定 16） --tolerance <n>（背景除去の色距離。既定 90）
+ * オプション: --out <dir>（既定 src/ui/assets/symbols） --size <px>（既定 128）
+ *             --colors <n>（既定 32） --tolerance <n>（背景除去の色距離。既定 80）
  * プロンプト仕様: docs/asset-prompts.md
  */
 
@@ -44,9 +44,9 @@ function parseArgs(argv: string[]): {
     ...(grid ? { grid } : {}),
     names,
     out: opt.get('out') ?? 'src/ui/assets/symbols',
-    size: Number(opt.get('size') ?? 64),
-    colors: Number(opt.get('colors') ?? 16),
-    tolerance: Number(opt.get('tolerance') ?? 90),
+    size: Number(opt.get('size') ?? 128),
+    colors: Number(opt.get('colors') ?? 32),
+    tolerance: Number(opt.get('tolerance') ?? 80),
   };
 }
 

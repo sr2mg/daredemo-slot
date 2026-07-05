@@ -114,12 +114,11 @@ body {
   border-bottom: none;
 }
 
-/* ドット絵図柄（AI 生成 + 量子化パイプライン産）。整数拡大でカリッと表示 */
+/* 図柄（AI 生成 + 量子化パイプライン産、128px 印刷シール調）。滑らか拡縮で表示 */
 .cell-img {
-  width: 72%;
-  height: 72%;
+  width: 78%;
+  height: 78%;
   object-fit: contain;
-  image-rendering: pixelated;
 }
 
 .panel-art {

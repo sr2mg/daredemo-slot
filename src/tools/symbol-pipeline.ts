@@ -250,12 +250,17 @@ export function splitGrid(img: Rgba, cols: number, rows: number): Rgba[] {
   return cells;
 }
 
-/** 生成画像 1 セルぶんの標準処理: 背景除去 → トリム → 縮小 → 量子化 */
+/**
+ * 生成画像 1 セルぶんの標準処理: 背景除去 → トリム → 縮小 → 量子化。
+ * 既定は 128px・32 色（印刷シール調。セル影とハイライトの階調を残す）。
+ * 注意: シールの白縁を使う様式では、生成背景を白でなくライトグレーにすること
+ * （白背景だとフラッドフィルが白縁を食う）。
+ */
 export function processSymbol(
   raw: Rgba,
   opts: { size?: number; maxColors?: number; tolerance?: number } = {},
 ): { image: Rgba; report: SymbolReport } {
-  const { size = 64, maxColors = 16, tolerance = 90 } = opts;
+  const { size = 128, maxColors = 32, tolerance = 80 } = opts;
   const cleaned = cropToContent(removeBackground(raw, tolerance));
   const { image } = quantize(resizeTo(cleaned, size), maxColors);
   return { image, report: validateSymbol(image, maxColors) };

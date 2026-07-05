@@ -94,12 +94,29 @@ describe('図柄パイプライン', () => {
     expect(cells[1]!.data[1]).toBe(255);
   });
 
-  it('一気通貫: 合成図柄が 64px・16色・検証 OK で出てくる', () => {
+  it('一気通貫: 合成図柄が 128px・32色・検証 OK で出てくる', () => {
     const { image, report } = processSymbol(raw);
-    expect(image.width).toBe(64);
+    expect(image.width).toBe(128);
     expect(report.ok, report.problems.join(' / ')).toBe(true);
-    expect(report.colors).toBeLessThanOrEqual(16);
+    expect(report.colors).toBeLessThanOrEqual(32);
     expect(report.opaqueRatio).toBeGreaterThan(0.1);
+  });
+
+  it('白縁ステッカーはグレー背景なら縁が残る（白背景だと食われるので生成時の背景はグレー）', () => {
+    // グレー背景 + 白い縁 + 中身の赤、の三層
+    const img = synthetic(120, 120, [216, 216, 216], { x: 30, y: 30, w: 60, h: 60, color: [255, 255, 255] });
+    for (let y = 45; y < 75; y++) {
+      for (let x = 45; x < 75; x++) {
+        const i = (y * 120 + x) * 4;
+        img.data[i] = 200;
+        img.data[i + 1] = 30;
+        img.data[i + 2] = 30;
+      }
+    }
+    const out = removeBackground(img, 80);
+    const border = ((35 * 120 + 60) * 4) as number; // 白縁の上辺
+    expect(out.data[border + 3]).toBe(255); // 白縁は残る
+    expect(out.data[3]).toBe(0); // グレー背景は消える
   });
 
   it('検証: 背景が残った画像（不透明率 100%）は NG になる', () => {
