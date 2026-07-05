@@ -7,6 +7,7 @@ import type { SfxName } from './opll-core.js';
 import type { SfxPlayer } from './sfx-player.js';
 import {
   ASSIGNABLE_SFX,
+  DEFAULT_CHOICE,
   loadSfxAssign,
   loadSfxDesigns,
   PRESET_SFX,
@@ -101,9 +102,8 @@ export function SfxDesignerPanel({ player }: { player: SfxPlayer }) {
   };
 
   const updateAssign = (name: SfxName, value: string) => {
-    const next: SfxAssign = { ...assign };
-    if (value === 'preset') delete next[name];
-    else next[name] = value;
+    // 'preset' も明示的に保存する（bet のように既定が 'none' の契機を preset に戻せるように）
+    const next: SfxAssign = { ...assign, [name]: value };
     setAssign(next);
     saveSfxAssign(next);
     player.refreshSfx(name); // ゲーム用の波形を新しい割り当てで作り直す
@@ -189,11 +189,12 @@ export function SfxDesignerPanel({ player }: { player: SfxPlayer }) {
             <label key={item.name} className="assign-item">
               <span className="slot-label">{item.label}</span>
               <select
-                value={assign[item.name] ?? 'preset'}
+                value={assign[item.name] ?? DEFAULT_CHOICE[item.name] ?? 'preset'}
                 onChange={(e) => updateAssign(item.name, e.target.value)}
                 data-testid={`fx-assign-${item.name}`}
               >
                 <option value="preset">既定（{designSummary(PRESET_SFX[item.name])}）</option>
+                <option value="none">なし（鳴らさない）</option>
                 {designs.map((d) => (
                   <option key={d.id} value={`custom:${d.id}`}>
                     ★ {d.name}
@@ -205,7 +206,8 @@ export function SfxDesignerPanel({ player }: { player: SfxPlayer }) {
         </div>
         <p className="panel-note">
           ゲームの既定効果音もすべてこのレシピのプリセットで、再生は OPLL（emu2413）。
-          差し替えたい契機に自作の音を割り当ててください（割り当て解除 = 既定に戻す）。
+          差し替えたい契機に自作の音を、消したい契機に「なし」を割り当ててください。
+          ベットは MAX BET 前提で既定「なし」（投入音はレバーオンに集約）。
         </p>
       </div>
     </details>

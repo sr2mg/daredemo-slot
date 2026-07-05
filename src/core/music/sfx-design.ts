@@ -28,6 +28,11 @@ export interface SfxDesign {
   speed: number;
   /** OPLL 内蔵音色 1〜15（opll-core.ts の OPLL_VOICES） */
   voice: number;
+  /**
+   * 出力レベル 0..1（省略時 1）。レンダリングは全効果音をピーク正規化するため、
+   * 「この音だけ控えめに」はゲイン調整ではなくこの係数で行う
+   */
+  level?: number;
 }
 
 export interface ToneEvent {
@@ -207,12 +212,12 @@ export const SFX_RECIPES: SfxRecipe[] = [
   {
     id: 'leverStart',
     name: 'レバーオン（始動ベンド）',
-    theory: 'ソ→ド（完全4度上行）のベンドと着地 = 「到着・始動」の記号を 100ms 級に圧縮',
+    theory: 'ソ→ド（完全4度上行）のベンドと着地 = 「到着・始動」の記号を 100ms 級に圧縮。毎ゲーム鳴るので短く控えめに',
     defaultRoot: 79, // G5 → C6
     defaultVoice: 10, // シンセ
     build: (root) => [
-      tone(0, 0.05, root, 0.5, root + 5),
-      tone(0.05, 0.07, root + 5, 0.48), // 着地のド（変換時にレガート結合される）
+      tone(0, 0.04, root, 0.5, root + 5),
+      tone(0.04, 0.05, root + 5, 0.4), // 着地のド（変換時にレガート結合される）
     ],
   },
   {
