@@ -37,13 +37,16 @@ export const ASSIGNABLE_SFX: readonly { name: SfxName; label: string }[] = [
 ];
 
 /**
- * 既定効果音のプリセットデザイン。ベット=E5+G4 / レバー=A5+C5 の大花火風ハモリなど、
- * 旧・手書き定義の音程設計をレシピのパラメータとして引き継いでいる。
+ * 既定効果音のプリセットデザイン。操作音は C メジャーのコードトーンだけで
+ * 設計してあり、どのタイミングで BGM に重なっても濁らない（調の統一）。
+ * ベット = ド・ミ・ソの 3 連上行（MAX BET 3 枚の可聴化）、
+ * レバー = ソ→ド（完全4度上行 = 始動の記号）。
+ * 旧・大花火風ハモリ（beep2/beepChain）はレシピとしてデザイナに残っている。
  */
 export const PRESET_SFX: Record<SfxName, SfxDesign> = {
-  bet: { recipeId: 'beep2', rootMidi: 76, speed: 1, voice: 10 }, // E5 + G4
-  lever: { recipeId: 'beep2', rootMidi: 81, speed: 1, voice: 10 }, // A5 + C5
-  betLever: { recipeId: 'beepChain', rootMidi: 76, speed: 1, voice: 10 }, // E5 → A5
+  bet: { recipeId: 'coinIn', rootMidi: 72, speed: 1, voice: 10 }, // C5・E5・G5
+  lever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10 }, // G5 → C6
+  betLever: { recipeId: 'startChain', rootMidi: 72, speed: 1, voice: 10 }, // 3連 → 始動
   reelStop: { recipeId: 'thud', rootMidi: 53, speed: 1, voice: 13 }, // F3 ドスッ
   replay: { recipeId: 'confirm', rootMidi: 81, speed: 1, voice: 4 }, // A5 → D6（4度上行）
   payout: { recipeId: 'coins', rootMidi: 96, speed: 1, voice: 12 }, // C7/G6 交互連打

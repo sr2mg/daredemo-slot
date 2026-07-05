@@ -36,8 +36,8 @@ describe('arrangeSfx（デザイン → OPLL レジスタ列）', () => {
     }
   });
 
-  it('同時発音は別チャンネルに割り当てられる（操作ビープのハモリ）', () => {
-    const def = arrangeSfx(PRESET_SFX.bet); // beep2 = 2 音同時
+  it('同時発音は別チャンネルに割り当てられる（ハモリビープのレシピ）', () => {
+    const def = arrangeSfx({ recipeId: 'beep2', rootMidi: 76, speed: 1, voice: 10 }); // 2 音同時
     expect(keyOnCount(def, 0)).toBe(1);
     expect(keyOnCount(def, 1)).toBe(1);
   });
@@ -66,8 +66,9 @@ describe('arrangeSfx（デザイン → OPLL レジスタ列）', () => {
     expect(rhythm.some((e) => e.val === (0x20 | 0x01))).toBe(true); // ハイハット
   });
 
-  it('プリセットのベット/レバーは大花火風の音程（E5+G4 / A5+C5）を引き継ぐ', () => {
-    expect(PRESET_SFX.bet.rootMidi).toBe(76); // E5（ハモリは -9 = G4）
-    expect(PRESET_SFX.lever.rootMidi).toBe(81); // A5（ハモリは -9 = C5）
+  it('プリセットのベット/レバーは C メジャーのコードトーン設計（BGM と濁らない）', () => {
+    expect(PRESET_SFX.bet).toMatchObject({ recipeId: 'coinIn', rootMidi: 72 }); // ド・ミ・ソ
+    expect(PRESET_SFX.lever).toMatchObject({ recipeId: 'leverStart', rootMidi: 79 }); // ソ → ド
+    expect(PRESET_SFX.betLever).toMatchObject({ recipeId: 'startChain', rootMidi: 72 });
   });
 });
