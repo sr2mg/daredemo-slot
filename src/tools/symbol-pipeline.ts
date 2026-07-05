@@ -220,8 +220,8 @@ export interface SymbolReport {
   problems: string[];
 }
 
-/** 様式制約の機械検証: 色数・不透明率・サイズ */
-export function validateSymbol(img: Rgba, maxColors = 16): SymbolReport {
+/** 様式制約の機械検証: 色数・不透明率・横長。既定の色数上限は現行基準の 32 */
+export function validateSymbol(img: Rgba, maxColors = 32): SymbolReport {
   const colors = new Set<number>();
   let opaqueCount = 0;
   for (let i = 0; i < img.data.length; i += 4) {
