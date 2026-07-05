@@ -148,6 +148,52 @@ Codex の組み込み image_gen ツールは毎回実行されるが、この環
 （`$CODEX_HOME/skills/.system/imagegen/scripts/image_gen.py`、gpt-image-2）を使う。
 `OPENAI_API_KEY` が必要で、出力パスを明示できるため確実にファイル化できる。
 
+## 手動生成用: コピペ用プロンプト 7 本
+
+ChatGPT 等に 1 本ずつ貼って生成する（横長 1536×1024 推奨）。できた画像を
+Claude Code のチャットに貼れば、パイプラインを通して差し替えてもらえる。
+
+共通の様式（各プロンプトに含まれている）: 白縁ステッカー / 黒キーライン / セル影 3 段 /
+ライトグレー背景（必須。白背景だと縁が処理で消える）/ 横長 2:1 構図
+
+**1. 赤 7（seven_red）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights, saturated festival colors. WIDE LANDSCAPE COMPOSITION, the symbol wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: the numeral 7 in metallic red, extra bold and extra wide like the sevens of a 777 jackpot: a very thick horizontal top bar, and a thick diagonal leg starting at the RIGHT end of the top bar slanting down to the bottom left; nothing attached to the left end of the top bar. Small white star sparkle at top right.
+```
+
+**2. BAR（bar）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights. WIDE LANDSCAPE COMPOSITION, wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: a wide black rounded-rectangle BAR plate with beveled 3D edges, a gold trim frame, and bold white letters BAR stretched wide.
+```
+
+**3. ベル（bell）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights. WIDE LANDSCAPE COMPOSITION, wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: a squat wide golden bell with two-tone gold shading, a bright white glint, a small round red clapper at the bottom, and a small red ribbon bow on top; the bell mouth flares wide horizontally.
+```
+
+**4. リプレイ（replay）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights. WIDE LANDSCAPE COMPOSITION, wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: a wide blue enamel capsule badge: two thick curved blue arrows chasing each other forming one complete closed horizontal oval ring, each arrowhead touching the other arrow's tail, like a replay emblem.
+```
+
+**5. チェリー（cherry）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights. WIDE LANDSCAPE COMPOSITION, wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: two glossy red cherries side by side horizontally on short joined green stems with one green leaf, big round highlights.
+```
+
+**6. スイカ（melon）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights. WIDE LANDSCAPE COMPOSITION, wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: a wide watermelon slice lying flat with the long side horizontal, juicy red flesh with black seeds, striped light and dark green rind along the bottom.
+```
+
+**7. ブランク（blank・ブロッコリー）**
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thick white die-cut sticker border, bold black keyline, rich airbrushed cel shading with 3 tones, glossy highlights. WIDE LANDSCAPE COMPOSITION, wide and squat filling most of the frame width (about 2:1), centered on a plain flat light gray background (hex d9d9d9), no drop shadow. Subject: a cheerful cartoon broccoli drawn squat and wide with a tiny simple smiling face, two-tone green, florets spreading horizontally.
+```
+
+（任意）**筐体パネル**: 「DAREDEMO SLOT」ロゴの横長バナー。スペルは
+D-A-R-E-D-E-M-O S-L-O-T と 1 文字ずつ明記すること（誤字対策）。
+
 ## 採用ログ
 
 - **2026-07-04 図柄 7 種**: Codex CLI（組み込み画像ツール、gpt-image 系）で生成。
