@@ -10,7 +10,7 @@
     "exactOptionalPropertyTypes": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals", "vite/client"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "tools"]
 }
