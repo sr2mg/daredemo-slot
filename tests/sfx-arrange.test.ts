@@ -70,6 +70,8 @@ describe('arrangeSfx（デザイン → OPLL レジスタ列）', () => {
   it('プリセットのベット/レバーは C メジャーのコードトーン設計（BGM と濁らない）', () => {
     expect(PRESET_SFX.bet).toMatchObject({ recipeId: 'coinIn', rootMidi: 72 }); // ド・ミ・ソ
     expect(PRESET_SFX.lever).toMatchObject({ recipeId: 'leverStart', rootMidi: 79 }); // ソ → ド
-    expect(PRESET_SFX.betLever).toMatchObject({ recipeId: 'startChain', rootMidi: 72 });
+    // MAX BET 前提: 連結もレバー音のみ。毎ゲーム鳴る音は控えめレベル
+    expect(PRESET_SFX.betLever).toMatchObject({ recipeId: 'leverStart', rootMidi: 79 });
+    expect(PRESET_SFX.lever.level).toBeLessThan(1);
   });
 });

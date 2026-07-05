@@ -22,6 +22,8 @@ const BGM_GAIN = 0.55; // マスターに対する BGM の相対音量（bgmVolu
 const CUSTOM_BGM_CACHE_MAX = 6;
 /** 効果音試聴の波形キャッシュ上限（短いので軽い） */
 const PREVIEW_CACHE_MAX = 16;
+/** 効果音の基準正規化ピーク（design.level はこれに乗算される） */
+const SFX_PEAK = 0.65;
 
 export class SfxPlayer {
   enabled: boolean;
@@ -60,15 +62,25 @@ export class SfxPlayer {
     }
   }
 
-  /** 全契機の効果音を、現在の割り当て（自作 or プリセット）からレンダリングする */
+  /** design を波形にする（level = 正規化ピークへの相対出力。「この音だけ控えめ」用） */
+  private renderDesign(design: SfxDesign): Float32Array {
+    return renderSequence(this.exports!, this.opll, arrangeSfx(design), SFX_PEAK * (design.level ?? 1));
+  }
+
+  /** 全契機の効果音を、現在の割り当て（自作/プリセット/なし）からレンダリングする */
   private renderSfx(): void {
     if (!this.exports) return;
     for (const { name } of ASSIGNABLE_SFX) {
       try {
-        this.waves[name] = renderSequence(this.exports, this.opll, arrangeSfx(resolveSfxAssign(name)));
+        const design = resolveSfxAssign(name);
+        if (design === null) {
+          delete this.waves[name]; // 「なし」= 波形を持たない（play は無音で何もしない）
+          continue;
+        }
+        this.waves[name] = this.renderDesign(design);
       } catch {
         // 壊れた保存データ等はプリセットで再試行（プリセットは常に有効なレシピ）
-        this.waves[name] = renderSequence(this.exports, this.opll, arrangeSfx(PRESET_SFX[name]));
+        this.waves[name] = this.renderDesign(PRESET_SFX[name]);
       }
     }
     this.buffers = {};
@@ -80,7 +92,9 @@ export class SfxPlayer {
       await this.preload();
       if (!this.exports) return;
       try {
-        this.waves[name] = renderSequence(this.exports, this.opll, arrangeSfx(resolveSfxAssign(name)));
+        const design = resolveSfxAssign(name);
+        if (design === null) delete this.waves[name];
+        else this.waves[name] = this.renderDesign(design);
         delete this.buffers[name];
       } catch {
         // 不正データは既存の波形のまま（音は演出）
@@ -97,7 +111,7 @@ export class SfxPlayer {
         wave = await this.enqueueRender(async () => {
           await this.preload();
           if (!this.exports) throw new Error('OPLL 未初期化');
-          return renderSequence(this.exports, this.opll, arrangeSfx(design));
+          return this.renderDesign(design);
         }, true);
       } catch {
         return false;

@@ -16,8 +16,17 @@ export interface SavedSfx {
   design: SfxDesign;
 }
 
-/** 割り当て値: 未設定（= プリセット）か 'custom:<SavedSfx.id>' */
+/**
+ * 割り当て値: 'preset'（既定音）/ 'none'（鳴らさない）/ 'custom:<SavedSfx.id>'。
+ * 未設定は DEFAULT_CHOICE（なければ 'preset'）に従う
+ */
 export type SfxAssign = Partial<Record<SfxName, string>>;
+
+/**
+ * 契機ごとの既定割り当て。bet は MAX BET 前提で既定無音
+ * （投入音はレバーオンに集約。鳴らしたければパネルで preset/custom を選べる）
+ */
+export const DEFAULT_CHOICE: SfxAssign = { bet: 'none' };
 
 const SFX_KEY = 'daredemo.sfxDesigns.v1';
 const ASSIGN_KEY = 'daredemo.sfxAssignments.v1';
@@ -44,9 +53,9 @@ export const ASSIGNABLE_SFX: readonly { name: SfxName; label: string }[] = [
  * 旧・大花火風ハモリ（beep2/beepChain）はレシピとしてデザイナに残っている。
  */
 export const PRESET_SFX: Record<SfxName, SfxDesign> = {
-  bet: { recipeId: 'coinIn', rootMidi: 72, speed: 1, voice: 10 }, // C5・E5・G5
-  lever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10 }, // G5 → C6
-  betLever: { recipeId: 'startChain', rootMidi: 72, speed: 1, voice: 10 }, // 3連 → 始動
+  bet: { recipeId: 'coinIn', rootMidi: 72, speed: 1, voice: 10 }, // C5・E5・G5（既定は無音割り当て）
+  lever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10, level: 0.55 }, // G5 → C6・控えめ
+  betLever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10, level: 0.55 }, // MAX BET 前提 = レバー音のみ
   reelStop: { recipeId: 'thud', rootMidi: 60, speed: 1, voice: 13 }, // バスドラ + C4 クリック
   replay: { recipeId: 'confirm', rootMidi: 81, speed: 1, voice: 4 }, // A5 → D6（4度上行）
   payout: { recipeId: 'coins', rootMidi: 96, speed: 1, voice: 12 }, // C7/G6 交互連打
@@ -101,10 +110,14 @@ export function saveSfxAssign(assign: SfxAssign): void {
   }
 }
 
-/** 契機の効果音デザインを解決する。未割り当て・不正値・消えた音はプリセットへ */
-export function resolveSfxAssign(name: SfxName): SfxDesign {
-  const choice = loadSfxAssign()[name];
-  if (choice?.startsWith('custom:')) {
+/**
+ * 契機の効果音デザインを解決する。'none' は null（鳴らさない）。
+ * 不正値・消えた自作音はプリセットへフォールバック
+ */
+export function resolveSfxAssign(name: SfxName): SfxDesign | null {
+  const choice = loadSfxAssign()[name] ?? DEFAULT_CHOICE[name] ?? 'preset';
+  if (choice === 'none') return null;
+  if (choice.startsWith('custom:')) {
     const id = choice.slice('custom:'.length);
     const custom = loadSfxDesigns().find((s) => s.id === id)?.design;
     if (custom) return custom;
