@@ -103,6 +103,26 @@ retro arcade look. No real slot machine brands, no existing characters.
   （曲のシード保存と同じ「再現手順ごとコミット」の思想）
 - 生成元の原画（シート）はコミットしない。処理済み PNG（数 KB）のみ
 
+## 個別生成の指示文（v2/v3 で使用。シートより精細度が欲しいとき）
+
+1 回の `codex exec` で 7 枚を連続生成させる。共通スタイルプリアンブル:
+
+```
+Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality:
+thick white die-cut sticker border around the whole silhouette, bold black
+keyline inside it, rich airbrushed cel shading with 3 tones per color,
+glossy highlights, saturated festival colors, chunky rounded shapes.
+WIDE LANDSCAPE COMPOSITION: the symbol is drawn wide and squat, stretched
+horizontally to fill most of the frame WIDTH (about 2:1 width-to-height
+proportions, like symbols printed on a real slot reel strip), centered on
+a plain flat light gray background (hex d9d9d9), no drop shadow.
+```
+
+図柄ごとの主題（要点）: 7 = 「777 ジャックポットの 7。太い横バーの右端から左下へ斜め脚、
+top bar の左端には何も付かない」 / BAR = 金縁の横長プレート / ベル = 裾が横に開いた squat な鐘 /
+リプレイ = 閉じた楕円リングを成す 2 本の矢印カプセルバッジ / チェリー = 横並び 2 粒 /
+スイカ = 平たいくし切り / ブランク = 横に広がるスマイル付きブロッコリー
+
 ## 採用ログ
 
 - **2026-07-04 図柄 7 種**: Codex CLI（組み込み画像ツール、gpt-image 系）で生成。
@@ -119,6 +139,13 @@ retro arcade look. No real slot machine brands, no existing characters.
   だったため、**7 図柄を 1 枚ずつ 1024px で個別生成**（1 回の codex exec で 7 枚連続生成）。
   スタイル整合は共通プリアンブル（白縁ステッカー + セル影 3 段 + ハイライト + グレー背景）
   + 量子化で担保。全図柄 128px・32 色検証 OK、1 発採用
+- **2026-07-05 図柄 v3（実機準拠の横長・現行）**: 上記の個別生成指示を横長構図
+  （wide & squat）に変えて Codex に依頼したところ、Codex は画像生成ツールではなく
+  **GDI+（System.Drawing）の描画スクリプトを書いて実行**した（tools/draw-symbols-v3.ps1
+  としてコミット済み。1536×1024 の 7 枚 + コンタクトシートを出力）。
+  つまり v3 は AI 画像生成ではなく手続き描画で、指示文がスクリプトに「コンパイル」された形。
+  再現性は完璧（スクリプト実行 → `npm run symbols` で同一アセットが再生成できる）。
+  全図柄 160×100・32 色検証 OK
 
 ### 教訓
 
