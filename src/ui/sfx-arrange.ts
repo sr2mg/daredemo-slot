@@ -74,12 +74,12 @@ export function arrangeSfx(design: SfxDesign): SfxDef {
     if (keyedOn) b.keyOff(ch, prevEnd);
   });
 
-  // --- ノイズ: リズムモードで代用（高域 = ハイハット / それ以外 = スネア） ---
+  // --- ノイズ: リズムモードで代用（低域 = バスドラ / 中域 = スネア / 高域 = ハイハット） ---
   const noises = events.filter((e) => e.kind === 'noise');
   if (noises.length > 0) {
     initRhythmMode(b);
     for (const n of noises) {
-      const bit = n.freq >= 4000 ? 0x01 : 0x08;
+      const bit = n.freq < 500 ? 0x10 : n.freq >= 4000 ? 0x01 : 0x08;
       b.raw(0x0e, 0x20, n.t);
       b.raw(0x0e, 0x20 | bit, n.t + 0.004);
     }

@@ -47,7 +47,7 @@ export const PRESET_SFX: Record<SfxName, SfxDesign> = {
   bet: { recipeId: 'coinIn', rootMidi: 72, speed: 1, voice: 10 }, // C5・E5・G5
   lever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10 }, // G5 → C6
   betLever: { recipeId: 'startChain', rootMidi: 72, speed: 1, voice: 10 }, // 3連 → 始動
-  reelStop: { recipeId: 'thud', rootMidi: 53, speed: 1, voice: 13 }, // F3 ドスッ
+  reelStop: { recipeId: 'thud', rootMidi: 60, speed: 1, voice: 13 }, // バスドラ + C4 クリック
   replay: { recipeId: 'confirm', rootMidi: 81, speed: 1, voice: 4 }, // A5 → D6（4度上行）
   payout: { recipeId: 'coins', rootMidi: 96, speed: 1, voice: 12 }, // C7/G6 交互連打
   kyuin: { recipeId: 'kyuin', rootMidi: 67, speed: 1, voice: 15 }, // G4 → 2 オクターブ上

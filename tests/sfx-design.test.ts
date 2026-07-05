@@ -88,11 +88,15 @@ describe('効果音レシピ', () => {
     expect(mains[1]!.t).toBeGreaterThan(mains[0]!.t);
   });
 
-  it('停止音は低域の下行ベンド 1 発', () => {
+  it('停止音はバスドラ打撃 + 短い中域クリック（ベンドなし・軽量）', () => {
+    const events = buildSfxEvents(design('thud'));
+    const noise = events.find((e) => e.kind === 'noise');
+    expect(noise).toBeDefined();
+    expect(noise!.freq).toBeLessThan(500); // バスドラ帯
     const t = tones(design('thud'));
     expect(t).toHaveLength(1);
-    expect(t[0]!.midi).toBeLessThan(60); // 低域
-    expect(t[0]!.midiTo!).toBeLessThan(t[0]!.midi); // 下行
+    expect(t[0]!.midiTo).toBeUndefined(); // ベンドなし（低域ベンドは濁る）
+    expect(t[0]!.dur).toBeLessThanOrEqual(0.05); // 3 連打される音なので短く
   });
 
   it('コイン払い出しは 2 音の交互連打', () => {

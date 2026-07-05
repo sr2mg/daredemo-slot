@@ -60,10 +60,11 @@ describe('arrangeSfx（デザイン → OPLL レジスタ列）', () => {
     expect(Math.min(...vols)).toBeLessThan(Math.max(...vols));
   });
 
-  it('ノイズはリズムモードのハイハットに変換される（警告レシピ）', () => {
-    const def = arrangeSfx({ recipeId: 'keikoku', rootMidi: 84, speed: 1, voice: 10 });
-    const rhythm = def.events.filter((e) => e.reg === 0x0e);
-    expect(rhythm.some((e) => e.val === (0x20 | 0x01))).toBe(true); // ハイハット
+  it('ノイズは周波数帯でリズム楽器に振り分けられる（高域=ハイハット / 低域=バスドラ）', () => {
+    const hat = arrangeSfx({ recipeId: 'keikoku', rootMidi: 84, speed: 1, voice: 10 });
+    expect(hat.events.some((e) => e.reg === 0x0e && e.val === (0x20 | 0x01))).toBe(true); // ハイハット
+    const bd = arrangeSfx(PRESET_SFX.reelStop); // thud = バスドラ + クリック
+    expect(bd.events.some((e) => e.reg === 0x0e && e.val === (0x20 | 0x10))).toBe(true); // バスドラ
   });
 
   it('プリセットのベット/レバーは C メジャーのコードトーン設計（BGM と濁らない）', () => {
