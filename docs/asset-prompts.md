@@ -194,8 +194,18 @@ Vintage Japanese pachislo reel symbol sticker, premium 1990s print quality: thic
 （任意）**筐体パネル**: 「DAREDEMO SLOT」ロゴの横長バナー。スペルは
 D-A-R-E-D-E-M-O S-L-O-T と 1 文字ずつ明記すること（誤字対策）。
 
+## 候補置き場
+
+`src/ui/assets/candidates/` — 不採用・保留のアセット置き場。
+`symbols/` はビルドに全部バンドルされるため、採用した図柄 ID のファイルだけを置く。
+現在の保留: 旧・大判プレーン 7（seven_red_plain）、キャラ乗り 7 の他候補
+（赤 locked 系・青系）、単独マスコット。青 7 は「異色 BB」を作るときの有力候補。
+
 ## 採用ログ
 
+- **2026-07-06 seven_red = キャラ乗り 7（genai 版）採用**: ユーザー生成の
+  seven_red_mascot_genai を全機種の赤 7 に採用（図柄 ID `seven_red` のアセット
+  差し替えなので機種定義の変更は不要）。他候補と旧プレーン 7 は candidates/ へ退避
 - **2026-07-04 図柄 7 種**: Codex CLI（組み込み画像ツール、gpt-image 系）で生成。
   シート（上記プロンプトそのまま）から bar/bell/replay/cherry/melon/blank の 6 種を採用。
   seven_red はシートの 7 が「T」に見えたため単体で再生成
