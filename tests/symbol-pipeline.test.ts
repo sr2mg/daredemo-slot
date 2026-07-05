@@ -94,12 +94,24 @@ describe('図柄パイプライン', () => {
     expect(cells[1]!.data[1]).toBe(255);
   });
 
-  it('一気通貫: 合成図柄が 128px・32色・検証 OK で出てくる', () => {
+  it('一気通貫: 合成図柄が 160x100（実機準拠の横長）・32色・検証 OK で出てくる', () => {
     const { image, report } = processSymbol(raw);
-    expect(image.width).toBe(128);
+    expect(image.width).toBe(160);
+    expect(image.height).toBe(100);
     expect(report.ok, report.problems.join(' / ')).toBe(true);
     expect(report.colors).toBeLessThanOrEqual(32);
     expect(report.opaqueRatio).toBeGreaterThan(0.1);
+  });
+
+  it('トリム: aspect 指定で横長キャンバスに中央配置される', () => {
+    const out = cropToContent(removeBackground(raw), 0.06, 1.6);
+    expect(out.width / out.height).toBeCloseTo(1.6, 1);
+  });
+
+  it('検証: 縦長画像は NG になる（実機図柄は横長）', () => {
+    const tall: Rgba = { width: 50, height: 100, data: new Uint8Array(50 * 100 * 4).fill(255) };
+    const report = validateSymbol(tall);
+    expect(report.problems.some((p) => p.includes('縦長'))).toBe(true);
   });
 
   it('白縁ステッカーはグレー背景なら縁が残る（白背景だと食われるので生成時の背景はグレー）', () => {

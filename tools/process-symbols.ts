@@ -13,7 +13,8 @@ const { PNG } = pngjs;
  * 使い方（npm run symbols -- <args>）:
  *   シート:  npm run symbols -- sheet.png --grid 4x2 --names seven_red,bar,bell,replay,cherry,melon,blank
  *   単体:    npm run symbols -- one.png --name bell
- * オプション: --out <dir>（既定 src/ui/assets/symbols） --size <px>（既定 128）
+ * オプション: --out <dir>（既定 src/ui/assets/symbols） --size <幅px>（既定 160）
+ *             --aspect <幅/高さ>（既定 1.6 = 実機準拠の横長）
  *             --colors <n>（既定 32） --tolerance <n>（背景除去の色距離。既定 80）
  * プロンプト仕様: docs/asset-prompts.md
  */
@@ -24,6 +25,7 @@ function parseArgs(argv: string[]): {
   names: string[];
   out: string;
   size: number;
+  aspect: number;
   colors: number;
   tolerance: number;
 } {
@@ -44,7 +46,8 @@ function parseArgs(argv: string[]): {
     ...(grid ? { grid } : {}),
     names,
     out: opt.get('out') ?? 'src/ui/assets/symbols',
-    size: Number(opt.get('size') ?? 128),
+    size: Number(opt.get('size') ?? 160),
+    aspect: Number(opt.get('aspect') ?? 1.6),
     colors: Number(opt.get('colors') ?? 32),
     tolerance: Number(opt.get('tolerance') ?? 80),
   };
@@ -75,6 +78,7 @@ for (let i = 0; i < args.names.length; i++) {
   if (name === '' || name === '-') continue; // '-' = そのセルは捨てる
   const { image, report } = processSymbol(cells[i]!, {
     size: args.size,
+    aspect: args.aspect,
     maxColors: args.colors,
     tolerance: args.tolerance,
   });
@@ -82,7 +86,7 @@ for (let i = 0; i < args.names.length; i++) {
   writePng(path, image);
   const status = report.ok ? 'OK' : `NG: ${report.problems.join(' / ')}`;
   console.log(
-    `${name.padEnd(12)} ${report.size}px ${String(report.colors).padStart(2)}色 不透明${(report.opaqueRatio * 100).toFixed(0).padStart(3)}% → ${path} [${status}]`,
+    `${name.padEnd(12)} ${image.width}x${image.height}px ${String(report.colors).padStart(2)}色 不透明${(report.opaqueRatio * 100).toFixed(0).padStart(3)}% → ${path} [${status}]`,
   );
   if (!report.ok) failed++;
 }

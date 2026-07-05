@@ -63,8 +63,12 @@ export function removeBackground(img: Rgba, tolerance = 90): Rgba {
   return { width, height, data };
 }
 
-/** 不透明ピクセルのバウンディングボックスで切り出し、少し余白を足して正方形にする */
-export function cropToContent(img: Rgba, padRatio = 0.06): Rgba {
+/**
+ * 不透明ピクセルのバウンディングボックスで切り出し、少し余白を足して
+ * 指定アスペクト比（幅/高さ。既定 1 = 正方形）のキャンバスに中央配置する。
+ * 実機の図柄は規則上も横長（縦 25mm 以上・横 35mm 以上）なので通常 1.6 を使う
+ */
+export function cropToContent(img: Rgba, padRatio = 0.06, aspect = 1): Rgba {
   let minX = img.width;
   let minY = img.height;
   let maxX = -1;
@@ -82,10 +86,13 @@ export function cropToContent(img: Rgba, padRatio = 0.06): Rgba {
   if (maxX < 0) return img; // 全透明はそのまま（検証で落ちる）
   const w = maxX - minX + 1;
   const h = maxY - minY + 1;
-  const side = Math.ceil(Math.max(w, h) * (1 + padRatio * 2));
-  const out: Rgba = { width: side, height: side, data: new Uint8Array(side * side * 4) };
-  const ox = ((side - w) / 2) | 0;
-  const oy = ((side - h) / 2) | 0;
+  // 内容がちょうど収まる aspect 比のキャンバス + 余白
+  const boxH = Math.max(h, Math.ceil(w / aspect));
+  const outH = Math.ceil(boxH * (1 + padRatio * 2));
+  const outW = Math.ceil(outH * aspect);
+  const out: Rgba = { width: outW, height: outH, data: new Uint8Array(outW * outH * 4) };
+  const ox = ((outW - w) / 2) | 0;
+  const oy = ((outH - h) / 2) | 0;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const src = at(img, minX + x, minY + y);
@@ -228,7 +235,7 @@ export function validateSymbol(img: Rgba, maxColors = 16): SymbolReport {
   if (colors.size > maxColors) problems.push(`色数 ${colors.size} > ${maxColors}`);
   if (opaqueRatio < 0.1) problems.push(`不透明率 ${(opaqueRatio * 100).toFixed(1)}% < 10%（背景除去で消えすぎ？）`);
   if (opaqueRatio > 0.98) problems.push(`不透明率 ${(opaqueRatio * 100).toFixed(1)}% > 98%（背景が残っている？）`);
-  if (img.width !== img.height) problems.push(`正方形でない ${img.width}x${img.height}`);
+  if (img.width < img.height) problems.push(`縦長 ${img.width}x${img.height}（実機図柄は横長。規則も縦25mm以上・横35mm以上）`);
   return { colors: colors.size, opaqueRatio, size: img.width, ok: problems.length === 0, problems };
 }
 
@@ -252,16 +259,19 @@ export function splitGrid(img: Rgba, cols: number, rows: number): Rgba[] {
 
 /**
  * 生成画像 1 セルぶんの標準処理: 背景除去 → トリム → 縮小 → 量子化。
- * 既定は 128px・32 色（印刷シール調。セル影とハイライトの階調を残す）。
+ * 既定は 160×100px（アスペクト 1.6 の横長）・32 色（印刷シール調）。
+ * 実機の図柄は規則上も横長（縦 25mm 以上・横 35mm 以上 = 最低 1.4:1）で、
+ * リール帯の実物も概ね 2:1 前後。シミュレータのコマ枠 ≒1.6:1 に合わせる。
  * 注意: シールの白縁を使う様式では、生成背景を白でなくライトグレーにすること
  * （白背景だとフラッドフィルが白縁を食う）。
  */
 export function processSymbol(
   raw: Rgba,
-  opts: { size?: number; maxColors?: number; tolerance?: number } = {},
+  opts: { size?: number; maxColors?: number; tolerance?: number; aspect?: number } = {},
 ): { image: Rgba; report: SymbolReport } {
-  const { size = 128, maxColors = 32, tolerance = 80 } = opts;
-  const cleaned = cropToContent(removeBackground(raw, tolerance));
-  const { image } = quantize(resizeTo(cleaned, size), maxColors);
+  const { size = 160, maxColors = 32, tolerance = 80, aspect = 1.6 } = opts;
+  const height = Math.round(size / aspect);
+  const cleaned = cropToContent(removeBackground(raw, tolerance), 0.06, aspect);
+  const { image } = quantize(resizeTo(cleaned, size, height), maxColors);
   return { image, report: validateSymbol(image, maxColors) };
 }
