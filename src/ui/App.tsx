@@ -303,7 +303,7 @@ export function App() {
           const song = resolveAssign(slot);
           try {
             const piece = compose(song.options);
-            const def = arrangePiece(piece, song.options.styleId);
+            const def = arrangePiece(piece, song.options.styleId, song.options.voices);
             void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
           } catch {
             // 保存データ破損等。音は演出なので無音で続行する
@@ -403,7 +403,7 @@ export function App() {
         const song = resolveAssign(slot);
         try {
           const piece = compose(song.options);
-          const def = arrangePiece(piece, song.options.styleId);
+          const def = arrangePiece(piece, song.options.styleId, song.options.voices);
           void sfx.ensureComposedBgm(JSON.stringify(song.options), def);
         } catch {
           // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる

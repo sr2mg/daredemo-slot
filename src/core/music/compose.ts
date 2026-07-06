@@ -27,6 +27,19 @@ export interface ComposeOptions {
   seed: number;
   /** 全小節ぶんのスロット選択。省略時は defaultChoiceFor() */
   choice?: readonly number[];
+  /**
+   * OPLL 音色の上書き（1〜15。opll-core.ts の OPLL_VOICES）。省略時はスタイル既定。
+   * compose() 自体は使わない編曲層のパラメータだが、曲の保存単位・BGM キャッシュの
+   * キーが ComposeOptions の JSON なので、ここに持たせて「同じ曲 = 同じ音色」を保証する
+   */
+  voices?: VoiceOverride;
+}
+
+/** パート別の OPLL 音色上書き。未指定のパートはスタイル既定（opll-arrange.ts） */
+export interface VoiceOverride {
+  lead?: number;
+  backing?: number;
+  bass?: number;
 }
 
 export interface NoteEvent {

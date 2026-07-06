@@ -75,4 +75,23 @@ describe('arrangePiece（Piece → OPLL レジスタ列）', () => {
     expect(lead.length).toBeGreaterThan(0);
     expect(lead[0]!.val >> 4).toBe(10); // リード音色 = シンセ(10): 上位ニブル
   });
+
+  it('音色上書き: 指定パートだけ差し替え、エコーはリードに追従、未指定はスタイル既定', () => {
+    const custom = arrangePiece(piece, 'eurobeat', { lead: 4, bass: 14 });
+    const voiceOf = (ch: number) => custom.events.find((e) => e.reg === 0x30 + ch)!.val >> 4;
+    expect(voiceOf(2)).toBe(4); // リード = フルート（上書き）
+    expect(voiceOf(5)).toBe(4); // エコーもリードと同じ音色
+    expect(voiceOf(4)).toBe(14); // ベース = アコベース（上書き）
+    expect(voiceOf(3)).toBe(8); // バッキングはユーロビート既定のオルガンのまま
+    // 上書きなしの列とはリード音色だけが違う（イベント数・タイミングは同一）
+    expect(custom.events.length).toBe(def.events.length);
+  });
+
+  it('音色上書き: 範囲外・未指定はスタイル既定に落ちる', () => {
+    const bad = arrangePiece(piece, 'eurobeat', { lead: 0, backing: 99 });
+    const voiceOf = (ch: number) => bad.events.find((e) => e.reg === 0x30 + ch)!.val >> 4;
+    expect(voiceOf(2)).toBe(10); // シンセ
+    expect(voiceOf(3)).toBe(8); // オルガン
+    expect(voiceOf(4)).toBe(13); // シンベ
+  });
 });
