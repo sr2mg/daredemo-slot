@@ -1,4 +1,4 @@
-import type { Piece } from '../core/music/compose.js';
+import type { Piece, VoiceOverride } from '../core/music/compose.js';
 import { initRhythmMode } from './mml.js';
 import { SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
@@ -35,7 +35,7 @@ const VOL_ECHO = 7;
 const VOL_BACKING = 7;
 const VOL_BASS = 2;
 
-interface StyleVoices {
+export interface StyleVoices {
   lead: number;
   backing: number;
   bass: number;
@@ -51,6 +51,21 @@ const STYLE_VOICES: Record<string, StyleVoices> = {
 };
 const DEFAULT_VOICES: StyleVoices = STYLE_VOICES['eurobeat']!;
 
+/** スタイルの既定音色（UI の「スタイル既定（○○）」表示用） */
+export function defaultVoicesFor(styleId: string): StyleVoices {
+  return STYLE_VOICES[styleId] ?? DEFAULT_VOICES;
+}
+
+/** 上書きから有効な音色（内蔵 1〜15）だけ拾う。undefined でスタイル既定を潰さないため */
+function pickVoices(override?: VoiceOverride): Partial<StyleVoices> {
+  const out: Partial<StyleVoices> = {};
+  for (const part of ['lead', 'backing', 'bass'] as const) {
+    const v = override?.[part];
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 15) out[part] = v;
+  }
+  return out;
+}
+
 const midiFreq = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
 
 const DRUM_BITS: Record<string, number> = { kick: 0x10, snare: 0x08, hat: 0x01 };
@@ -61,8 +76,9 @@ const VIBRATO_DEPTH_CENTS = 10;
 const VIBRATO_HZ = 5.5;
 const VIBRATO_DELAY_RATIO = 0.3; // 音の頭はまっすぐ、途中から揺らす（歌と同じ）
 
-export function arrangePiece(piece: Piece, styleId: string): ArrangedBgm {
-  const voices = STYLE_VOICES[styleId] ?? DEFAULT_VOICES;
+export function arrangePiece(piece: Piece, styleId: string, override?: VoiceOverride): ArrangedBgm {
+  // 音色だけ曲単位で差し替えられる（刻み・ドラムはスタイルのまま）。エコーはリードに追従
+  const voices = { ...(STYLE_VOICES[styleId] ?? DEFAULT_VOICES), ...pickVoices(override) };
   const spb = 60 / piece.bpm;
   const duration = piece.beats * spb;
   const echoDelay = spb / 2; // 8 分遅れ

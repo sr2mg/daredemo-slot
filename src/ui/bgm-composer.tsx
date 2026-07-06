@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { compose, defaultChoiceFor, validatePiece } from '../core/music/compose.js';
-import type { ComposeOptions, Piece } from '../core/music/compose.js';
+import type { ComposeOptions, Piece, VoiceOverride } from '../core/music/compose.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
 import {
   DEFAULT_ASSIGN,
@@ -13,7 +13,8 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
-import { arrangePiece } from './opll-arrange.js';
+import { arrangePiece, defaultVoicesFor } from './opll-arrange.js';
+import { OPLL_VOICES } from './opll-core.js';
 import type { SfxPlayer } from './sfx-player.js';
 
 /**
@@ -33,11 +34,24 @@ const newSeed = (): number => (Math.random() * 0xffff_ffff) >>> 0;
 
 const newSongId = (): string => `s${Date.now().toString(36)}${newSeed().toString(36)}`;
 
+/** 音色を上書きできるパート（リズムは OPLL リズムモード固定、エコーはリード追従） */
+const VOICE_PARTS: readonly { part: keyof VoiceOverride; label: string }[] = [
+  { part: 'lead', label: 'リード' },
+  { part: 'backing', label: 'バッキング' },
+  { part: 'bass', label: 'ベース' },
+];
+
+const voiceLabel = (id: number): string =>
+  OPLL_VOICES.find((v) => v.id === id)?.label.split('（')[0] ?? String(id);
+
 /** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
 function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
-  return `${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const base = `${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
+  if (overridden.length === 0) return base;
+  return `${base} / ${overridden.map(({ part, label }) => `${label}=${voiceLabel(options.voices![part]!)}`).join('・')}`;
 }
 
 export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
@@ -46,6 +60,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [styleId, setStyleId] = useState('eurobeat');
   const [keyRoot, setKeyRoot] = useState(0);
   const [bpm, setBpm] = useState(170);
+  /** パート別音色の上書き。未指定パートはスタイル既定（選ばない限り保存データにも入らない） */
+  const [voices, setVoices] = useState<VoiceOverride>({});
   const [choice, setChoice] = useState<number[]>(() => defaultChoiceFor(PROGRESSIONS[0]!, 4));
   const [seed, setSeed] = useState(newSeed);
   const [loop, setLoop] = useState(true);
@@ -103,7 +119,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       setLastOpts(opts);
       setPlaying(false);
       if (!player.enabled) return;
-      const def = arrangePiece(p, opts.styleId);
+      const def = arrangePiece(p, opts.styleId, opts.voices);
       setProgress(0);
       const result = await player.playComposedBgm(JSON.stringify(opts), def, 0, {
         loop,
@@ -118,6 +134,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   };
 
   const composeAndPlay = (nextSeed: number) => {
+    // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
+    const picked = Object.fromEntries(
+      VOICE_PARTS.filter(({ part }) => voices[part] !== undefined).map(({ part }) => [part, voices[part]]),
+    ) as VoiceOverride;
     void playOptions({
       progressionId: prog.id,
       styleId,
@@ -126,6 +146,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       bars,
       seed: nextSeed,
       choice: [...choice],
+      ...(Object.keys(picked).length > 0 ? { voices: picked } : {}),
     });
   };
 
@@ -164,7 +185,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     if (song) {
       try {
         const p = compose(song.options);
-        void player.ensureComposedBgm(JSON.stringify(song.options), arrangePiece(p, song.options.styleId));
+        void player.ensureComposedBgm(
+          JSON.stringify(song.options),
+          arrangePiece(p, song.options.styleId, song.options.voices),
+        );
       } catch {
         // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
       }
@@ -234,6 +258,35 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               </option>
             ))}
           </select>
+        </div>
+
+        {/* パート別音色。OPLL はチャンネルごとに内蔵 15 音色を自由に選べる（刻み・ドラムはスタイルのまま） */}
+        <div className="panel-controls">
+          {VOICE_PARTS.map(({ part, label }) => (
+            <select
+              key={part}
+              value={voices[part] ?? 0}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setVoices((prev) => {
+                  const next = { ...prev };
+                  if (v === 0) delete next[part];
+                  else next[part] = v;
+                  return next;
+                });
+              }}
+              data-testid={`st-voice-${part}`}
+            >
+              <option value={0}>
+                {label}: スタイル既定（{voiceLabel(defaultVoicesFor(styleId)[part])}）
+              </option>
+              {OPLL_VOICES.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {label}: {v.label}
+                </option>
+              ))}
+            </select>
+          ))}
         </div>
 
         <div className="panel-controls">
@@ -384,9 +437,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         </div>
         <p className="panel-note">
           再生は OPLL（YM2413）音源。アクセント・チャンネルエコー・ビブラートも当時のレジスタ操作
-          だけで掛けています。🔊 は BGM 全体の音量。デフォルト BGM も同じ作曲エンジンの
-          プリセット曲（固定シード）で、BB/RB への割り当てはボーナス開始のファンファーレ後に流れます。
-          コードは小節ごとの選択制（同じ機能の代理和音）なので、どれを選んでも破綻しません。
+          だけで掛けています。音色はパートごとに OPLL 内蔵 15 音色から選べます（未指定はスタイル既定。
+          エコーはリードに追従、ドラムはリズムモード固定）。🔊 は BGM 全体の音量。デフォルト BGM も
+          同じ作曲エンジンのプリセット曲（固定シード）で、BB/RB への割り当てはボーナス開始の
+          ファンファーレ後に流れます。コードは小節ごとの選択制（同じ機能の代理和音）なので、
+          どれを選んでも破綻しません。
         </p>
       </div>
     </details>
