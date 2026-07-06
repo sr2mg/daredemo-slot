@@ -1,0 +1,22 @@
+# PR と master push で型チェック + 高速テスト層を回す。
+# slow 層（実測系・レンダリング系。npm run test:all）は数分かかるため CI では回さず、
+# 出玉調整や音源まわりを触った PR でローカル実行する運用（README の開発節を参照）。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
