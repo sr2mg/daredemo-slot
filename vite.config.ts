@@ -10,6 +10,7 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  base: '/daredemo_slot/',
   server: {
     port: Number(process.env['PORT']) || 5173,
     // モバイル実機確認用: ngrok 等のトンネル越しアクセスを許可（それ以外のホストは既定どおり拒否）
