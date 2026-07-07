@@ -4,6 +4,7 @@ import { simulate } from '../core/sim.js';
 import type { MachineDef } from '../core/types.js';
 import { checkLayout, checkSpacing, validateMachine } from '../core/validate.js';
 import { FormEditor } from './form-editor.js';
+import { oneOf, usePersistentState } from './persist.js';
 import { buildShareUrl, downloadMachine, readMachineFile } from './share.js';
 import { Wizard } from './wizard.js';
 
@@ -153,7 +154,12 @@ export function EditorPanel({
   defaultTier?: EditorTier;
 }) {
   const [draft, setDraft] = useState<MachineDef>(() => structuredClone(machine));
-  const [tier, setTier] = useState<EditorTier>(defaultTier);
+  // ティア選択は永続化（下書き draft はサイズと壊れた JSON の復元リスクがあるので対象外）
+  const [tier, setTier] = usePersistentState<EditorTier>(
+    'daredemo.editorTier.v1',
+    defaultTier,
+    oneOf('easy', 'normal', 'advanced', 'json'),
+  );
   const [text, setText] = useState('');
   const [result, setResult] = useState<ValidationView | null>(null);
   const [busy, setBusy] = useState(false);
