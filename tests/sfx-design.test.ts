@@ -140,6 +140,18 @@ describe('効果音レシピ', () => {
     expect(t[1]!.t).toBeCloseTo(t[0]!.t + t[0]!.dur, 9); // 隙間なし = レガート
   });
 
+  it('テレレレ始動音は主和音の速い分散上行で、末尾だけ長い（テロレロンの音形）', () => {
+    const t = tones(design('startArp'));
+    expect(t).toHaveLength(4);
+    expect(t.map((e) => e.midi - 72)).toEqual([0, 4, 7, 12]); // 全部コードトーン（ド・ミ・ソ・ド）
+    for (let i = 1; i < t.length; i++) {
+      expect(t[i]!.midi).toBeGreaterThan(t[i - 1]!.midi); // 上行
+      expect(t[i]!.t - t[i - 1]!.t).toBeLessThan(0.06); // 数十ms間隔の「テレレレ」
+    }
+    expect(Math.max(...t.map((e) => e.dur))).toBe(t[t.length - 1]!.dur); // 末尾が最長 = 着地
+    expect(sfxDuration(buildSfxEvents(design('startArp')))).toBeLessThan(0.25); // 毎ゲーム鳴る音は短く
+  });
+
   it('ベット→レバー連結は投入3連のあと始動ベンドがオクターブ上のドに着地する', () => {
     const t = tones(design('startChain'));
     expect(t).toHaveLength(5);

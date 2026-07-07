@@ -49,13 +49,13 @@ export const ASSIGNABLE_SFX: readonly { name: SfxName; label: string }[] = [
  * 既定効果音のプリセットデザイン。操作音は C メジャーのコードトーンだけで
  * 設計してあり、どのタイミングで BGM に重なっても濁らない（調の統一）。
  * ベット = ド・ミ・ソの 3 連上行（MAX BET 3 枚の可聴化）、
- * レバー = ソ→ド（完全4度上行 = 始動の記号）。
- * 旧・大花火風ハモリ（beep2/beepChain）はレシピとしてデザイナに残っている。
+ * レバー = テレレレ（主和音の速い分散上行。4号機始動音の様式調査に基づく）。
+ * 旧・始動ベンド（leverStart）や大花火風ハモリ（beep2/beepChain）はレシピとして残っている。
  */
 export const PRESET_SFX: Record<SfxName, SfxDesign> = {
   bet: { recipeId: 'coinIn', rootMidi: 72, speed: 1, voice: 10 }, // C5・E5・G5（既定は無音割り当て）
-  lever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10, level: 0.55 }, // G5 → C6・控えめ
-  betLever: { recipeId: 'leverStart', rootMidi: 79, speed: 1, voice: 10, level: 0.55 }, // MAX BET 前提 = レバー音のみ
+  lever: { recipeId: 'startArp', rootMidi: 72, speed: 1, voice: 12, level: 0.6 }, // C5-E5-G5-C6 テレレレ
+  betLever: { recipeId: 'startArp', rootMidi: 72, speed: 1, voice: 12, level: 0.6 }, // MAX BET 前提 = レバー音のみ
   reelStop: { recipeId: 'thud', rootMidi: 60, speed: 1, voice: 13 }, // バスドラ + C4 クリック
   replay: { recipeId: 'confirm', rootMidi: 81, speed: 1, voice: 4 }, // A5 → D6（4度上行）
   payout: { recipeId: 'coins', rootMidi: 96, speed: 1, voice: 12 }, // C7/G6 交互連打
