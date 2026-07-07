@@ -147,7 +147,7 @@ export class Subboard {
         this.settleBattle(event, engine, notes);
         break;
       case 'sbzone':
-        this.settleSbZone(engine, notes);
+        this.settleSbZone(event, engine, notes);
         break;
     }
     return { view: this.snapshot(), sfx, notes };
@@ -347,8 +347,13 @@ export class Subboard {
 
   // ===== sbzone: SB 放出ゾーンの祭り =====
 
-  private settleSbZone(engine: EngineState, notes: string[]): void {
-    const active = !engine.lid && engine.queue.some((id) => this.bonusKind(id) === 'sb');
+  private settleSbZone(event: GameEvent, engine: EngineState, notes: string[]): void {
+    // 「このゲームで SB が放出された」も祭りに含める（最後の 1 個を放出したゲームで
+    // キューが空になっていても、そのゲーム自体はゾーンの一部）
+    const sbNow =
+      (event.bonusStarted !== null && this.bonusKind(event.bonusStarted) === 'sb') ||
+      event.wins.some((id) => this.bonusKind(id) === 'sb');
+    const active = !engine.lid && (engine.queue.some((id) => this.bonusKind(id) === 'sb') || sbNow);
     this.zone = active ? { label: '💰 SB 放出ゾーン', level: 3, rainbow: true } : null;
     this.lamp = active;
     if (active && !this.sbZoneActive) this.setCutin('💰 放出ゾーン突入！！');

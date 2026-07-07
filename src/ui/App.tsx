@@ -599,6 +599,30 @@ export function App() {
     pushLog('🎉 AT 突入！（教材モード・強制）');
   }, [playSfx, pushLog]);
 
+  /**
+   * 強制対決（教材モード）: 蓋の解除カウンタを残り 4G に書き換え、
+   * 次ゲームから対決演出（残り 3G で開始）→ 高確率（赤）→ 放出勝利の流れを通しで見せる
+   */
+  const forceBattle = useCallback(() => {
+    if (phaseRef.current !== 'ready') return;
+    const engine = engineRef.current;
+    const kinds = new Map(machineRef.current.bonuses.map((b) => [b.id, b.kind]));
+    if (!engine.lid || !engine.queue.some((id) => kinds.get(id) !== 'sb')) return;
+    setEngine({ ...engine, lidReleaseIn: 4 });
+    pushLog('⚔ 放出を残り 4G に短縮（教材モード・強制）');
+  }, [pushLog]);
+
+  /** 強制放出ゾーン（教材モード）: 蓋を強制開放して SB 放出ゾーンの祭りを見せる */
+  const forceSbZone = useCallback(() => {
+    if (phaseRef.current !== 'ready') return;
+    const engine = engineRef.current;
+    const kinds = new Map(machineRef.current.bonuses.map((b) => [b.id, b.kind]));
+    if (!engine.lid || !engine.queue.some((id) => kinds.get(id) === 'sb')) return;
+    setEngine({ ...engine, lid: false, lidReleaseIn: null });
+    playSfx('siren');
+    pushLog('💰 蓋を強制開放（教材モード）');
+  }, [playSfx, pushLog]);
+
   // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）。
   // BB/RB に割り当て済みの自作 BGM も先に OPLL レンダリングしておく
   useEffect(() => {
@@ -966,6 +990,30 @@ export function App() {
                 title="AT を抽選を経ずに強制作動させる（サブ基板だけの操作。メインの抽選・出目には無関係）"
               >
                 🎉 AT 突入（強制）
+              </button>
+            )}
+            {subView.kind === 'battle' && (
+              <button
+                className="form-mini-btn"
+                onClick={forceBattle}
+                disabled={phase !== 'ready' || !engine.lid || !pendingBonus}
+                data-testid="force-battle"
+                title="蓋の解除を残り 4G に書き換え、対決 → 高確率（赤）→ 放出勝利の流れを見せる。内部にストックが必要（強制フラグで成立させてから）"
+              >
+                ⚔ 対決発生（強制）
+              </button>
+            )}
+            {subView.kind === 'sbzone' && (
+              <button
+                className="form-mini-btn"
+                onClick={forceSbZone}
+                disabled={
+                  phase !== 'ready' || !engine.lid || !engine.queue.some((id) => bonusKinds.get(id) === 'sb')
+                }
+                data-testid="force-sbzone"
+                title="蓋を強制開放して SB 放出ゾーンへ。SB のストックが必要（強制フラグで成立させてから）"
+              >
+                💰 放出ゾーン（強制）
               </button>
             )}
           </div>

@@ -232,6 +232,13 @@ describe('sbzone: SB 放出ゾーン（サラ金風）', () => {
     // ゾーン継続中は突入カットインを繰り返さない
     const stay = sub.onSettle(eventWith({}), inZone, null);
     expect(stay.view.cutin).toBeNull();
+    // 最後の 1 個を放出したゲーム（キューは空でも SB が揃った）はまだゾーンの一部
+    const last = sub.onSettle(
+      eventWith({ wins: ['sb_kin'], bonusStarted: 'sb_kin', payout: 15 }),
+      { ...base, queue: [], lid: false },
+      null,
+    );
+    expect(last.view.zone?.rainbow).toBe(true);
     const exit = sub.onSettle(eventWith({}), { ...base, queue: [], lid: false }, null);
     expect(exit.view.zone).toBeNull();
     expect(exit.view.lamp).toBe(false);
