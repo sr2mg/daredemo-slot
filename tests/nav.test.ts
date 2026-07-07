@@ -61,6 +61,17 @@ describe('NavLayer（サブ基板の AT 状態機械）', () => {
     expect(restored.atActive).toBe(true);
     expect(restored.atRemainingGames).toBe(nav.atRemainingGames);
   });
+
+  it('forceAt（教材モード）: 抽選を経ずに AT が作動し、ナビも出る', () => {
+    const nav = new NavLayer(atBeast, 1);
+    expect(nav.forceAt()).toBe(true);
+    expect(nav.atActive).toBe(true);
+    expect(nav.atRemainingGames).toBe(30); // management: set の gamesPerSet
+    expect(nav.navFor(['bell_C'])?.correctFirst).toBe(1);
+    // 作動中の再強制と、nav 未定義機種では false
+    expect(nav.forceAt()).toBe(false);
+    expect(new NavLayer(sampleAType, 1).forceAt()).toBe(false);
+  });
 });
 
 describe('validateMachine（機種エディタの構造検証）', () => {

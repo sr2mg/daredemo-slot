@@ -122,6 +122,15 @@ export class Subboard {
     return { view: this.snapshot(), sfx: [], notes: [] };
   }
 
+  /** 教材モードの強制 AT 突入をサブ基板にも見せる（RUSH ステージ + 突入カットイン） */
+  onForcedAt(): SubboardFx {
+    if (this.kind === 'at') {
+      this.atRush = true;
+      this.setCutin('🦁 BEAST RUSH 突入！！');
+    }
+    return { view: this.snapshot(), sfx: [], notes: [] };
+  }
+
   /** 全リール停止後。GameEvent と更新後のエンジン状態から演出を確定させる */
   onSettle(event: GameEvent, engine: EngineState, nav: NavInfo | null): SubboardFx {
     this.cutin = null; // レバー時のカットインは全停止で役目を終える

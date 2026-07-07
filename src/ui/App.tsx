@@ -588,6 +588,17 @@ export function App() {
     [settleSession, pushLog],
   );
 
+  /** 強制 AT 突入（教材モード）: NavLayer を抽選を経ずに作動させる。メインの抽選には無関係 */
+  const forceAt = useCallback(() => {
+    if (phaseRef.current !== 'ready') return;
+    const nav = navRef.current;
+    if (!nav || !nav.forceAt()) return;
+    setAtRemaining(nav.atRemainingGames);
+    setSubView(subRef.current!.onForcedAt().view);
+    playSfx('rush');
+    pushLog('🎉 AT 突入！（教材モード・強制）');
+  }, [playSfx, pushLog]);
+
   // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）。
   // BB/RB に割り当て済みの自作 BGM も先に OPLL レンダリングしておく
   useEffect(() => {
@@ -946,6 +957,17 @@ export function App() {
             >
               ⚡ 揃える（目押し省略）
             </button>
+            {machine.nav && (
+              <button
+                className="form-mini-btn"
+                onClick={forceAt}
+                disabled={phase !== 'ready' || atRemaining !== null}
+                data-testid="force-at"
+                title="AT を抽選を経ずに強制作動させる（サブ基板だけの操作。メインの抽選・出目には無関係）"
+              >
+                🎉 AT 突入（強制）
+              </button>
+            )}
           </div>
         )}
         <GuidePanel key={`guide-${machine.name}`} machine={machine} />
