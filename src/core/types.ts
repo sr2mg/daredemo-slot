@@ -175,8 +175,9 @@ export interface MachineDef {
   /** [リール][コマ] の図柄。全リール同じコマ数 */
   strips: readonly (readonly SymbolId[])[];
   /**
-   * 有効ライン。各ラインはリールごとの行番号（0=上段, 1=中段, 2=下段）。
+   * 有効ライン。各ラインはリールごとの行番号（0=下段, 1=中段, 2=上段。画面の下から数える）。
    * 停止位置 s のリールは行 r に strip[(s + r) % frames] を表示する。
+   * 行番号が大きい = コマ番号が先 = 回転で後から来るコマ = 実機どおり画面の上に出る。
    */
   lines: readonly (readonly number[])[];
   roles: readonly RoleDef[];

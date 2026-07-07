@@ -24,7 +24,7 @@ export interface LayoutViolation {
   kind: 'kick' | 'replayMiss';
   /** 検査時の成立フラグ（空 = ハズレ） */
   flags: readonly RoleId[];
-  /** 各リールの停止位置（上段コマ番号） */
+  /** 各リールの停止位置（基準段 = 画面の下段のコマ番号） */
   stops: readonly number[];
   /** kick のとき: 勝手に入賞してしまった役 */
   wonRole?: RoleId;
@@ -213,7 +213,7 @@ export function validateMachine(def: MachineDef): { errors: string[]; warnings: 
   for (const [li, line] of (def.lines ?? []).entries()) {
     if (line.length !== (def.strips?.length ?? 3)) err(`有効ライン${li} の長さがリール数と一致しません`);
     if (line.some((row) => !Number.isInteger(row) || row < 0 || row > 2)) {
-      err(`有効ライン${li} の行番号が範囲外です（0=上段, 1=中段, 2=下段）`);
+      err(`有効ライン${li} の行番号が範囲外です（0=下段, 1=中段, 2=上段）`);
     }
   }
 
