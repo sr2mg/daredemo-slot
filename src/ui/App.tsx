@@ -738,7 +738,7 @@ export function App() {
             <span
               className="fourth-reel"
               data-testid="fourth-reel"
-              title="第四リール（演出専用。メインの抽選・制御には無関係）"
+              title="第四リール（演出専用）: 図柄は成立役に正直 / 点滅はチャンス / 成立役との矛盾はボーナス確定 / ボーナス図柄停止で完全告知"
             >
               {subView.fourth.symbol === null ? (
                 <span className="fourth-roll" aria-hidden>
@@ -758,7 +758,7 @@ export function App() {
                   const v = SYMBOL_VIEW[subView.fourth.symbol] ?? { text: subView.fourth.symbol, className: '' };
                   const img = SYMBOL_IMAGES[subView.fourth.symbol];
                   return (
-                    <span className={`fourth-cell ${v.className}`}>
+                    <span className={`fourth-cell ${v.className} ${subView.fourth.flash ? 'fourth-flash' : ''}`}>
                       {img ? <img className="cell-img" src={img} alt={v.text} /> : v.text}
                     </span>
                   );

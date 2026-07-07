@@ -28,8 +28,8 @@ export function subboardKind(machine: MachineDef): SubboardKind {
 
 export interface SubboardView {
   kind: SubboardKind;
-  /** 第四リール（atype のみ搭載）。symbol null = 回転中 */
-  fourth: { symbol: string | null } | null;
+  /** 第四リール（atype のみ搭載）。symbol null = 回転中、flash = 点滅（チャンス・告知） */
+  fourth: { symbol: string | null; flash: boolean } | null;
   /** ステージ表示（at のみ）。滞在モードの示唆 */
   stage: { id: string; label: string } | null;
   /** ゾーン表示。level 0〜3 = 青→黄→緑→赤（SHAKE の期待度色）、rainbow = 祭り */
@@ -78,6 +78,10 @@ export class Subboard {
   private cutinSeq = 0;
 
   private fourthSymbol: string | null = 'blank';
+  private fourthFlash = false;
+  /** atype の告知管理。notice = 潜伏中（残り announceIn G で告知）、announced = 告知済み */
+  private atypeNotice: { announceIn: number } | null = null;
+  private atypeAnnounced = false;
   private lamp = false;
   private stageIndex = 0;
   private atRush = false;
@@ -98,7 +102,7 @@ export class Subboard {
   snapshot(): SubboardView {
     return {
       kind: this.kind,
-      fourth: this.kind === 'atype' ? { symbol: this.fourthSymbol } : null,
+      fourth: this.kind === 'atype' ? { symbol: this.fourthSymbol, flash: this.fourthFlash } : null,
       stage: this.kind === 'at' ? (this.atRush ? AT_RUSH_STAGE : AT_STAGES[this.stageIndex]!) : null,
       zone: this.zone,
       battle: this.battle === null ? null : { label: BATTLE_LABEL },
@@ -110,7 +114,10 @@ export class Subboard {
   /** レバー ON。第四リールの始動と、成立フラグを受けたカットイン抽選 */
   onLever(flags: readonly RoleId[]): SubboardFx {
     this.cutin = null;
-    if (this.kind === 'atype') this.fourthSymbol = null;
+    if (this.kind === 'atype') {
+      this.fourthSymbol = null;
+      this.fourthFlash = false;
+    }
     if (this.kind === 'at') this.rollAtCutin(flags);
     return { view: this.snapshot(), sfx: [], notes: [] };
   }
@@ -140,22 +147,81 @@ export class Subboard {
   // ===== atype: 完全告知 + 第四リール =====
 
   /**
-   * 第四リールは演出専用の翻訳装置。ボーナスが内部にいる間はボーナス図柄で止まり続け
-   * （完全告知なのでガセなし）、通常時は成立役の対応図柄で止まる。
+   * 第四リールの文法（読み解くゲーム性）:
+   * - 図柄は嘘をつかない: 通常時は必ず成立役の対応図柄（ハズレはブランク）で止まる
+   * - 点滅 = チャンス: レア役やボーナス潜伏で点滅しやすいが、ガセもある
+   * - 矛盾 = 確定: 成立役と違う図柄が止まったらボーナス潜伏が確定（通常時は絶対に出ない）
+   * - ボーナス図柄（7/BAR）= 告知: 成立ゲームで告知タイミングを抽選し（即〜4G 潜伏）、
+   *   告知でキュイン + ランプ。潜伏中に矛盾や点滅から察知して先に揃えるのは自由（実機の楽しみ方）
    */
   private settleAtype(event: GameEvent, engine: EngineState, sfx: SfxName[], notes: string[]): void {
     const pending = engine.queue.find((id) => this.bonusKind(id) !== 'sb');
-    if (pending !== undefined) {
-      this.fourthSymbol = this.symbolOfRole(pending);
-      this.lamp = true;
-      if (event.queuedBonus !== null && this.bonusKind(event.queuedBonus) !== 'sb') {
+    if (pending === undefined) {
+      // 通常時。告知状態をリセットし、図柄は正直に。点滅だけが夢（ガセ）を見せる
+      this.atypeNotice = null;
+      this.atypeAnnounced = false;
+      this.lamp = false;
+      const honest = this.symbolForFlags(event.flags);
+      const rare = this.hasRareSmall(event.flags);
+      this.fourthSymbol = honest;
+      this.fourthFlash = this.chance(rare ? 0.25 : honest === 'blank' ? 1 / 64 : 1 / 48);
+      return;
+    }
+
+    // 成立ゲーム: 告知タイミング抽選（即 40% / 1G 25% / 2G 20% / 3G 10% / 4G 5%）
+    if (event.queuedBonus !== null && this.bonusKind(event.queuedBonus) !== 'sb') {
+      const roll = this.rng.draw16() % 100;
+      const delay = roll < 40 ? 0 : roll < 65 ? 1 : roll < 85 ? 2 : roll < 95 ? 3 : 4;
+      this.atypeNotice = { announceIn: delay };
+      this.atypeAnnounced = false;
+    }
+    // 成立ゲームを観測できなかった場合（機種切替直後など）は即告知にフォールバック
+    if (this.atypeNotice === null) this.atypeNotice = { announceIn: 0 };
+
+    if (!this.atypeAnnounced) {
+      if (this.atypeNotice.announceIn <= 0) {
+        this.atypeAnnounced = true;
         sfx.push('kyuin');
         notes.push('⚡ 完全告知！');
+      } else {
+        this.atypeNotice.announceIn -= 1;
       }
+    }
+
+    if (this.atypeAnnounced) {
+      // 告知済み: 揃えるまでボーナス図柄が点滅し続ける
+      this.fourthSymbol = this.symbolOfRole(pending);
+      this.fourthFlash = true;
+      this.lamp = true;
     } else {
-      this.fourthSymbol = this.symbolForFlags(event.flags);
+      // 潜伏中: 正直 50% / 点滅チャンス 30% / 矛盾（確定パターン）20%。ランプはまだ点けない
+      const honest = this.symbolForFlags(event.flags);
+      const roll = this.rng.draw16() % 100;
+      this.fourthSymbol = roll < 80 ? honest : this.contradictionOf(honest);
+      this.fourthFlash = roll >= 50 && roll < 80;
       this.lamp = false;
     }
+  }
+
+  /** 成立フラグにレア役（目押し必須の小役）が含まれるか */
+  private hasRareSmall(flags: readonly RoleId[]): boolean {
+    return flags.some((id) => {
+      const role = this.machine.roles.find((r) => r.id === id);
+      return role !== undefined && role.kind === 'small' && role.pullIn !== 'guaranteed';
+    });
+  }
+
+  /** 矛盾図柄: 成立役対応と違う小役/リプレイ図柄（ボーナス図柄は告知専用なので使わない） */
+  private contradictionOf(honest: string): string {
+    const candidates = [
+      ...new Set(
+        this.machine.roles
+          .filter((r) => r.kind === 'small' || r.kind === 'replay')
+          .map((r) => this.symbolOfRole(r.id)),
+      ),
+    ].filter((s) => s !== honest && s !== 'blank');
+    if (candidates.length === 0) return honest;
+    return candidates[this.rng.draw16() % candidates.length]!;
   }
 
   /** 成立フラグの対応図柄（レア役 > 通常小役 > リプレイ > ブランク） */
