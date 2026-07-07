@@ -35,6 +35,25 @@ body {
   cursor: pointer;
 }
 
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #3a3a55;
+  border-radius: 10px;
+  background: #1e1e2c;
+  color: #9fa8da;
+  font-size: clamp(13px, 2vmin, 16px);
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.repo-link:hover {
+  color: #ffd54f;
+  border-color: #5a5a78;
+}
+
 .machine-select {
   font-family: inherit;
   font-size: clamp(16px, 2.6vmin, 22px);

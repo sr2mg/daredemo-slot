@@ -12,6 +12,10 @@ WebUI で機種仕様（役・リール配列・RT・ストック・ナビ…）
 
 ## 遊ぶ
 
+ブラウザで遊ぶ: [https://sr2mg.github.io/daredemo-slot/](https://sr2mg.github.io/daredemo-slot/)
+
+ローカルで起動する場合:
+
 ```sh
 npm install
 npm run dev   # http://localhost:5173

@@ -40,6 +40,7 @@ const VISIBLE_ROWS = 3;
 const BOUNCE_KOMA = 0.16;
 const BOUNCE_MS = 110;
 const INITIAL_CREDIT = 1000;
+const REPOSITORY_URL = 'https://github.com/sr2mg/daredemo-slot';
 
 const SYMBOL_VIEW: Record<string, { text: string; className: string }> = {
   seven_red: { text: '７', className: 'sym-seven' },
@@ -743,6 +744,9 @@ export function App() {
             ))}
           </select>
         )}
+        <a className="repo-link" href={REPOSITORY_URL} target="_blank" rel="noreferrer">
+          GitHub
+        </a>
       </div>
 
       <div className="status-row">
