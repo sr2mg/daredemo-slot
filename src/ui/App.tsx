@@ -375,8 +375,19 @@ export function App() {
     if (session.bet > creditRef.current) return; // クレジット不足
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
-    // ベット済み・再遊技は「ラ」だけ、未ベットなら「ミ→ラ」を実機のリズムで
-    playSfx(betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever');
+    // ハナビ式「遅れ」演出: ボーナス（SB 以外）かレア役（目押し必須の小役）の成立時、
+    // 始動音がたまに一拍遅れる。音を変えずタイミングだけで煽る当時の手法
+    // （演出のみで抽選・制御には無関係。Math.random は設定ランダム着席と同じホール側の乱数）
+    const chanceUp = session.flags.some((f) => {
+      const bonus = machineRef.current.bonuses.find((b) => b.id === f);
+      if (bonus) return bonus.kind !== 'sb';
+      const role = machineRef.current.roles.find((r) => r.id === f);
+      return role !== undefined && role.kind === 'small' && role.pullIn !== 'guaranteed';
+    });
+    // ベット済み・再遊技はレバー音のみ、未ベットなら投入込みの連結音
+    const startSfx: SfxName = betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever';
+    if (chanceUp && Math.random() < 0.25) window.setTimeout(() => playSfx(startSfx), 120);
+    else playSfx(startSfx);
     setBetDone(false);
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
