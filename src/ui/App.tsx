@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { playPerfect } from '../core/sim.js';
 import { NavLayer } from '../core/nav.js';
@@ -22,13 +23,19 @@ import { SoundTestPanel } from './sound-test.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
- * リール回転は一定速でフレームを進め、押下時点の上段コマ番号を pushPosition として
- * コアの GameSession に渡す（押下時刻→コマ番号の決定論的量子化。docs/design/03）。
+ * リールは連続位置（コマ単位の小数）で回し、押下時刻に「次に上段へ整列するコマ」へ
+ * 切り上げたものを pushPosition としてコアの GameSession に渡す
+ * （押下時刻→コマ番号の決定論的量子化。docs/design/03）。
  * 操作: Space = レバー / J・K・L = 左・中・右停止（ボタンクリックも可）
  */
 
-/** 約 80rpm 相当: 1 周 20 コマ ÷ 750ms ≒ 37.5ms/コマ */
-const FRAME_MS = 37.5;
+/** リール 1 周の時間。20 コマ ÷ 750ms ≒ 80rpm（規格上限相当） */
+const REV_MS = 750;
+/** 窓に見えるコマ数（上段・中段・下段） */
+const VISIBLE_ROWS = 3;
+/** 停止時のバウンド（行き過ぎて戻る量と時間。「ガチッ」の感触） */
+const BOUNCE_KOMA = 0.16;
+const BOUNCE_MS = 110;
 const INITIAL_CREDIT = 1000;
 
 const SYMBOL_VIEW: Record<string, { text: string; className: string }> = {
@@ -95,6 +102,113 @@ interface ReelView {
 
 const freshReels = (machine: MachineDef): ReelView[] =>
   machine.strips.map(() => ({ top: 0, stopped: true }));
+
+interface ReelColumnProps {
+  strip: readonly string[];
+  /** 停止時の上段コマ番号 */
+  top: number;
+  spinning: boolean;
+  /** 親と共有する連続コマ位置（押下位置の量子化・停止音のタイミングに使う） */
+  positions: MutableRefObject<number[]>;
+  index: number;
+}
+
+/**
+ * リール 1 本の見た目。全コマを縦 1 列に並べたストリップ（末尾に先頭 3 コマを複製）を
+ * transform で連続スクロールし、実機のリールのように回す。
+ * アニメーションは rAF で DOM に直接書き、React の再レンダリングを毎フレーム走らせない。
+ * - 回転は約 80rpm の等速
+ * - 停止は押下の続き位置から等速のまま滑り込み（滑り 0〜4 コマ + 整列で最大 5 コマ弱 ≒ 190ms。
+ *   実機の停止許容時間と同じオーダー）、微バウンドして着地
+ * - 初期化・機種切り替え・即入賞（回転を経ない停止）は即座に合わせる
+ */
+function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps) {
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const wasSpinningRef = useRef(false);
+  const frames = strip.length;
+
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const total = frames + VISIBLE_ROWS;
+    const setPos = (p: number) => {
+      positions.current[index] = p;
+    };
+    // 末尾の複製コマのおかげで、正規化すれば境界を跨いでも絵は連続する
+    const apply = (p: number) => {
+      const wrapped = ((p % frames) + frames) % frames;
+      el.style.transform = `translateY(${(-100 * wrapped) / total}%)`;
+    };
+    let raf = 0;
+
+    if (spinning) {
+      wasSpinningRef.current = true;
+      let last = performance.now();
+      const tick = (now: number) => {
+        const next = (positions.current[index]! + (now - last) * (frames / REV_MS)) % frames;
+        last = now;
+        setPos(next);
+        apply(next);
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }
+
+    // 停止。回転からの停止だけ滑り込み + バウンドの演出を挟む
+    const fromSpin = wasSpinningRef.current;
+    wasSpinningRef.current = false;
+    if (!fromSpin) {
+      setPos(top);
+      apply(top);
+      return;
+    }
+    const from = positions.current[index] ?? top;
+    const dist = (((top - from) % frames) + frames) % frames;
+    const slideMs = dist * (REV_MS / frames);
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = now - start;
+      if (t < slideMs) {
+        apply(from + dist * (t / slideMs)); // 等速のまま滑る（実機は減速せず止まる）
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const bt = t - slideMs;
+      if (bt < BOUNCE_MS) {
+        const k = bt / BOUNCE_MS;
+        apply(top + BOUNCE_KOMA * Math.sin(Math.PI * k) * (1 - k)); // 減衰 1 往復
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      setPos(top);
+      apply(top);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      // 途中で次のゲームが始まったら最終位置に確定させてから回す
+      cancelAnimationFrame(raf);
+      setPos(top);
+      apply(top);
+    };
+  }, [spinning, top, strip, frames, positions, index]);
+
+  return (
+    <div className={`reel ${spinning ? 'reel-spinning' : ''}`}>
+      <div className="reel-strip" ref={stripRef}>
+        {[...strip, ...strip.slice(0, VISIBLE_ROWS)].map((symbol, i) => {
+          const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
+          const img = SYMBOL_IMAGES[symbol];
+          return (
+            <div key={i} className={`cell ${view.className}`}>
+              {img ? <img className="cell-img" src={img} alt={view.text} /> : view.text}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function App() {
   const [customs, setCustoms] = useState<MachineDef[]>(loadCustoms);
@@ -164,17 +278,8 @@ export function App() {
   const noticeModeRef = useRef(noticeMode);
   noticeModeRef.current = noticeMode;
 
-  // リール回転: 一定速でフレームを進める
-  useEffect(() => {
-    if (phase !== 'spinning') return;
-    const frames = machine.frames;
-    const timer = setInterval(() => {
-      setReels((prev) =>
-        prev.map((reel) => (reel.stopped ? reel : { ...reel, top: (reel.top + 1) % frames })),
-      );
-    }, FRAME_MS);
-    return () => clearInterval(timer);
-  }, [phase, machine]);
+  /** リールの連続コマ位置（ReelColumn が毎フレーム更新。押下位置の量子化に使う） */
+  const reelPositionsRef = useRef<number[]>([0, 0, 0]);
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => [line, ...prev].slice(0, 10));
@@ -331,9 +436,14 @@ export function App() {
       const session = sessionRef.current;
       if (phaseRef.current !== 'spinning' || !session) return;
       if (reelsRef.current[reel]!.stopped) return;
-      const push = reelsRef.current[reel]!.top;
+      const frames = machineRef.current.frames;
+      const pos = reelPositionsRef.current[reel] ?? 0;
+      // 押下時刻の量子化: 次に上段へ整列するコマ = 押下位置（ここから前進 0〜4 コマに滑る）
+      const push = Math.ceil(pos) % frames;
       const stopEvent = session.stopReel(reel, push);
-      playSfx('reelStop');
+      // 停止音は見た目の停止（滑り込みの着地）に合わせる。最大 5 コマ弱 ≒ 190ms
+      const dist = (((stopEvent.stopPosition - pos) % frames) + frames) % frames;
+      window.setTimeout(() => playSfx('reelStop'), dist * (REV_MS / frames));
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
@@ -533,18 +643,14 @@ export function App() {
         )}
         <div className="reels">
           {machine.strips.map((strip, reel) => (
-            <div key={reel} className={`reel ${reels[reel]!.stopped ? '' : 'reel-spinning'}`}>
-              {[0, 1, 2].map((row) => {
-                const symbol = strip[(reels[reel]!.top + row) % machine.frames]!;
-                const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
-                const img = SYMBOL_IMAGES[symbol];
-                return (
-                  <div key={row} className={`cell ${view.className}`}>
-                    {img ? <img className="cell-img" src={img} alt={view.text} /> : view.text}
-                  </div>
-                );
-              })}
-            </div>
+            <ReelColumn
+              key={reel}
+              strip={strip}
+              top={reels[reel]!.top}
+              spinning={!reels[reel]!.stopped}
+              positions={reelPositionsRef}
+              index={reel}
+            />
           ))}
         </div>
 

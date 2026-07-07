@@ -87,11 +87,48 @@ body {
 }
 
 .reel {
+  --cell-h: clamp(64px, 14vmin, 120px);
+  position: relative;
   background: #f7f5ee;
   border-radius: 10px;
   overflow: hidden;
   width: clamp(108px, 22vmin, 190px);
+  /* 窓は 3 コマぶんに固定し、中の全コマストリップを transform でスクロールさせる。
+     +6px は上下ボーダー（border-box） */
+  height: calc(var(--cell-h) * 3 + 6px);
   border: 3px solid #555;
+}
+
+/* 窓ガラス側の描き込み: 段の区切り線（帯ではなく窓に固定）と、円筒の上下陰影 */
+.reel::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--cell-h);
+  height: var(--cell-h);
+  pointer-events: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.reel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    to bottom,
+    rgba(30, 24, 10, 0.22),
+    transparent 15%,
+    transparent 85%,
+    rgba(30, 24, 10, 0.22)
+  );
+}
+
+.reel-strip {
+  will-change: transform;
 }
 
 .reel-spinning .cell {
@@ -100,18 +137,14 @@ body {
 }
 
 .cell {
-  height: clamp(64px, 14vmin, 120px);
+  height: var(--cell-h);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: clamp(32px, 8vmin, 64px);
   font-weight: bold;
-  border-bottom: 1px solid #ddd;
   color: #333;
-}
-
-.cell:last-child {
-  border-bottom: none;
+  transition: filter 0.12s ease-out; /* 停止の滑り込み中にブラーが晴れていく */
 }
 
 /* 図柄（AI 生成 + 量子化パイプライン産、160x100 の横長・印刷シール調）。
