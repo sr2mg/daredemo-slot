@@ -19,6 +19,8 @@ import type { SfxName } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
 import { loadStored, oneOf, saveStored, usePersistentState } from './persist.js';
+import { Subboard } from './subboard.js';
+import type { SubboardView } from './subboard.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
 import { SoundTestPanel } from './sound-test.js';
 
@@ -259,6 +261,13 @@ export function App() {
   betDoneRef.current = betDone;
   const [navDisplay, setNavDisplay] = useState<NavDisplay | null>(null);
   const [atRemaining, setAtRemaining] = useState<number | null>(null);
+  /** サブ基板演出層（示唆・煽り）。NavLayer と同じく読み取り専用でメインに干渉しない */
+  const subRef = useRef<Subboard | null>(null);
+  if (subRef.current === null) subRef.current = new Subboard(machines[0]!, Date.now() >>> 0);
+  const [subView, setSubView] = useState<SubboardView>(() => subRef.current!.snapshot());
+  const [subFxOn, setSubFxOn] = usePersistentState('daredemo.subFx.v1', true, oneOf(true, false));
+  const subFxOnRef = useRef(subFxOn);
+  subFxOnRef.current = subFxOn;
   /** サブ基板モード（教材モードの覗き見用） */
   const [atMode, setAtMode] = useState<string | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
@@ -325,6 +334,8 @@ export function App() {
     const setting = choice === 'random' ? 1 + Math.floor(Math.random() * settings) : choice;
     sessionRef.current = null;
     navRef.current = next.nav ? new NavLayer(next, Date.now() >>> 0) : null;
+    subRef.current = new Subboard(next, Date.now() >>> 0);
+    setSubView(subRef.current.snapshot());
     setMachine(next);
     setEngine(initialState(next, setting));
     setCredit(INITIAL_CREDIT);
@@ -412,6 +423,8 @@ export function App() {
     setBetDone(false);
     // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
     setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
+    // サブ基板演出: 第四リール始動・カットイン抽選（読み取り専用）
+    setSubView(subRef.current!.onLever(session.flags).view);
     setCredit((c) => c - session.bet);
     setLastEvent(null);
     setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
@@ -431,6 +444,17 @@ export function App() {
       const navNotes = navRef.current?.onEvent(event) ?? [];
       setAtRemaining(navRef.current?.atRemainingGames ?? null);
       setAtMode(navRef.current?.atMode ?? null);
+      // サブ基板演出: 更新後のエンジン状態とナビ層の要約を読んで示唆を確定させる
+      const navInfo = navRef.current
+        ? {
+            atActive: navRef.current.atActive,
+            atMode: navRef.current.atMode,
+            atStarted: navNotes.some((n) => n.includes('AT 突入')),
+            atContinued: navNotes.some((n) => n.includes('AT 継続')),
+          }
+        : null;
+      const subFx = subRef.current!.onSettle(event, state, navInfo);
+      setSubView(subFx.view);
       const parts: string[] = [...navNotes];
       if (event.wins.length > 0) parts.push(event.wins.map((w) => ROLE_LABEL[w] ?? w).join(' / '));
       if (event.lidReleased) parts.push('🔓 放出開始！');
@@ -469,6 +493,13 @@ export function App() {
       }
       if (event.lidReleased) playSfx('siren');
       if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) playSfx('rush');
+      if (subFxOnRef.current) {
+        parts.push(...subFx.notes);
+        for (const name of subFx.sfx) {
+          if (name === 'kyuin' && noticeModeRef.current === 'flag') continue; // 告知モードの分と重複させない
+          playSfx(name);
+        }
+      }
       if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
       if (event.rtEntered) parts.push(`RT 突入`);
       if (event.rtExited) parts.push(`RT 終了`);
@@ -615,11 +646,14 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [pullLever, stopReel, pressBet]);
 
-  // 告知ランプ: SB 以外のボーナスがキューにあるとき、モードに応じて点灯
+  // 告知ランプ: SB 以外のボーナスがキューにあるとき、モードに応じて点灯。
+  // サブ基板演出（完全告知・放出ゾーン）の点灯要求は OR で重ねる
   const bonusKinds = new Map(machine.bonuses.map((b) => [b.id, b.kind]));
   const pendingBonus = engine.queue.some((id) => bonusKinds.get(id) !== 'sb');
   const lampOn =
-    noticeMode === 'flag' ? pendingBonus : noticeMode === 'release' ? pendingBonus && !engine.lid : false;
+    (noticeMode === 'flag' ? pendingBonus : noticeMode === 'release' ? pendingBonus && !engine.lid : false) ||
+    (subFxOn && subView.lamp);
+  const lampRainbow = subFxOn && subView.zone?.rainbow === true;
 
   const statusChips: string[] = [];
   if (engine.base.type === 'bonus') {
@@ -688,13 +722,72 @@ export function App() {
 
       <div className="cabinet">
         {flashKey > 0 && <div key={flashKey} className="bonus-flash" aria-hidden />}
+        {subFxOn && subView.cutin && (
+          <div key={subView.cutin.key} className="cutin" data-testid="cutin" aria-hidden>
+            {subView.cutin.text}
+          </div>
+        )}
         {PANEL_IMAGE && <img className="panel-art" src={PANEL_IMAGE} alt="" />}
         <div className="lamp-row">
-          <span className={`notice-lamp ${lampOn ? 'lamp-on' : ''}`} data-testid="notice-lamp" title="告知ランプ" />
+          <span
+            className={`notice-lamp ${lampOn ? 'lamp-on' : ''} ${lampRainbow ? 'lamp-rainbow' : ''}`}
+            data-testid="notice-lamp"
+            title="告知ランプ"
+          />
+          {subFxOn && subView.fourth && (
+            <span
+              className="fourth-reel"
+              data-testid="fourth-reel"
+              title="第四リール（演出専用。メインの抽選・制御には無関係）"
+            >
+              {subView.fourth.symbol === null ? (
+                <span className="fourth-roll" aria-hidden>
+                  {['seven_red', 'bell', 'replay', 'blank', 'seven_red', 'bell', 'replay', 'blank'].map(
+                    (s, i) => {
+                      const v = SYMBOL_VIEW[s]!;
+                      return (
+                        <span key={i} className={`fourth-cell ${v.className}`}>
+                          {v.text}
+                        </span>
+                      );
+                    },
+                  )}
+                </span>
+              ) : (
+                (() => {
+                  const v = SYMBOL_VIEW[subView.fourth.symbol] ?? { text: subView.fourth.symbol, className: '' };
+                  const img = SYMBOL_IMAGES[subView.fourth.symbol];
+                  return (
+                    <span className={`fourth-cell ${v.className}`}>
+                      {img ? <img className="cell-img" src={img} alt={v.text} /> : v.text}
+                    </span>
+                  );
+                })()
+              )}
+            </span>
+          )}
+          {subFxOn && subView.stage && (
+            <span className="stage-badge" data-testid="stage-badge">
+              {subView.stage.label}
+            </span>
+          )}
         </div>
+        {subFxOn && subView.zone && (
+          <div
+            className={`zone-banner zone-l${subView.zone.level} ${subView.zone.rainbow ? 'zone-rainbow' : ''}`}
+            data-testid="zone-banner"
+          >
+            {subView.zone.label}
+          </div>
+        )}
+        {subFxOn && subView.battle && (
+          <div className="battle-banner" data-testid="battle-banner">
+            {subView.battle.label}
+          </div>
+        )}
         {navDisplay && (
           <div className="nav-banner" data-testid="nav-banner">
-            ナビ: {['左', '中', '右'][navDisplay.correctFirst]}から押せ！
+            ナビ: 🦁 {['左', '中', '右'][navDisplay.correctFirst]}から狩れ！
           </div>
         )}
         <div className="reels">
@@ -792,6 +885,15 @@ export function App() {
             <option value="flag">完全告知（ボーナス成立で点灯）</option>
             <option value="release">放出告知（揃えられる状態で点灯）</option>
           </select>
+          <label className="debug-inline">
+            <input
+              type="checkbox"
+              checked={subFxOn}
+              onChange={(e) => setSubFxOn(e.target.checked)}
+              data-testid="subfx-toggle"
+            />
+            サブ基板演出（示唆・煽り）
+          </label>
           <label className="debug-inline">
             <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
             成立フラグを見る（ネタバレ・教材モード）

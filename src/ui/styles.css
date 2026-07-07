@@ -926,3 +926,189 @@ button:disabled {
 .credit-note a {
   color: #9fa8da;
 }
+
+/* ===== サブ基板演出（示唆・煽り） ===== */
+
+/* 第四リール: 演出専用のミニリール。回転中は縦ストリップをループさせる */
+.fourth-reel {
+  width: 36px;
+  height: 36px;
+  margin-left: 12px;
+  background: #f7f5ee;
+  border: 2px solid #3a3a55;
+  border-radius: 8px;
+  overflow: hidden;
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.fourth-cell {
+  width: 100%;
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.fourth-cell .cell-img {
+  width: 80%;
+  height: 80%;
+  object-fit: contain;
+}
+
+.fourth-roll {
+  display: flex;
+  flex-direction: column;
+  animation: fourth-roll 0.3s linear infinite;
+}
+
+/* 前半 4 コマ = 後半 4 コマの複製なので -50% でシームレスに一周する */
+@keyframes fourth-roll {
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+/* ステージ表示（AT 機の高確示唆） */
+.stage-badge {
+  margin-left: 12px;
+  align-self: center;
+  font-size: clamp(11px, 1.6vmin, 13px);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #101018;
+  border: 1px solid #3a3a55;
+  color: #bbb;
+}
+
+/* ゾーン表示。l0〜l3 = 青→黄→緑→赤（SHAKE の期待度色） */
+.zone-banner {
+  margin-bottom: 12px;
+  font-size: clamp(16px, 2.6vmin, 22px);
+  font-weight: bold;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+  border-radius: 10px;
+  padding: 6px;
+  color: #fff;
+}
+
+.zone-l0 {
+  background: #1565c0;
+}
+
+.zone-l1 {
+  background: #f9a825;
+  color: #17171f;
+}
+
+.zone-l2 {
+  background: #2e7d32;
+}
+
+.zone-l3 {
+  background: #b71c1c;
+  animation: zone-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes zone-pulse {
+  from {
+    box-shadow: 0 0 6px 2px rgba(255, 82, 82, 0.5);
+  }
+  to {
+    box-shadow: 0 0 22px 8px rgba(255, 82, 82, 0.9);
+  }
+}
+
+/* 放出ゾーンの祭り（虹色） */
+.zone-rainbow {
+  background: linear-gradient(90deg, #e53935, #fb8c00, #fdd835, #43a047, #1e88e5, #8e24aa);
+  background-size: 300% 100%;
+  animation: zone-rainbow 1.2s linear infinite;
+}
+
+@keyframes zone-rainbow {
+  to {
+    background-position: 300% 0;
+  }
+}
+
+.notice-lamp.lamp-on.lamp-rainbow {
+  animation: lamp-blink 0.6s ease-in-out infinite alternate, lamp-rainbow 1.2s linear infinite;
+}
+
+@keyframes lamp-rainbow {
+  0% {
+    background: #ef5350;
+  }
+  33% {
+    background: #ffd54f;
+  }
+  66% {
+    background: #42a5f5;
+  }
+  100% {
+    background: #ef5350;
+  }
+}
+
+/* 対決連続演出 */
+.battle-banner {
+  margin-bottom: 12px;
+  font-size: clamp(18px, 3.2vmin, 28px);
+  font-weight: bold;
+  color: #fff;
+  background: linear-gradient(90deg, #4a148c, #b71c1c);
+  border: 2px solid #ffd54f;
+  border-radius: 10px;
+  padding: 8px;
+  animation: battle-shake 0.35s ease-in-out infinite;
+}
+
+@keyframes battle-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+/* カットイン: 筐体中央に一瞬だけ差し込まれる */
+.cutin {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 34%;
+  z-index: 3;
+  pointer-events: none;
+  font-size: clamp(22px, 4.5vmin, 40px);
+  font-weight: bold;
+  color: #ffd54f;
+  text-shadow: 0 0 12px rgba(0, 0, 0, 0.9), 0 2px 4px rgba(0, 0, 0, 0.9);
+  animation: cutin 1.5s ease-out forwards;
+}
+
+@keyframes cutin {
+  0% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
