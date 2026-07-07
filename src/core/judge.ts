@@ -16,7 +16,7 @@ export function symbolAt(machine: MachineDef, reel: number, stop: number, row: n
 
 /**
  * 全リール停止後の入賞役を返す（docs/design/03-reel-control.md 有効ライン）。
- * stops はリール順の停止位置（上段基準）。
+ * stops はリール順の停止位置（基準段 = 画面の下段。行番号は下から上へ 0,1,2）。
  */
 export function winsAt(machine: MachineDef, stops: readonly number[]): RoleId[] {
   const result: RoleId[] = [];

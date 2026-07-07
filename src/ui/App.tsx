@@ -23,7 +23,7 @@ import { SoundTestPanel } from './sound-test.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
- * リールは連続位置（コマ単位の小数）で回し、押下時刻に「次に上段へ整列するコマ」へ
+ * リールは連続位置（コマ単位の小数）で回し、押下時刻に「次に基準段（下段）へ整列するコマ」へ
  * 切り上げたものを pushPosition としてコアの GameSession に渡す
  * （押下時刻→コマ番号の決定論的量子化。docs/design/03）。
  * 操作: Space = レバー / J・K・L = 左・中・右停止（ボタンクリックも可）
@@ -95,7 +95,7 @@ function loadCustoms(): MachineDef[] {
 type Phase = 'ready' | 'spinning';
 
 interface ReelView {
-  /** 上段のコマ番号 */
+  /** 基準コマ番号（コアの stopPosition = 画面の下段。行番号は下から上へ 0,1,2） */
   top: number;
   stopped: boolean;
 }
@@ -105,7 +105,7 @@ const freshReels = (machine: MachineDef): ReelView[] =>
 
 interface ReelColumnProps {
   strip: readonly string[];
-  /** 停止時の上段コマ番号 */
+  /** 停止時の基準コマ番号（コアの stopPosition = 画面の下段） */
   top: number;
   spinning: boolean;
   /** 親と共有する連続コマ位置（押下位置の量子化・停止音のタイミングに使う） */
@@ -118,8 +118,11 @@ interface ReelColumnProps {
  * transform で連続スクロールし、実機のリールのように回す。
  * アニメーションは rAF で DOM に直接書き、React の再レンダリングを毎フレーム走らせない。
  * - 回転は約 80rpm の等速
+ * - 実機準拠の下流れ: コマ番号が進む（滑る）方向のコマは画面の上から入ってくる。
+ *   そのためストリップはコマ番号の降順に積む（コアの行番号 r は画面の下から数える）。
+ *   これで「狙った図柄の 4 コマ上まで引き込む」という実機の目押しの向きと一致する
  * - 停止は押下の続き位置から等速のまま滑り込み（滑り 0〜4 コマ + 整列で最大 5 コマ弱 ≒ 190ms。
- *   実機の停止許容時間と同じオーダー）、微バウンドして着地
+ *   実機の停止許容時間と同じオーダー）、回転方向へ微バウンドして着地
  * - 初期化・機種切り替え・即入賞（回転を経ない停止）は即座に合わせる
  */
 function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps) {
@@ -134,10 +137,12 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
     const setPos = (p: number) => {
       positions.current[index] = p;
     };
-    // 末尾の複製コマのおかげで、正規化すれば境界を跨いでも絵は連続する
+    // 末尾の複製コマのおかげで、正規化すれば境界を跨いでも絵は連続する。
+    // ストリップは降順スタックなので、位置が進むほどオフセットが減り絵は下へ流れる
     const apply = (p: number) => {
       const wrapped = ((p % frames) + frames) % frames;
-      el.style.transform = `translateY(${(-100 * wrapped) / total}%)`;
+      const offset = total - VISIBLE_ROWS - wrapped;
+      el.style.transform = `translateY(${(-100 * offset) / total}%)`;
     };
     let raf = 0;
 
@@ -167,6 +172,12 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
     const dist = (((top - from) % frames) + frames) % frames;
     const slideMs = dist * (REV_MS / frames);
     const start = performance.now();
+    let settled = false;
+    const finish = () => {
+      settled = true;
+      setPos(top);
+      apply(top);
+    };
     const tick = (now: number) => {
       const t = now - start;
       if (t < slideMs) {
@@ -181,22 +192,26 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
         raf = requestAnimationFrame(tick);
         return;
       }
-      setPos(top);
-      apply(top);
+      finish();
     };
     raf = requestAnimationFrame(tick);
+    // タブが非表示だと rAF が止まり滑り込みが完了しない。タイマーで最終位置に確定させる
+    const fallback = window.setTimeout(() => {
+      if (!settled) finish();
+    }, slideMs + BOUNCE_MS + 100);
     return () => {
       // 途中で次のゲームが始まったら最終位置に確定させてから回す
       cancelAnimationFrame(raf);
-      setPos(top);
-      apply(top);
+      window.clearTimeout(fallback);
+      finish();
     };
   }, [spinning, top, strip, frames, positions, index]);
 
   return (
     <div className={`reel ${spinning ? 'reel-spinning' : ''}`}>
       <div className="reel-strip" ref={stripRef}>
-        {[...strip, ...strip.slice(0, VISIBLE_ROWS)].map((symbol, i) => {
+        {/* 降順スタック（下流れ用）。複製 3 コマ込みで反転する */}
+        {[...strip, ...strip.slice(0, VISIBLE_ROWS)].reverse().map((symbol, i) => {
           const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
           const img = SYMBOL_IMAGES[symbol];
           return (
@@ -438,7 +453,7 @@ export function App() {
       if (reelsRef.current[reel]!.stopped) return;
       const frames = machineRef.current.frames;
       const pos = reelPositionsRef.current[reel] ?? 0;
-      // 押下時刻の量子化: 次に上段へ整列するコマ = 押下位置（ここから前進 0〜4 コマに滑る）
+      // 押下時刻の量子化: 次に基準段（下段）へ整列するコマ = 押下位置（ここから前進 0〜4 コマに滑る）
       const push = Math.ceil(pos) % frames;
       const stopEvent = session.stopReel(reel, push);
       // 停止音は見た目の停止（滑り込みの着地）に合わせる。最大 5 コマ弱 ≒ 190ms
