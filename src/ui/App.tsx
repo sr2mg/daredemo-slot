@@ -443,11 +443,20 @@ export function App() {
       const stopEvent = session.stopReel(reel, push);
       // 停止音は見た目の停止（滑り込みの着地）に合わせる。最大 5 コマ弱 ≒ 190ms
       const dist = (((stopEvent.stopPosition - pos) % frames) + frames) % frames;
-      window.setTimeout(() => playSfx('reelStop'), dist * (REV_MS / frames));
+      const landMs = dist * (REV_MS / frames);
+      window.setTimeout(() => playSfx('reelStop'), landMs);
       setReels((prev) =>
         prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
       );
-      if (session.isComplete) settleSession(session);
+      if (session.isComplete) {
+        // 精算（払い出し音・WIN 表示・BGM イン）が見た目の停止より先に走らないよう、
+        // 第 3 停止の滑り込み + バウンドの着地を待つ。抽選・制御はすでに確定済みで、
+        // 遅らせるのは演出だけ（この間 phase は spinning のままなので次ゲームは始まらない）
+        window.setTimeout(() => {
+          // 待っている間に機種切り替え等でセッションが破棄されていたら精算しない
+          if (sessionRef.current === session) settleSession(session);
+        }, landMs + BOUNCE_MS);
+      }
     },
     [playSfx, settleSession],
   );
