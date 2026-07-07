@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addPrintTexture,
+  adjustSaturation,
   cropToContent,
+  degptImage,
+  labToRgb,
+  neutralizeCast,
   processSymbol,
   quantize,
   removeBackground,
   resizeTo,
+  rgbToLab,
   splitGrid,
   validateSymbol,
 } from '../src/tools/symbol-pipeline.js';
@@ -135,5 +141,76 @@ describe('図柄パイプライン', () => {
     const report = validateSymbol(resizeTo(raw, 64)); // 背景除去せずに検証
     expect(report.ok).toBe(false);
     expect(report.problems.some((p) => p.includes('背景'))).toBe(true);
+  });
+});
+
+describe('脱 GPT 後処理', () => {
+  /** クリーム色の「白縁」+ 赤の中身（GPT の黄被りを模した合成図柄） */
+  function creamSticker(): Rgba {
+    const img = synthetic(80, 50, [255, 249, 224], { x: 20, y: 12, w: 40, h: 26, color: [200, 40, 30] });
+    return img;
+  }
+
+  it('LAB 変換が往復する（sRGB → LAB → sRGB）', () => {
+    for (const [r, g, b] of [
+      [255, 255, 255],
+      [0, 0, 0],
+      [200, 40, 30],
+      [255, 249, 224],
+    ] as const) {
+      const [L, a, bb] = rgbToLab(r, g, b);
+      const [r2, g2, b2] = labToRgb(L, a, bb);
+      expect(Math.abs(r2 - r)).toBeLessThanOrEqual(1);
+      expect(Math.abs(g2 - g)).toBeLessThanOrEqual(1);
+      expect(Math.abs(b2 - b)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('WB 中和: クリーム色の白縁が中立白に寄り、黄方向の補正量が報告される', () => {
+    const { image, castB } = neutralizeCast(creamSticker());
+    expect(castB).toBeGreaterThan(3); // 黄被り（b* 正）を検出
+    const [, , bAfter] = rgbToLab(image.data[0]!, image.data[1]!, image.data[2]!);
+    expect(Math.abs(bAfter)).toBeLessThan(2); // 白がほぼ中立に
+    // 赤の中身は赤のまま（彩度の高い画素も一律シフトされるが、色相は保たれる）
+    const center = ((25 * 80 + 40) * 4) as number;
+    expect(image.data[center]!).toBeGreaterThan(image.data[center + 2]! + 100);
+  });
+
+  it('彩度調整: LAB クロマが指定係数ぶん下がる', () => {
+    const img = synthetic(10, 10, [200, 40, 30], { x: 0, y: 0, w: 0, h: 0, color: [0, 0, 0] });
+    const out = adjustSaturation(img, 0.8);
+    const [, a1, b1] = rgbToLab(200, 40, 30);
+    const [, a2, b2] = rgbToLab(out.data[0]!, out.data[1]!, out.data[2]!);
+    expect(Math.hypot(a2, b2)).toBeCloseTo(Math.hypot(a1, b1) * 0.8, 0);
+  });
+
+  it('印刷テクスチャ: 決定論（同シード同出力・異シード異出力）で、透明画素は触らない', () => {
+    const img = removeBackground(creamSticker(), 60);
+    const a = addPrintTexture(img, 42);
+    const b = addPrintTexture(img, 42);
+    const c = addPrintTexture(img, 43);
+    expect(a.data).toEqual(b.data);
+    expect(a.data).not.toEqual(c.data);
+    for (let i = 0; i < img.data.length; i += 4) {
+      expect(a.data[i + 3]).toBe(img.data[i + 3]); // アルファ不変
+    }
+  });
+
+  it('印刷テクスチャ: 色数（ヒストグラムの広がり）が増える', () => {
+    const img = creamSticker();
+    const count = (x: Rgba) => {
+      const s = new Set<number>();
+      for (let i = 0; i < x.data.length; i += 4) s.add((x.data[i]! << 16) | (x.data[i + 1]! << 8) | x.data[i + 2]!);
+      return s.size;
+    };
+    expect(count(addPrintTexture(img, 1))).toBeGreaterThan(count(img) * 4);
+  });
+
+  it('一気通貫 degptImage: 32 色以内に再量子化され、様式検証を通る', () => {
+    const sticker = quantize(resizeTo(cropToContent(removeBackground(creamSticker(), 60), 0.06, 1.6), 160, 100), 32);
+    const { image, castB } = degptImage(sticker.image, 7);
+    expect(castB).toBeGreaterThan(0);
+    const report = validateSymbol(image, 32);
+    expect(report.ok, report.problems.join(' / ')).toBe(true);
   });
 });

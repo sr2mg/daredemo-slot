@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "symbols": "vite-node tools/process-symbols.ts --",
     "symbols:check": "vite-node tools/check-symbols.ts --",
+    "degpt": "vite-node tools/degpt-assets.ts --",
     "panel": "vite-node tools/process-panel.ts --",
     "typecheck": "tsc --noEmit"
   },
