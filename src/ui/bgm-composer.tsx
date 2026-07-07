@@ -15,6 +15,7 @@ import {
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import { arrangePiece, defaultVoicesFor } from './opll-arrange.js';
 import { OPLL_VOICES } from './opll-core.js';
+import { loadStored, saveStored } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
 
 /**
@@ -54,17 +55,68 @@ function songSummary(options: ComposeOptions): string {
   return `${base} / ${overridden.map(({ part, label }) => `${label}=${voiceLabel(options.voices![part]!)}`).join('・')}`;
 }
 
+/** 作曲フォームの永続化（曲リストとは別に、作業中の設定そのものを覚える） */
+const FORM_KEY = 'daredemo.bgmComposer.form.v1';
+
+interface ComposerForm {
+  bars: 4 | 8;
+  progId: string;
+  styleId: string;
+  keyRoot: number;
+  bpm: number;
+  voices: VoiceOverride;
+  choice: number[];
+  seed: number;
+  loop: boolean;
+}
+
+/** 保存済みフォームをフィールド単位で検証して読む（壊れた項目だけ既定に落ちる） */
+function loadComposerForm(): ComposerForm {
+  const raw = loadStored<Record<string, unknown>>(
+    FORM_KEY,
+    {},
+    (v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v),
+  );
+  const bars = raw.bars === 8 ? 8 : 4;
+  const progId =
+    typeof raw.progId === 'string' && PROGRESSIONS.some((p) => p.id === raw.progId && p.slots.length <= bars)
+      ? raw.progId
+      : 'royal-pop';
+  const voices: VoiceOverride = {};
+  if (raw.voices !== null && typeof raw.voices === 'object') {
+    for (const part of ['lead', 'backing', 'bass'] as const) {
+      const v = (raw.voices as Record<string, unknown>)[part];
+      if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 15) voices[part] = v;
+    }
+  }
+  return {
+    bars,
+    progId,
+    styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
+    keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
+    bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
+    voices,
+    choice:
+      Array.isArray(raw.choice) && raw.choice.every((c) => Number.isInteger(c) && c >= 0)
+        ? (raw.choice as number[])
+        : defaultChoiceFor(PROGRESSIONS.find((p) => p.id === progId)!, bars),
+    seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
+    loop: raw.loop !== false,
+  };
+}
+
 export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
-  const [bars, setBars] = useState<4 | 8>(4);
-  const [progId, setProgId] = useState('royal-pop');
-  const [styleId, setStyleId] = useState('eurobeat');
-  const [keyRoot, setKeyRoot] = useState(0);
-  const [bpm, setBpm] = useState(170);
+  const [initial] = useState(loadComposerForm);
+  const [bars, setBars] = useState<4 | 8>(initial.bars);
+  const [progId, setProgId] = useState(initial.progId);
+  const [styleId, setStyleId] = useState(initial.styleId);
+  const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
+  const [bpm, setBpm] = useState(initial.bpm);
   /** パート別音色の上書き。未指定パートはスタイル既定（選ばない限り保存データにも入らない） */
-  const [voices, setVoices] = useState<VoiceOverride>({});
-  const [choice, setChoice] = useState<number[]>(() => defaultChoiceFor(PROGRESSIONS[0]!, 4));
-  const [seed, setSeed] = useState(newSeed);
-  const [loop, setLoop] = useState(true);
+  const [voices, setVoices] = useState<VoiceOverride>(initial.voices);
+  const [choice, setChoice] = useState<number[]>(initial.choice);
+  const [seed, setSeed] = useState(initial.seed);
+  const [loop, setLoop] = useState(initial.loop);
   const [piece, setPiece] = useState<Piece | null>(null);
   /** 最後に compose した正確なオプション（保存はこれを使う。UI をいじっただけでは変わらない） */
   const [lastOpts, setLastOpts] = useState<ComposeOptions | null>(null);
@@ -81,6 +133,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     player.setBgmVolume(volume / 100);
     saveBgmVolume(volume);
   }, [player, volume]);
+
+  // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
+  useEffect(() => {
+    saveStored(FORM_KEY, { bars, progId, styleId, keyRoot, bpm, voices, choice, seed, loop });
+  }, [bars, progId, styleId, keyRoot, bpm, voices, choice, seed, loop]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
   const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);

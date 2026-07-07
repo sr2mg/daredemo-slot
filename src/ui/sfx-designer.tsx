@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SFX_RECIPES } from '../core/music/sfx-design.js';
 import type { SfxDesign } from '../core/music/sfx-design.js';
 import { NOTE_NAMES } from '../core/music/theory.js';
 import { OPLL_VOICES } from './opll-core.js';
 import type { SfxName } from './opll-core.js';
+import { loadStored, saveStored } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
 import {
   ASSIGNABLE_SFX,
@@ -39,6 +40,28 @@ const SPEED_CHOICES = [
 
 const noteLabel = (midi: number): string => `${NOTE_NAMES[midi % 12]!}${Math.floor(midi / 12) - 1}`;
 
+/** 作業中フォーム（レシピ・基準音・速さ・音色）の永続化キー */
+const FORM_KEY = 'daredemo.sfxDesigner.form.v1';
+
+/** 保存済みフォームを検証して読む。壊れた項目は先頭レシピの既定に落ちる */
+function loadDesignerForm(): SfxDesign {
+  const raw = loadStored<Record<string, unknown>>(
+    FORM_KEY,
+    {},
+    (v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v),
+  );
+  const recipe = SFX_RECIPES.find((r) => r.id === raw.recipeId) ?? SFX_RECIPES[0]!;
+  return {
+    recipeId: recipe.id,
+    rootMidi: ROOT_CHOICES.includes(raw.rootMidi as number) ? (raw.rootMidi as number) : recipe.defaultRoot,
+    speed: SPEED_CHOICES.some((s) => s.value === raw.speed) ? (raw.speed as number) : 1,
+    voice:
+      typeof raw.voice === 'number' && Number.isInteger(raw.voice) && raw.voice >= 1 && raw.voice <= 15
+        ? raw.voice
+        : recipe.defaultVoice,
+  };
+}
+
 function designSummary(design: SfxDesign): string {
   const recipe = SFX_RECIPES.find((r) => r.id === design.recipeId)?.name ?? design.recipeId;
   const speed = SPEED_CHOICES.find((s) => s.value === design.speed)?.label ?? design.speed;
@@ -47,10 +70,11 @@ function designSummary(design: SfxDesign): string {
 }
 
 export function SfxDesignerPanel({ player }: { player: SfxPlayer }) {
-  const [recipeId, setRecipeId] = useState(SFX_RECIPES[0]!.id);
-  const [rootMidi, setRootMidi] = useState(SFX_RECIPES[0]!.defaultRoot);
-  const [speed, setSpeed] = useState(1);
-  const [voice, setVoice] = useState(SFX_RECIPES[0]!.defaultVoice);
+  const [initial] = useState(loadDesignerForm);
+  const [recipeId, setRecipeId] = useState(initial.recipeId);
+  const [rootMidi, setRootMidi] = useState(initial.rootMidi);
+  const [speed, setSpeed] = useState(initial.speed);
+  const [voice, setVoice] = useState(initial.voice);
   const [designs, setDesigns] = useState<SavedSfx[]>(loadSfxDesigns);
   const [assign, setAssign] = useState<SfxAssign>(loadSfxAssign);
   const [sfxName, setSfxName] = useState('');
@@ -58,6 +82,11 @@ export function SfxDesignerPanel({ player }: { player: SfxPlayer }) {
 
   const recipe = SFX_RECIPES.find((r) => r.id === recipeId)!;
   const current: SfxDesign = { recipeId, rootMidi, speed, voice };
+
+  // 作業中のフォームを保存（リロードしても続きから作れる）
+  useEffect(() => {
+    saveStored(FORM_KEY, { recipeId, rootMidi, speed, voice });
+  }, [recipeId, rootMidi, speed, voice]);
 
   const selectRecipe = (id: string) => {
     setRecipeId(id);

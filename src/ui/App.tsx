@@ -18,6 +18,7 @@ import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js
 import type { SfxName } from './opll-core.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
+import { loadStored, oneOf, saveStored, usePersistentState } from './persist.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
 import { SoundTestPanel } from './sound-test.js';
 
@@ -68,6 +69,8 @@ const FORCE_PURE_MISS = 'PURE_MISS';
 
 /** カスタム機種の localStorage キー */
 const CUSTOM_KEY = 'daredemo.customMachines.v1';
+/** 最後に遊んでいた機種名（再訪時に同じ台へ座り直す） */
+const MACHINE_KEY = 'daredemo.machine.v1';
 
 /** ツールタブ。遊ぶ場所（筐体）は常時表示で、道具だけを役割別に分ける */
 type TabId = 'play' | 'sound' | 'build' | 'lab';
@@ -234,12 +237,16 @@ export function App() {
   const [reels, setReels] = useState<ReelView[]>(() => freshReels(machines[0]!));
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
-  const [debug, setDebug] = useState(false);
+  const [debug, setDebug] = usePersistentState('daredemo.debugMode.v1', false, oneOf(true, false));
   const [forceSel, setForceSel] = useState('');
   /** 即入賞（教材モード）の対象ボーナス */
   const [instantSel, setInstantSel] = useState(() => machines[0]!.bonuses[0]?.id ?? '');
   /** 告知演出: なし（リーチ目を自力で探す）/ フラグ成立で点灯 / 放出可能で点灯 */
-  const [noticeMode, setNoticeMode] = useState<'none' | 'flag' | 'release'>('none');
+  const [noticeMode, setNoticeMode] = usePersistentState<'none' | 'flag' | 'release'>(
+    'daredemo.noticeMode.v1',
+    'none',
+    oneOf('none', 'flag', 'release'),
+  );
   /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
   const [flashKey, setFlashKey] = useState(0);
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
@@ -255,7 +262,11 @@ export function App() {
   /** サブ基板モード（教材モードの覗き見用） */
   const [atMode, setAtMode] = useState<string | null>(null);
   /** 'random' = 設定を隠してランダムに座る（設定推測の遊び。教材モードで正体が見える） */
-  const [settingSel, setSettingSel] = useState<'random' | number>('random');
+  const [settingSel, setSettingSel] = usePersistentState<'random' | number>(
+    'daredemo.settingSel.v1',
+    'random',
+    (v): v is 'random' | number => v === 'random' || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 6),
+  );
   const [tab, setTab] = useState<TabId>(loadTab);
 
   const selectTab = useCallback((next: TabId) => {
@@ -328,10 +339,20 @@ export function App() {
     setAtMode(next.nav ? (navRef.current?.atMode ?? null) : null);
     setBetDone(false);
     sfxRef.current?.stopBgm();
+    saveStored(MACHINE_KEY, next.name); // 再訪時に同じ台へ座り直す
   }, []);
 
   const allMachinesRef = useRef(allMachines);
   allMachinesRef.current = allMachines;
+
+  // 前回遊んでいた機種へ座り直す（共有リンクで開いた場合はそちらを優先）
+  useEffect(() => {
+    if (parseShareHash(location.hash)) return;
+    const saved = loadStored(MACHINE_KEY, '', (v): v is string => typeof v === 'string');
+    if (saved === '' || saved === machines[0]!.name) return;
+    const next = allMachinesRef.current.find((m) => m.name === saved);
+    if (next) applyMachine(next);
+  }, [applyMachine]);
 
   const selectMachine = useCallback(
     (name: string) => {
