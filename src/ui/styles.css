@@ -158,8 +158,8 @@ body {
 .panel-art {
   display: block;
   width: 100%;
-  max-height: 180px;
-  object-fit: cover;
+  height: auto;
+  object-fit: contain;
   border-radius: 12px;
   margin-bottom: 12px;
   border: 2px solid #3a3a55;

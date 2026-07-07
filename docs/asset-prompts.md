@@ -231,6 +231,26 @@ AI 癖を増幅するため、matte / flat inks / screen-printed 系へ寄せる
 
 ## 採用ログ
 
+- **2026-07-07 筐体パネル「負けるな！サルドラちゃん」採用**: ユーザー参考画像の
+  「暗い夜空 + 花火 + 巨大な黄色ロゴ + 下部の機械パネル」構成を、実在機種名・メーカー名を
+  使わないオリジナル架空機種として再設計。Codex 組み込み imagegen（正確なモデル名は
+  ツールから非公開）で、ロゴ文字込みの 1 枚絵として一発生成した。
+  `npm run panel -- tmp/imagegen/sarudora-panel-one-shot-source.png --width 560` 相当の処理で
+  `src/ui/assets/panel.png` を 560x266px / 約333KB に縮小して配置。
+
+  主要プロンプト:
+  ```
+  Create a complete wide horizontal 1990s Japanese pachislo top panel, fully
+  original, including the exact Japanese title logo text. Text (verbatim):
+  "負けるな！サルドラちゃん". The Japanese text is: 負 け る な ！ サ ル ド ラ ち ゃ ん.
+  Use those exact characters in that exact order. Deep midnight blue to black
+  festival-night pachislo cabinet panel with colorful fireworks, radial light rays,
+  chrome sparkle trim, ornamental control-panel details along the bottom edge, tiny
+  original monkey-dragon mascot silhouettes at the lower left and lower right.
+  Huge central Japanese title logo in bold chunky retro pachislo lettering,
+  yellow-gold fill, orange/red outline, thick black drop shadow. Original fictional
+  design only. No real slot machine names, no manufacturer logos, no real brands.
+  ```
 - **2026-07-06 seven_red = キャラ乗り 7（genai 版）採用**: ユーザー生成の
   seven_red_mascot_genai を全機種の赤 7 に採用（図柄 ID `seven_red` のアセット
   差し替えなので機種定義の変更は不要）。他候補と旧プレーン 7 は candidates/ へ退避
