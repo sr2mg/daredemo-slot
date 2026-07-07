@@ -588,6 +588,41 @@ export function App() {
     [settleSession, pushLog],
   );
 
+  /** 強制 AT 突入（教材モード）: NavLayer を抽選を経ずに作動させる。メインの抽選には無関係 */
+  const forceAt = useCallback(() => {
+    if (phaseRef.current !== 'ready') return;
+    const nav = navRef.current;
+    if (!nav || !nav.forceAt()) return;
+    setAtRemaining(nav.atRemainingGames);
+    setSubView(subRef.current!.onForcedAt().view);
+    playSfx('rush');
+    pushLog('🎉 AT 突入！（教材モード・強制）');
+  }, [playSfx, pushLog]);
+
+  /**
+   * 強制対決（教材モード）: 蓋の解除カウンタを残り 4G に書き換え、
+   * 次ゲームから対決演出（残り 3G で開始）→ 高確率（赤）→ 放出勝利の流れを通しで見せる
+   */
+  const forceBattle = useCallback(() => {
+    if (phaseRef.current !== 'ready') return;
+    const engine = engineRef.current;
+    const kinds = new Map(machineRef.current.bonuses.map((b) => [b.id, b.kind]));
+    if (!engine.lid || !engine.queue.some((id) => kinds.get(id) !== 'sb')) return;
+    setEngine({ ...engine, lidReleaseIn: 4 });
+    pushLog('⚔ 放出を残り 4G に短縮（教材モード・強制）');
+  }, [pushLog]);
+
+  /** 強制放出ゾーン（教材モード）: 蓋を強制開放して SB 放出ゾーンの祭りを見せる */
+  const forceSbZone = useCallback(() => {
+    if (phaseRef.current !== 'ready') return;
+    const engine = engineRef.current;
+    const kinds = new Map(machineRef.current.bonuses.map((b) => [b.id, b.kind]));
+    if (!engine.lid || !engine.queue.some((id) => kinds.get(id) === 'sb')) return;
+    setEngine({ ...engine, lid: false, lidReleaseIn: null });
+    playSfx('siren');
+    pushLog('💰 蓋を強制開放（教材モード）');
+  }, [playSfx, pushLog]);
+
   // 効果音の事前レンダリング（WASM 取得含む。AudioContext はまだ作らない）。
   // BB/RB に割り当て済みの自作 BGM も先に OPLL レンダリングしておく
   useEffect(() => {
@@ -738,7 +773,7 @@ export function App() {
             <span
               className="fourth-reel"
               data-testid="fourth-reel"
-              title="第四リール（演出専用。メインの抽選・制御には無関係）"
+              title="第四リール（演出専用）: 図柄は成立役に正直 / 点滅はチャンス / 成立役との矛盾はボーナス確定 / ボーナス図柄停止で完全告知"
             >
               {subView.fourth.symbol === null ? (
                 <span className="fourth-roll" aria-hidden>
@@ -758,7 +793,7 @@ export function App() {
                   const v = SYMBOL_VIEW[subView.fourth.symbol] ?? { text: subView.fourth.symbol, className: '' };
                   const img = SYMBOL_IMAGES[subView.fourth.symbol];
                   return (
-                    <span className={`fourth-cell ${v.className}`}>
+                    <span className={`fourth-cell ${v.className} ${subView.fourth.flash ? 'fourth-flash' : ''}`}>
                       {img ? <img className="cell-img" src={img} alt={v.text} /> : v.text}
                     </span>
                   );
@@ -946,6 +981,41 @@ export function App() {
             >
               ⚡ 揃える（目押し省略）
             </button>
+            {machine.nav && (
+              <button
+                className="form-mini-btn"
+                onClick={forceAt}
+                disabled={phase !== 'ready' || atRemaining !== null}
+                data-testid="force-at"
+                title="AT を抽選を経ずに強制作動させる（サブ基板だけの操作。メインの抽選・出目には無関係）"
+              >
+                🎉 AT 突入（強制）
+              </button>
+            )}
+            {subView.kind === 'battle' && (
+              <button
+                className="form-mini-btn"
+                onClick={forceBattle}
+                disabled={phase !== 'ready' || !engine.lid || !pendingBonus}
+                data-testid="force-battle"
+                title="蓋の解除を残り 4G に書き換え、対決 → 高確率（赤）→ 放出勝利の流れを見せる。内部にストックが必要（強制フラグで成立させてから）"
+              >
+                ⚔ 対決発生（強制）
+              </button>
+            )}
+            {subView.kind === 'sbzone' && (
+              <button
+                className="form-mini-btn"
+                onClick={forceSbZone}
+                disabled={
+                  phase !== 'ready' || !engine.lid || !engine.queue.some((id) => bonusKinds.get(id) === 'sb')
+                }
+                data-testid="force-sbzone"
+                title="蓋を強制開放して SB 放出ゾーンへ。SB のストックが必要（強制フラグで成立させてから）"
+              >
+                💰 放出ゾーン（強制）
+              </button>
+            )}
           </div>
         )}
         <GuidePanel key={`guide-${machine.name}`} machine={machine} />

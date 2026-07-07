@@ -71,6 +71,19 @@ export class NavLayer {
     };
   }
 
+  /**
+   * 教材モード: AT を抽選を経ずに強制作動させる。
+   * nav 未定義・作動中は false（通常の抽選経路には一切影響しない）
+   */
+  forceAt(): boolean {
+    const at = this.machine.nav?.at;
+    if (!at || this.at !== null) return false;
+    const games = at.management.type === 'set' ? at.management.gamesPerSet : at.management.games;
+    this.at = { remainingGames: games };
+    this.sinceAt = 0;
+    return true;
+  }
+
   /** 現在のモードで有効な AT 抽選契機（モードが triggers を持たなければ既定を使う） */
   private currentTriggers(): readonly AtTrigger[] {
     const at = this.machine.nav!.at;

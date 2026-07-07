@@ -40,29 +40,85 @@ describe('subboardKind（機構からサブ基板タイプを自動判別）', (
 });
 
 describe('atype: 完全告知 + 第四リール', () => {
-  it('ボーナス成立でキュイン + ランプ + 第四リールがボーナス図柄で止まる（ガセなし）', () => {
-    const sub = new Subboard(sampleAType, 1);
-    const st: EngineState = { ...initialState(sampleAType), queue: ['bb_red'] };
-    const fx = sub.onSettle(eventWith({ flags: ['bb_red'], queuedBonus: 'bb_red' }), st, null);
-    expect(fx.sfx).toContain('kyuin');
-    expect(fx.notes).toContain('⚡ 完全告知！');
-    expect(fx.view.lamp).toBe(true);
-    expect(fx.view.fourth?.symbol).toBe('seven_red');
-    // 内部にいる間は告知が持続する（次ゲーム以降は音は鳴らない）
-    const fx2 = sub.onSettle(eventWith({ flags: ['bell'] }), st, null);
-    expect(fx2.sfx).toHaveLength(0);
-    expect(fx2.view.lamp).toBe(true);
-    expect(fx2.view.fourth?.symbol).toBe('seven_red');
+  it('ボーナス成立から必ず 4G 以内に告知され、告知後はボーナス図柄が点滅し続ける', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const sub = new Subboard(sampleAType, seed);
+      const st: EngineState = { ...initialState(sampleAType), queue: ['bb_red'] };
+      let fx = sub.onSettle(eventWith({ flags: ['bb_red'], queuedBonus: 'bb_red' }), st, null);
+      let waited = 0;
+      while (!fx.sfx.includes('kyuin') && waited < 10) {
+        expect(fx.view.lamp).toBe(false); // 潜伏中はランプも点かない
+        fx = sub.onSettle(eventWith({}), st, null);
+        waited++;
+      }
+      expect(fx.sfx).toContain('kyuin');
+      expect(fx.notes).toContain('⚡ 完全告知！');
+      expect(waited).toBeLessThanOrEqual(4);
+      expect(fx.view.fourth?.symbol).toBe('seven_red');
+      expect(fx.view.fourth?.flash).toBe(true);
+      expect(fx.view.lamp).toBe(true);
+      // 告知後は 7 が維持され、キュインは 1 回だけ
+      const after = sub.onSettle(eventWith({ flags: ['bell'] }), st, null);
+      expect(after.sfx).toHaveLength(0);
+      expect(after.view.fourth?.symbol).toBe('seven_red');
+      expect(after.view.lamp).toBe(true);
+    }
   });
 
-  it('通常時は成立役の対応図柄で止まり、ランプは消える', () => {
-    const sub = new Subboard(sampleAType, 1);
+  it('通常時の図柄は嘘をつかない: 対応図柄以外は絶対に出ない（点滅ガセはあり得る）', () => {
+    const sub = new Subboard(sampleAType, 5);
     const st = initialState(sampleAType);
+    let sawFlash = false;
+    for (let i = 0; i < 300; i++) {
+      const fx = sub.onSettle(eventWith({ flags: ['bell'] }), st, null);
+      expect(fx.view.fourth?.symbol).toBe('bell');
+      expect(fx.view.lamp).toBe(false);
+      if (fx.view.fourth?.flash) sawFlash = true;
+    }
+    for (let i = 0; i < 300; i++) {
+      expect(sub.onSettle(eventWith({}), st, null).view.fourth?.symbol).toBe('blank');
+    }
     expect(sub.onSettle(eventWith({ flags: ['melon'] }), st, null).view.fourth?.symbol).toBe('melon');
-    expect(sub.onSettle(eventWith({ flags: ['bell'] }), st, null).view.fourth?.symbol).toBe('bell');
-    const miss = sub.onSettle(eventWith({}), st, null);
-    expect(miss.view.fourth?.symbol).toBe('blank');
-    expect(miss.view.lamp).toBe(false);
+    expect(sawFlash).toBe(true); // ガセ点滅（≒1/48）は 300G あればまず出る
+  });
+
+  it('潜伏中は矛盾図柄（成立役と違う図柄）が出うる = 分かる人だけの先読み確定パターン', () => {
+    let sawContradiction = false;
+    for (let seed = 1; seed <= 200 && !sawContradiction; seed++) {
+      const sub = new Subboard(sampleAType, seed);
+      const st: EngineState = { ...initialState(sampleAType), queue: ['bb_red'] };
+      // 成立ゲーム（ベル重複扱い）から告知まで、潜伏中の表示をすべて観測する
+      let fx = sub.onSettle(eventWith({ flags: ['bell', 'bb_red'], queuedBonus: 'bb_red' }), st, null);
+      while (!fx.sfx.includes('kyuin')) {
+        const symbol = fx.view.fourth?.symbol;
+        if (symbol !== 'bell') {
+          expect(symbol).not.toBe('seven_red'); // 告知前に確定図柄は出ない
+          sawContradiction = true;
+        }
+        fx = sub.onSettle(eventWith({ flags: ['bell'] }), st, null);
+      }
+    }
+    expect(sawContradiction).toBe(true);
+  });
+
+  it('告知前に自力で揃えたら告知は流れる（キュインは鳴らずに通常へ戻る）', () => {
+    // 潜伏を確実に踏むため、遅延告知（announceIn >= 1）を引くまでシードを探す
+    for (let seed = 1; seed <= 30; seed++) {
+      const sub = new Subboard(sampleAType, seed);
+      const st: EngineState = { ...initialState(sampleAType), queue: ['bb_red'] };
+      const first = sub.onSettle(eventWith({ flags: ['bb_red'], queuedBonus: 'bb_red' }), st, null);
+      if (first.sfx.includes('kyuin')) continue; // 即告知シードは対象外
+      // 潜伏中に BB 入賞（queue が空に）
+      const hit = sub.onSettle(
+        eventWith({ flags: ['bb_red'], wins: ['bb_red'], bonusStarted: 'bb_red' }),
+        initialState(sampleAType),
+        null,
+      );
+      expect(hit.sfx).not.toContain('kyuin');
+      expect(hit.view.lamp).toBe(false);
+      return;
+    }
+    throw new Error('遅延告知を引くシードが見つからない（振り分けを確認）');
   });
 
   it('レバー ON で第四リールが回転状態（symbol null）になる', () => {
@@ -176,6 +232,13 @@ describe('sbzone: SB 放出ゾーン（サラ金風）', () => {
     // ゾーン継続中は突入カットインを繰り返さない
     const stay = sub.onSettle(eventWith({}), inZone, null);
     expect(stay.view.cutin).toBeNull();
+    // 最後の 1 個を放出したゲーム（キューは空でも SB が揃った）はまだゾーンの一部
+    const last = sub.onSettle(
+      eventWith({ wins: ['sb_kin'], bonusStarted: 'sb_kin', payout: 15 }),
+      { ...base, queue: [], lid: false },
+      null,
+    );
+    expect(last.view.zone?.rainbow).toBe(true);
     const exit = sub.onSettle(eventWith({}), { ...base, queue: [], lid: false }, null);
     expect(exit.view.zone).toBeNull();
     expect(exit.view.lamp).toBe(false);

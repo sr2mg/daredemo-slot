@@ -1112,3 +1112,17 @@ button:disabled {
     opacity: 0;
   }
 }
+
+/* 第四リールの点滅（チャンス・告知）。光り方は告知ランプと同系色 */
+.fourth-flash {
+  animation: fourth-flash 0.45s ease-in-out infinite alternate;
+}
+
+@keyframes fourth-flash {
+  from {
+    filter: none;
+  }
+  to {
+    filter: brightness(1.4) drop-shadow(0 0 6px #ffb300);
+  }
+}
