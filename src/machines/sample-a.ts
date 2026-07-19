@@ -12,9 +12,9 @@ import type { MachineDef } from '../core/types.js';
 const L = [
   'seven_red', // 0
   'bell', //      1
-  'blank', //     2
+  'cherry', //    2  赤7中段狙いから引き込むDDT配置
   'replay', //    3
-  'cherry', //    4
+  'blank', //     4
   'melon', //     5
   'bell', //      6
   'blank', //     7
@@ -64,8 +64,8 @@ const R = [
   'bell', //      5
   'blank', //     6
   'replay', //    7
-  'bar', //       8
-  'blank', //     9
+  'blank', //     8
+  'bar', //       9  BAR中段狙いで13番のmelonを上段へ引き込む
   'bell', //     10
   'blank', //    11
   'replay', //   12
