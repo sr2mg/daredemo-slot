@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { compose, defaultChoiceFor, validatePiece } from '../core/music/compose.js';
-import type { ComposeOptions, Piece, VoiceOverride } from '../core/music/compose.js';
+import type { ComposeOptions, NesVoiceOptions, Piece, VoiceOverride } from '../core/music/compose.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
 import {
   DEFAULT_ASSIGN,
@@ -13,7 +13,9 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
-import { arrangePiece, defaultVoicesFor } from './opll-arrange.js';
+import { arrangeComposedBgm } from './bgm-audio.js';
+import { NES_DUTIES } from './nes-apu.js';
+import { defaultVoicesFor } from './opll-arrange.js';
 import { OPLL_VOICES } from './opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
@@ -49,7 +51,9 @@ const voiceLabel = (id: number): string =>
 function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
-  const base = `${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const chip = options.soundChip === 'nes2a03' ? 'ファミコン2A03' : 'OPLL';
+  const base = `${chip} / ${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
+  if (options.soundChip === 'nes2a03') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
   return `${base} / ${overridden.map(({ part, label }) => `${label}=${voiceLabel(options.voices![part]!)}`).join('・')}`;
@@ -64,7 +68,9 @@ interface ComposerForm {
   styleId: string;
   keyRoot: number;
   bpm: number;
+  soundChip: 'opll' | 'nes2a03';
   voices: VoiceOverride;
+  nes: NesVoiceOptions;
   choice: number[];
   seed: number;
   loop: boolean;
@@ -95,7 +101,16 @@ function loadComposerForm(): ComposerForm {
     styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
+    soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
     voices,
+    nes: {
+      pulse1Duty: [0, 1, 2, 3].includes((raw.nes as NesVoiceOptions | undefined)?.pulse1Duty ?? -1)
+        ? ((raw.nes as NesVoiceOptions).pulse1Duty as 0 | 1 | 2 | 3)
+        : 1,
+      pulse2Duty: [0, 1, 2, 3].includes((raw.nes as NesVoiceOptions | undefined)?.pulse2Duty ?? -1)
+        ? ((raw.nes as NesVoiceOptions).pulse2Duty as 0 | 1 | 2 | 3)
+        : 2,
+    },
     choice:
       Array.isArray(raw.choice) && raw.choice.every((c) => Number.isInteger(c) && c >= 0)
         ? (raw.choice as number[])
@@ -112,8 +127,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [styleId, setStyleId] = useState(initial.styleId);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
+  const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
   /** パート別音色の上書き。未指定パートはスタイル既定（選ばない限り保存データにも入らない） */
   const [voices, setVoices] = useState<VoiceOverride>(initial.voices);
+  const [nes, setNes] = useState<NesVoiceOptions>(initial.nes);
   const [choice, setChoice] = useState<number[]>(initial.choice);
   const [seed, setSeed] = useState(initial.seed);
   const [loop, setLoop] = useState(initial.loop);
@@ -136,8 +153,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
 
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
-    saveStored(FORM_KEY, { bars, progId, styleId, keyRoot, bpm, voices, choice, seed, loop });
-  }, [bars, progId, styleId, keyRoot, bpm, voices, choice, seed, loop]);
+    saveStored(FORM_KEY, { bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, seed, loop });
+  }, [bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, seed, loop]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
   const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);
@@ -170,13 +187,13 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const playOptions = async (opts: ComposeOptions) => {
     try {
       const p = compose(opts);
-      setError(player.enabled ? '' : '「効果音（OPLL）」が OFF のため音は鳴りません（このタブ上部で ON にできます）');
+      setError(player.enabled ? '' : '「音」が OFF のため音は鳴りません（このタブ上部で ON にできます）');
       setSeed(opts.seed);
       setPiece(p);
       setLastOpts(opts);
       setPlaying(false);
       if (!player.enabled) return;
-      const def = arrangePiece(p, opts.styleId, opts.voices);
+      const def = arrangeComposedBgm(p, opts);
       setProgress(0);
       const result = await player.playComposedBgm(JSON.stringify(opts), def, 0, {
         loop,
@@ -203,7 +220,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       bars,
       seed: nextSeed,
       choice: [...choice],
-      ...(Object.keys(picked).length > 0 ? { voices: picked } : {}),
+      soundChip,
+      ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
+      ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
     });
   };
 
@@ -244,7 +263,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         const p = compose(song.options);
         void player.ensureComposedBgm(
           JSON.stringify(song.options),
-          arrangePiece(p, song.options.styleId, song.options.voices),
+          arrangeComposedBgm(p, song.options),
         );
       } catch {
         // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
@@ -282,6 +301,15 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       <div className="panel-body">
         <div className="panel-controls">
           <select
+            value={soundChip}
+            onChange={(e) => setSoundChip(e.target.value as 'opll' | 'nes2a03')}
+            data-testid="st-sound-chip"
+            title="曲ごとに保存され、BB/RB中の再生にもそのまま使われます"
+          >
+            <option value="opll">OPLL（YM2413・FM音源）</option>
+            <option value="nes2a03">ファミコン 2A03（標準5ch制約）</option>
+          </select>
+          <select
             value={bars}
             onChange={(e) => selectBars(Number(e.target.value) as 4 | 8)}
             data-testid="st-bars"
@@ -317,34 +345,62 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
           </select>
         </div>
 
-        {/* パート別音色。OPLL はチャンネルごとに内蔵 15 音色を自由に選べる（刻み・ドラムはスタイルのまま） */}
-        <div className="panel-controls">
-          {VOICE_PARTS.map(({ part, label }) => (
-            <select
-              key={part}
-              value={voices[part] ?? 0}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setVoices((prev) => {
-                  const next = { ...prev };
-                  if (v === 0) delete next[part];
-                  else next[part] = v;
-                  return next;
-                });
-              }}
-              data-testid={`st-voice-${part}`}
-            >
-              <option value={0}>
-                {label}: スタイル既定（{voiceLabel(defaultVoicesFor(styleId)[part])}）
-              </option>
-              {OPLL_VOICES.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {label}: {v.label}
+        {soundChip === 'opll' ? (
+          <div className="panel-controls">
+            {VOICE_PARTS.map(({ part, label }) => (
+              <select
+                key={part}
+                value={voices[part] ?? 0}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setVoices((prev) => {
+                    const next = { ...prev };
+                    if (v === 0) delete next[part];
+                    else next[part] = v;
+                    return next;
+                  });
+                }}
+                data-testid={`st-voice-${part}`}
+              >
+                <option value={0}>
+                  {label}: スタイル既定（{voiceLabel(defaultVoicesFor(styleId)[part])}）
                 </option>
+                {OPLL_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {label}: {v.label}
+                  </option>
+                ))}
+              </select>
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="panel-controls" data-testid="st-nes-controls">
+              {([
+                ['pulse1Duty', 'パルス1・主旋律'],
+                ['pulse2Duty', 'パルス2・伴奏'],
+              ] as const).map(([part, label]) => (
+                <select
+                  key={part}
+                  value={nes[part] ?? (part === 'pulse1Duty' ? 1 : 2)}
+                  onChange={(e) => {
+                    const duty = Number(e.target.value) as 0 | 1 | 2 | 3;
+                    setNes((prev) => ({ ...prev, [part]: duty }));
+                  }}
+                  data-testid={`st-nes-${part}`}
+                >
+                  {NES_DUTIES.map((duty) => (
+                    <option key={duty.id} value={duty.id}>{label}: {duty.label}</option>
+                  ))}
+                </select>
               ))}
-            </select>
-          ))}
-        </div>
+            </div>
+            <p className="panel-note nes-budget" data-testid="st-nes-budget">
+              2A03配線: パルス1=主旋律 / パルス2=伴奏 / 三角波=ベース（音量変更不可） /
+              ノイズ=ドラム / DPCM=未使用。1チャンネル1音、整数タイマー音程、15段階音量です。
+            </p>
+          </>
+        )}
 
         <div className="panel-controls">
           <select value={prog.id} onChange={(e) => selectProg(e.target.value)} data-testid="st-prog">
@@ -417,7 +473,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
 
         {progress !== null && (
           <p className="panel-note" data-testid="st-progress">
-            🎛 OPLL（YM2413）で演奏を仕込んでいます… {Math.round(progress * 100)}%
+            🎛 {soundChip === 'nes2a03' ? '2A03回路をエミュレーション' : 'OPLL（YM2413）で演奏を仕込み'}中… {Math.round(progress * 100)}%
           </p>
         )}
         {error && <p className="badge-ng">{error}</p>}
@@ -493,12 +549,19 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
           {assignSelect('rb')}
         </div>
         <p className="panel-note">
-          再生は OPLL（YM2413）音源。アクセント・チャンネルエコー・ビブラートも当時のレジスタ操作
-          だけで掛けています。音色はパートごとに OPLL 内蔵 15 音色から選べます（未指定はスタイル既定。
-          エコーはリードに追従、ドラムはリズムモード固定）。🔊 は BGM 全体の音量。デフォルト BGM も
-          同じ作曲エンジンのプリセット曲（固定シード）で、BB/RB への割り当てはボーナス開始の
-          ファンファーレ後に流れます。コードは小節ごとの選択制（同じ機能の代理和音）なので、
-          どれを選んでも破綻しません。
+          {soundChip === 'nes2a03' ? (
+            <>
+              2A03は日本版ファミコンのクロックで音程を整数タイマーへ量子化し、パルス2声・32段三角波・
+              LFSRノイズを非線形ミキサーと実機相当の90Hz/440Hz HPF・14kHz LPFへ通します。
+              拡張音源、任意波形、リバーブ、チャンネルエコーは使いません。DPCMサンプル編集は次段階です。
+            </>
+          ) : (
+            <>
+              OPLLではアクセント・チャンネルエコー・ビブラートも当時のレジスタ操作だけで掛けています。
+              音色はパートごとに内蔵15音色から選べます。
+            </>
+          )}{' '}
+          🔊はBGM全体の音量。保存した音源設定はBB/RBへの割り当てにもそのまま使われます。
         </p>
       </div>
     </details>

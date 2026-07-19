@@ -12,7 +12,7 @@ import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
 import { BgmComposerPanel } from './bgm-composer.js';
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
-import { arrangePiece } from './opll-arrange.js';
+import { arrangeComposedBgm } from './bgm-audio.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import type { SfxName } from './opll-core.js';
@@ -34,8 +34,6 @@ import { SoundTestPanel } from './sound-test.js';
 
 /** リール 1 周の時間。20 コマ ÷ 750ms ≒ 80rpm（規格上限相当） */
 const REV_MS = 750;
-/** 窓に見えるコマ数（上段・中段・下段） */
-const VISIBLE_ROWS = 3;
 /** 停止時のバウンド（行き過ぎて戻る量と時間。「ガチッ」の感触） */
 const BOUNCE_KOMA = 0.16;
 const BOUNCE_MS = 110;
@@ -45,12 +43,13 @@ const REPOSITORY_URL = 'https://github.com/sr2mg/daredemo-slot';
 const SYMBOL_VIEW: Record<string, { text: string; className: string }> = {
   seven_red: { text: '７', className: 'sym-seven' },
   bar: { text: 'BAR', className: 'sym-bar' },
-  bell: { text: '🔔', className: 'sym-bell' },
-  replay: { text: '🔃', className: 'sym-replay' },
+  bell: { text: 'ベル（フォルダ）', className: 'sym-bell' },
+  replay: { text: 'リプレイ（ごみ箱）', className: 'sym-replay' },
   cherry: { text: '🍒', className: 'sym-cherry' },
-  melon: { text: '🍉', className: 'sym-melon' },
-  // 純ブランクの伝統（獣王の木＝通称カリフラワー）に敬意を表して野菜
-  blank: { text: '🥦', className: 'sym-blank' },
+  // 役IDは互換性のため melon のまま、図柄はPCモチーフの地球儀にリニューアル
+  melon: { text: 'スイカ役（地球儀）', className: 'sym-melon' },
+  // 非入賞のブランクは「何のファイルか分からない」汎用EXE図柄
+  blank: { text: '謎EXE', className: 'sym-blank' },
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -120,13 +119,12 @@ interface ReelColumnProps {
 }
 
 /**
- * リール 1 本の見た目。全コマを縦 1 列に並べたストリップ（末尾に先頭 3 コマを複製）を
- * transform で連続スクロールし、実機のリールのように回す。
+ * リール 1 本の見た目。全コマを CSS 3D の円周上へ並べ、円筒を連続回転させる。
  * アニメーションは rAF で DOM に直接書き、React の再レンダリングを毎フレーム走らせない。
  * - 回転は約 80rpm の等速
  * - 実機準拠の下流れ: コマ番号が進む（滑る）方向のコマは画面の上から入ってくる。
- *   そのためストリップはコマ番号の降順に積む（コアの行番号 r は画面の下から数える）。
- *   これで「狙った図柄の 4 コマ上まで引き込む」という実機の目押しの向きと一致する
+ *   コマ番号が大きい面を円筒の上側へ配置し、回転角を減らすことで下へ流す。
+ *   コアの stopPosition は下段なので、正面には常に stopPosition + 1 の面を合わせる
  * - 停止は押下の続き位置から等速のまま滑り込み（滑り 0〜4 コマ + 整列で最大 5 コマ弱 ≒ 190ms。
  *   実機の停止許容時間と同じオーダー）、回転方向へ微バウンドして着地
  * - 初期化・機種切り替え・即入賞（回転を経ない停止）は即座に合わせる
@@ -135,20 +133,43 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
   const stripRef = useRef<HTMLDivElement | null>(null);
   const wasSpinningRef = useRef(false);
   const frames = strip.length;
+  const faceStep = 360 / frames;
+  // 正多角柱の隣接面が隙間なく接する外接半径。cell-h に追従するのでレスポンシブでも円筒を保てる。
+  const radiusFactor = 1 / (2 * Math.tan(Math.PI / frames));
 
   useEffect(() => {
     const el = stripRef.current;
     if (!el) return;
-    const total = frames + VISIBLE_ROWS;
+    const faces = Array.from(el.querySelectorAll<HTMLElement>('.cell'));
     const setPos = (p: number) => {
       positions.current[index] = p;
     };
-    // 末尾の複製コマのおかげで、正規化すれば境界を跨いでも絵は連続する。
-    // ストリップは降順スタックなので、位置が進むほどオフセットが減り絵は下へ流れる
+    /**
+     * 実機のバックライトはリール基体に固定され、上・中・下段の 3 領域を背面から照らす。
+     * 動く図柄へ光彩を貼るのではなく、各面が固定照明領域を横切る瞬間だけ透過率を上げる。
+     * 反射凹部間の仕切りを模して、段の中心では 1、境界では光量が滑らかに落ちる。
+     */
+    const applyBacklight = (wrapped: number) => {
+      const front = wrapped + 1;
+      for (let face = 0; face < faces.length; face++) {
+        let relative = face - front;
+        relative = ((((relative + frames / 2) % frames) + frames) % frames) - frames / 2;
+        const nearestLamp = Math.max(-1, Math.min(1, Math.round(relative)));
+        const lampOffset = relative - nearestLamp;
+        const distance = Math.abs(lampOffset);
+        const exposure = distance < 0.9 ? Math.exp(-Math.pow(distance / 0.48, 4)) : 0;
+        faces[face]!.style.setProperty('--lamp-exposure', exposure.toFixed(3));
+        // 面のローカル座標では光だまりを逆向きへずらし、窓に対して同じ位置へ留める。
+        // 反射凹部の境界では露光がほぼ 0 になるため、隣の灯への切り替えは見えない。
+        faces[face]!.style.setProperty('--lamp-y', `${(50 + lampOffset * 100).toFixed(2)}%`);
+      }
+    };
+    // stopPosition は下段。1 コマ先を正面へ向けると、上から [p+2, p+1, p] が並ぶ。
+    // 正規化の境界では角度が 360deg 飛ぶが、transition を使わないので見た目は連続する。
     const apply = (p: number) => {
       const wrapped = ((p % frames) + frames) % frames;
-      const offset = total - VISIBLE_ROWS - wrapped;
-      el.style.transform = `translateY(${(-100 * offset) / total}%)`;
+      el.style.transform = `rotateX(${-(wrapped + 1) * faceStep}deg)`;
+      applyBacklight(wrapped);
     };
     let raf = 0;
 
@@ -211,18 +232,31 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
       window.clearTimeout(fallback);
       finish();
     };
-  }, [spinning, top, strip, frames, positions, index]);
+  }, [spinning, top, strip, frames, faceStep, positions, index]);
 
   return (
     <div className={`reel ${spinning ? 'reel-spinning' : ''}`}>
+      <div className="reel-backlight" aria-hidden="true" />
       <div className="reel-strip" ref={stripRef}>
-        {/* 降順スタック（下流れ用）。複製 3 コマ込みで反転する */}
-        {[...strip, ...strip.slice(0, VISIBLE_ROWS)].reverse().map((symbol, i) => {
+        {strip.map((symbol, i) => {
           const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
           const img = SYMBOL_IMAGES[symbol];
           return (
-            <div key={i} className={`cell ${view.className}`}>
-              {img ? <img className="cell-img" src={img} alt={view.text} /> : view.text}
+            <div
+              key={i}
+              className={`cell ${view.className}`}
+              style={{
+                transform: `rotateX(${i * faceStep}deg) translateZ(calc(var(--cell-h) * ${radiusFactor}))`,
+              }}
+            >
+              {img ? (
+                <span className="symbol-stack">
+                  <img className="cell-img symbol-print" src={img} alt={view.text} />
+                  <img className="symbol-transmission" src={img} alt="" aria-hidden="true" />
+                </span>
+              ) : (
+                view.text
+              )}
             </div>
           );
         })}
@@ -468,7 +502,7 @@ export function App() {
         setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
       }
 
-      // --- 効果音（OPLL）。優先度: ファンファーレ > 払い出し ---
+      // --- 音（効果音 OPLL / BGM）。優先度: ファンファーレ > 払い出し ---
       const sfx = sfxRef.current;
       if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
         playSfx('fanfare');
@@ -480,7 +514,7 @@ export function App() {
           const song = resolveAssign(slot);
           try {
             const piece = compose(song.options);
-            const def = arrangePiece(piece, song.options.styleId, song.options.voices);
+            const def = arrangeComposedBgm(piece, song.options);
             void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
           } catch {
             // 保存データ破損等。音は演出なので無音で続行する
@@ -636,7 +670,7 @@ export function App() {
         const song = resolveAssign(slot);
         try {
           const piece = compose(song.options);
-          const def = arrangePiece(piece, song.options.styleId, song.options.voices);
+          const def = arrangeComposedBgm(piece, song.options);
           void sfx.ensureComposedBgm(JSON.stringify(song.options), def);
         } catch {
           // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
@@ -1050,7 +1084,7 @@ export function App() {
               }}
               data-testid="sfx-toggle"
             />
-            効果音（OPLL）
+            音（効果音 OPLL / BGM）
           </label>
           <span className="panel-note">
             ベット/レバー等の音色変更は「効果音作成」パネルで（レシピ・音色を選んで契機に割り当て）
@@ -1064,7 +1098,7 @@ export function App() {
           <a href="https://github.com/digital-sound-antiques/emu2413" target="_blank" rel="noreferrer">
             emu2413
           </a>{' '}
-          © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換のソフトウェア実装です
+          © Mitsutaka Okazaki（MIT License）— YM2413（OPLL）互換実装。2A03 BGM は NES APU 公開仕様に基づく内蔵実装です
         </p>
       </div>
 
