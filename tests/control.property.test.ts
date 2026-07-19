@@ -111,3 +111,28 @@ describe('制御の決定論性', () => {
     }
   });
 });
+
+describe('デフォルト配列のDDT手順', () => {
+  const middlePush = (reel: number, symbol: string): number => {
+    const index = machine.strips[reel]!.indexOf(symbol);
+    if (index < 0) throw new Error(`${symbol} is not on reel ${reel}`);
+    // stopPosition は下段基準なので、狙った図柄を中段に置く押下位置は1コマ手前。
+    return (index - 1 + N) % N;
+  };
+
+  const ddtPushes = [
+    middlePush(0, 'seven_red'),
+    middlePush(1, 'bar'),
+    middlePush(2, 'bar'),
+  ];
+
+  it('左の赤7中段狙いでチェリーを取りこぼさない', () => {
+    const ctx = new ControlContext(machine, new Set(['cherry']));
+    expect(winsAt(machine, play(ctx, ORDERS[0]!, ddtPushes))).toContain('cherry');
+  });
+
+  it('左の赤7、中・右のBAR中段狙いでスイカを取りこぼさない', () => {
+    const ctx = new ControlContext(machine, new Set(['melon']));
+    expect(winsAt(machine, play(ctx, ORDERS[0]!, ddtPushes))).toContain('melon');
+  });
+});
