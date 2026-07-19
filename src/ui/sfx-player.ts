@@ -1,4 +1,6 @@
 import type { SfxDesign } from '../core/music/sfx-design.js';
+import { isPcmBgm } from './bgm-audio.js';
+import type { ComposedBgmDef } from './bgm-audio.js';
 import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
 import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from './opll-core.js';
 import { arrangeSfx } from './sfx-arrange.js';
@@ -192,9 +194,17 @@ export class SfxPlayer {
    * 自作 BGM（OPLL 編曲済みシーケンス）をレンダリングしてキャッシュする。
    * key は ComposeOptions の JSON（同じ曲は再レンダリングしない）
    */
-  ensureComposedBgm(key: string, def: SfxDef, onProgress?: (ratio: number) => void): Promise<Float32Array> {
+  ensureComposedBgm(key: string, def: ComposedBgmDef, onProgress?: (ratio: number) => void): Promise<Float32Array> {
     const cached = this.customBgm.get(key);
     if (cached) return Promise.resolve(cached);
+    if (isPcmBgm(def)) {
+      this.customBgm.set(key, def.wave);
+      onProgress?.(1);
+      while (this.customBgm.size > CUSTOM_BGM_CACHE_MAX) {
+        this.customBgm.delete(this.customBgm.keys().next().value!);
+      }
+      return Promise.resolve(def.wave);
+    }
     return this.enqueueRender(async () => {
       await this.preload();
       const again = this.customBgm.get(key);
@@ -218,7 +228,7 @@ export class SfxPlayer {
    */
   async playComposedBgm(
     key: string,
-    def: SfxDef,
+    def: ComposedBgmDef,
     delaySec = 0,
     opts: { loop?: boolean; onProgress?: (ratio: number) => void } = {},
   ): Promise<'played' | 'failed' | 'superseded'> {
@@ -235,7 +245,8 @@ export class SfxPlayer {
     if (this.bgmGen !== gen || !this.enabled) return 'superseded';
     try {
       const ctx = this.ensureCtx();
-      const buffer = ctx.createBuffer(1, wave.length, OPLL_RATE);
+      const sampleRate = isPcmBgm(def) ? def.sampleRate : OPLL_RATE;
+      const buffer = ctx.createBuffer(1, wave.length, sampleRate);
       buffer.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
       const source = ctx.createBufferSource();
       source.buffer = buffer;

@@ -2,7 +2,9 @@
  * 図柄・筐体アセットのマニフェスト。
  * src/ui/assets/symbols/<図柄ID>.png を置くとビルドに取り込まれ、リールが
  * 絵文字からドット絵に切り替わる（無い図柄は絵文字フォールバック）。
- * アセットは AI 生成 + 後処理パイプライン（tools/process-symbols.ts）で作る。
+ * 新規アセットは AI 生成 + クロマキー除去後、
+ * tools/prepare-generated-symbol.ts で640x400の透明キャンバスへ整形する。
+ * 旧スプライトシート用パイプラインは tools/process-symbols.ts。
  * 生成プロンプト仕様: docs/asset-prompts.md
  */
 

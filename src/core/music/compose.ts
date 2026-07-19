@@ -33,6 +33,17 @@ export interface ComposeOptions {
    * キーが ComposeOptions の JSON なので、ここに持たせて「同じ曲 = 同じ音色」を保証する
    */
   voices?: VoiceOverride;
+  /** 省略時は従来どおり OPLL。保存済み v1 曲との後方互換を保つ。 */
+  soundChip?: 'opll' | 'nes2a03';
+  /** ファミコン 2A03 モード固有の音色パラメータ。 */
+  nes?: NesVoiceOptions;
+}
+
+export interface NesVoiceOptions {
+  /** パルス 1（主旋律）のデューティ。0=12.5%, 1=25%, 2=50%, 3=25%反転。 */
+  pulse1Duty?: 0 | 1 | 2 | 3;
+  /** パルス 2（伴奏）のデューティ。 */
+  pulse2Duty?: 0 | 1 | 2 | 3;
 }
 
 /** パート別の OPLL 音色上書き。未指定のパートはスタイル既定（opll-arrange.ts） */
