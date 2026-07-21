@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { compose, defaultChoiceFor, validatePiece } from '../core/music/compose.js';
+import {
+  compose,
+  defaultChoiceFor,
+  hasVariedChoiceFor,
+  validatePiece,
+  variedChoiceFor,
+} from '../core/music/compose.js';
 import type { ComposeOptions, NesVoiceOptions, Piece, VoiceOverride } from '../core/music/compose.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
 import {
@@ -72,6 +78,7 @@ interface ComposerForm {
   voices: VoiceOverride;
   nes: NesVoiceOptions;
   choice: number[];
+  autoVary: boolean;
   seed: number;
   loop: boolean;
 }
@@ -115,6 +122,7 @@ function loadComposerForm(): ComposerForm {
       Array.isArray(raw.choice) && raw.choice.every((c) => Number.isInteger(c) && c >= 0)
         ? (raw.choice as number[])
         : defaultChoiceFor(PROGRESSIONS.find((p) => p.id === progId)!, bars),
+    autoVary: raw.autoVary !== false,
     seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
     loop: raw.loop !== false,
   };
@@ -132,6 +140,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [voices, setVoices] = useState<VoiceOverride>(initial.voices);
   const [nes, setNes] = useState<NesVoiceOptions>(initial.nes);
   const [choice, setChoice] = useState<number[]>(initial.choice);
+  const [autoVary, setAutoVary] = useState(initial.autoVary);
   const [seed, setSeed] = useState(initial.seed);
   const [loop, setLoop] = useState(initial.loop);
   const [piece, setPiece] = useState<Piece | null>(null);
@@ -153,16 +162,18 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
 
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
-    saveStored(FORM_KEY, { bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, seed, loop });
-  }, [bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, seed, loop]);
+    saveStored(FORM_KEY, { bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, seed, loop });
+  }, [bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, seed, loop]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
   const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);
   const prog = progs.find((p) => p.id === progId) ?? progs[0]!;
+  const canVaryChords = useMemo(() => hasVariedChoiceFor(prog, bars, choice), [bars, choice, prog]);
 
   const resetChoice = (nextProgId: string, nextBars: 4 | 8) => {
     const p = PROGRESSIONS.find((q) => q.id === nextProgId)!;
     setChoice(defaultChoiceFor(p, nextBars));
+    setAutoVary(true);
   };
 
   const selectBars = (next: 4 | 8) => {
@@ -207,11 +218,17 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     }
   };
 
-  const composeAndPlay = (nextSeed: number) => {
+  const composeAndPlay = (nextSeed: number, forceChordVariation = false) => {
     // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
     const picked = Object.fromEntries(
       VOICE_PARTS.filter(({ part }) => voices[part] !== undefined).map(({ part }) => [part, voices[part]]),
     ) as VoiceOverride;
+    const nextChoice = forceChordVariation
+      ? variedChoiceFor(prog, bars, nextSeed, { chancePercent: 100, currentChoice: choice })
+      : autoVary
+        ? variedChoiceFor(prog, bars, nextSeed)
+        : [...choice];
+    if (forceChordVariation || autoVary) setChoice(nextChoice);
     void playOptions({
       progressionId: prog.id,
       styleId,
@@ -219,7 +236,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       bpm,
       bars,
       seed: nextSeed,
-      choice: [...choice],
+      choice: nextChoice,
       soundChip,
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
@@ -429,6 +446,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                       const next = [...choice];
                       next[bar] = Number(e.target.value);
                       setChoice(next);
+                      setAutoVary(false);
                     }}
                   >
                     {slot.map((opt, i) => (
@@ -444,8 +462,23 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         </div>
 
         <div className="panel-controls">
+          <label>
+            <input type="checkbox" checked={autoVary} onChange={(e) => setAutoVary(e.target.checked)} />
+            作曲時、25%の確率でコード変化レシピを選ぶ（8小節は後半のみ）
+          </label>
+        </div>
+
+        <div className="panel-controls">
           <button onClick={() => composeAndPlay(newSeed())} disabled={progress !== null} data-testid="st-compose">
             🎲 作曲して再生
+          </button>
+          <button
+            onClick={() => composeAndPlay(newSeed(), true)}
+            disabled={progress !== null || !canVaryChords}
+            data-testid="st-chord-variation"
+            title="現在とは違う、安全なコード変化レシピを抽選します"
+          >
+            🎹 コード変化して再生
           </button>
           <button onClick={() => composeAndPlay(seed)} disabled={!piece || progress !== null} data-testid="st-replay">
             ▶ 同じメロディで再生

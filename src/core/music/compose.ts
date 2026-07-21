@@ -115,6 +115,58 @@ export function defaultChoiceFor(prog: ProgressionDef, bars: number): number[] {
   return choice;
 }
 
+export interface ChoiceVariationOptions {
+  /** 変化レシピを選ぶ確率。通常の自動変化は 25、専用ボタンは 100。 */
+  chancePercent?: number;
+  /** 専用ボタンで、現在表示中のレシピを抽選対象から外すために渡す。 */
+  currentChoice?: readonly number[];
+}
+
+function expandedVariationsFor(prog: ProgressionDef, bars: 4 | 8): number[][] {
+  if (prog.slots.length === bars) return prog.variations.map((variation) => [...variation]);
+  if (prog.slots.length === 4 && bars === 8) {
+    return prog.variations.map((variation) => [...prog.defaultChoice, ...variation]);
+  }
+  return [];
+}
+
+function choicesEqual(a: readonly number[], b: readonly number[], bars: number): boolean {
+  return a.length >= bars && b.length >= bars && Array.from({ length: bars }, (_, bar) => a[bar] === b[bar]).every(Boolean);
+}
+
+/** 現在とは異なる、カタログ登録済みの変化レシピがあるか。 */
+export function hasVariedChoiceFor(
+  prog: ProgressionDef,
+  bars: 4 | 8,
+  currentChoice: readonly number[] = defaultChoiceFor(prog, bars),
+): boolean {
+  return expandedVariationsFor(prog, bars).some((variation) => !choicesEqual(variation, currentChoice, bars));
+}
+
+/**
+ * 定番進行または現在の進行から、音楽的に確認済みの変化レシピを 1 つ抽選する。
+ * 4 小節進行を 8 小節へ展開する場合は、前半を定番のまま保って後半だけを A' にする。
+ * メロディ用 RNG とは別系列にし、同じ seed から常に同じ進行を再現する。
+ */
+export function variedChoiceFor(
+  prog: ProgressionDef,
+  bars: 4 | 8,
+  seed: number,
+  options: ChoiceVariationOptions = {},
+): number[] {
+  const current = [...(options.currentChoice ?? defaultChoiceFor(prog, bars))];
+  const candidates = expandedVariationsFor(prog, bars).filter(
+    (variation) => !choicesEqual(variation, current, bars),
+  );
+  if (candidates.length === 0) return current;
+
+  // 別系列と分かる固定 salt。通常は曲全体の 25% だけ変化させ、「毎回違う」にはしない。
+  const rng = new Xoshiro128((seed ^ 0x4348_4f52) >>> 0);
+  const chance = Math.max(0, Math.min(100, options.chancePercent ?? 25));
+  if (rng.nextInt(100) >= chance) return current;
+  return [...candidates[rng.nextInt(candidates.length)]!];
+}
+
 /** target に最も近い、pcs に含まれる MIDI ノート（音域内） */
 function nearestWithPc(target: number, pcs: readonly number[], lo = MELODY_LO, hi = MELODY_HI): number {
   const t = Math.max(lo, Math.min(hi, target));

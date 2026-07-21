@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { compose, defaultChoiceFor, validatePiece } from '../src/core/music/compose.js';
+import {
+  compose,
+  defaultChoiceFor,
+  hasVariedChoiceFor,
+  validatePiece,
+  variedChoiceFor,
+} from '../src/core/music/compose.js';
 import type { ComposeOptions } from '../src/core/music/compose.js';
 import { CHORDS, PROGRESSIONS, STYLES, chordName } from '../src/core/music/theory.js';
 
@@ -12,6 +18,17 @@ const base: ComposeOptions = {
   seed: 42,
 };
 
+function allChoicesFor(prog: (typeof PROGRESSIONS)[number], bars: 4 | 8): number[][] {
+  let choices: number[][] = [[]];
+  for (let bar = 0; bar < bars; bar++) {
+    const optionCount = prog.slots[bar % prog.slots.length]!.length;
+    choices = choices.flatMap((prefix) =>
+      Array.from({ length: optionCount }, (_, option) => [...prefix, option]),
+    );
+  }
+  return choices;
+}
+
 describe('理論データ', () => {
   it('進行カタログのトークンはすべてコード定義を持つ', () => {
     for (const prog of PROGRESSIONS) {
@@ -21,6 +38,26 @@ describe('理論データ', () => {
             expect(CHORDS[token], `${prog.id}: ${token}`).toBeDefined();
           }
         }
+      }
+    }
+  });
+
+  it('各進行は3〜5個の有効で重複しない変化レシピを持つ', () => {
+    for (const prog of PROGRESSIONS) {
+      expect(prog.variations.length, prog.id).toBeGreaterThanOrEqual(3);
+      expect(prog.variations.length, prog.id).toBeLessThanOrEqual(5);
+      expect(new Set(prog.variations.map((variation) => variation.join(','))).size, prog.id).toBe(
+        prog.variations.length,
+      );
+      for (const variation of prog.variations) {
+        expect(variation, prog.id).toHaveLength(prog.slots.length);
+        expect(variation, prog.id).not.toEqual(prog.defaultChoice);
+        if (prog.slots.length === 8) {
+          expect(variation.slice(0, 4), `${prog.id}: 8小節の前半`).toEqual(prog.defaultChoice.slice(0, 4));
+        }
+        variation.forEach((choice, bar) => {
+          expect(choice, `${prog.id}/${variation.join(',')}/${bar + 1}小節`).toBeLessThan(prog.slots[bar]!.length);
+        });
       }
     }
   });
@@ -70,6 +107,59 @@ describe('compose', () => {
     const piece = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8 });
     expect(piece.barChordNames.slice(0, 3)).toEqual(piece.barChordNames.slice(4, 7));
     expect(piece.barChordNames[7]).toBe('G'); // V
+  });
+
+  it('控えめなコード変化は決定論的に登録済みレシピから抽選する', () => {
+    const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;
+    const standard = defaultChoiceFor(prog, 4);
+    const results = Array.from({ length: 200 }, (_, seed) => variedChoiceFor(prog, 4, seed));
+    const recipeKeys = new Set(prog.variations.map((variation) => variation.join(',')));
+
+    expect(variedChoiceFor(prog, 4, 42)).toEqual(variedChoiceFor(prog, 4, 42));
+    expect(results.some((choice) => choice.every((value, bar) => value === standard[bar]))).toBe(true);
+    expect(results.some((choice) => choice.some((value, bar) => value !== standard[bar]))).toBe(true);
+    for (const choice of results) {
+      expect(choice.join(',') === standard.join(',') || recipeKeys.has(choice.join(','))).toBe(true);
+    }
+  });
+
+  it('コード変化ボタンは現在と異なるレシピを必ず抽選する', () => {
+    const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;
+    const current = prog.variations[0]!;
+    const results = new Set<string>();
+    expect(hasVariedChoiceFor(prog, 4, current)).toBe(true);
+    for (let seed = 0; seed < 200; seed++) {
+      const choice = variedChoiceFor(prog, 4, seed, { chancePercent: 100, currentChoice: current });
+      expect(choice).not.toEqual(current);
+      expect(prog.variations).toContainEqual(choice);
+      results.add(choice.join(','));
+    }
+    expect(results.size).toBeGreaterThan(1);
+  });
+
+  it('全スロット選択肢の組み合わせで強拍コードトーン検証を通る', () => {
+    for (const prog of PROGRESSIONS) {
+      for (const bars of [4, 8] as const) {
+        if (prog.slots.length > bars) continue;
+        for (const choice of allChoicesFor(prog, bars)) {
+          for (const seed of [1, 42]) {
+            const piece = compose({ ...base, progressionId: prog.id, bars, choice, seed });
+            expect(validatePiece(piece), `${prog.id}/${bars}小節/${choice.join(',')}/seed=${seed}`).toEqual([]);
+          }
+        }
+      }
+    }
+  });
+
+  it('8小節のコード変化は前半を固定し、後半を登録済みレシピにする', () => {
+    const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;
+    const standard = defaultChoiceFor(prog, 8);
+    const recipeKeys = new Set(prog.variations.map((variation) => variation.join(',')));
+    for (let seed = 0; seed < 200; seed++) {
+      const choice = variedChoiceFor(prog, 8, seed);
+      expect(choice.slice(0, 4)).toEqual(standard.slice(0, 4));
+      expect(choice.join(',') === standard.join(',') || recipeKeys.has(choice.slice(4).join(','))).toBe(true);
+    }
   });
 
   it('JTTOU 進行はキー外の音（E7 の G# 等）を正しくコードトーンとして扱う', () => {

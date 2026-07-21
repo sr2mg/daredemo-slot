@@ -25,6 +25,8 @@ export const CHORDS: Record<string, ChordDef> = {
   vi: { root: 9, quality: 'm', tones: [9, 0, 4] },
   IVM7: { root: 5, quality: 'M7', tones: [5, 9, 0, 4] },
   III7: { root: 4, quality: '7', tones: [4, 8, 11, 2] },
+  ii7: { root: 2, quality: 'm7', tones: [2, 5, 9, 0] },
+  iii7: { root: 4, quality: 'm7', tones: [4, 7, 11, 2] },
   vi7: { root: 9, quality: 'm7', tones: [9, 0, 4, 7] },
   v7: { root: 7, quality: 'm7', tones: [7, 10, 2, 5] },
   I7: { root: 0, quality: '7', tones: [0, 4, 7, 10] },
@@ -42,6 +44,8 @@ export interface ProgressionDef {
   slots: readonly (readonly SlotOption[])[];
   /** 定番の選び方（各小節のスロット index） */
   defaultChoice: readonly number[];
+  /** ボタン・自動変化で抽選する、音楽的に確認済みの進行レシピ */
+  variations: readonly (readonly number[])[];
 }
 
 export const PROGRESSIONS: ProgressionDef[] = [
@@ -50,16 +54,28 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: '王道ポップ',
     feel: '明るく安定',
     usage: 'RB 向き',
-    slots: [[['I']], [['vi']], [['IV']], [['V'], ['IV', 'V']]],
+    slots: [[['I']], [['vi'], ['V'], ['iii']], [['IV'], ['vi'], ['ii']], [['V'], ['IV', 'V'], ['IV']]],
     defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 1], // I → vi → IV → IV・V
+      [0, 1, 1, 2], // I → V → vi → IV
+      [0, 2, 0, 0], // I → iii → IV → V
+      [0, 0, 2, 0], // I → vi → ii → V
+    ],
   },
   {
     id: 'fanfare',
     name: 'ファンファーレ',
     feel: '祝祭・完結感',
     usage: '単発ジングル向き（末尾 I で着地）',
-    slots: [[['I']], [['IV']], [['V']], [['I'], ['V']]],
+    slots: [[['I']], [['IV'], ['ii']], [['V'], ['IV', 'V']], [['I'], ['V']]],
     defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 1], // I → IV → V → V（ループへ引っ張る）
+      [0, 1, 0, 0], // I → ii → V → I
+      [0, 0, 1, 0], // I → IV → IV・V → I
+      [0, 1, 0, 1], // I → ii → V → V
+    ],
   },
   {
     id: 'tanaka-manabe',
@@ -74,30 +90,55 @@ export const PROGRESSIONS: ProgressionDef[] = [
       [['I'], ['iii'], ['V'], ['vi']],
     ],
     defaultChoice: [0, 0, 0, 0], // 定番: F → G → Am → C（キー C の場合）
+    variations: [
+      [1, 0, 0, 0], // ii → V → vi → I
+      [0, 1, 0, 0], // IV → iii → vi → I
+      [0, 0, 0, 1], // IV → V → vi → iii
+      [0, 0, 0, 2], // IV → V → vi → V
+      [1, 0, 0, 2], // ii → V → vi → V
+    ],
   },
   {
     id: 'komuro',
     name: '小室進行',
     feel: '疾走感・ドラマチック',
     usage: 'BPM170 と相性◎',
-    slots: [[['vi']], [['IV']], [['V']], [['I'], ['V']]],
+    slots: [[['vi']], [['IV'], ['ii'], ['iii']], [['V'], ['IV', 'V'], ['IV']], [['I'], ['V']]],
     defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 1], // vi → IV → V → V
+      [0, 1, 0, 0], // vi → ii → V → I
+      [0, 0, 1, 0], // vi → IV → IV・V → I
+      [0, 2, 2, 1], // vi → iii → IV → V
+    ],
   },
   {
     id: 'canon',
     name: 'カノン風',
     feel: '壮大',
     usage: 'BB(8小節) 専用',
-    slots: [[['I']], [['V']], [['vi']], [['iii']], [['IV']], [['I']], [['IV']], [['V']]],
+    slots: [[['I']], [['V']], [['vi']], [['iii']], [['IV']], [['I'], ['vi']], [['IV'], ['ii']], [['V'], ['IV', 'V']]],
     defaultChoice: [0, 0, 0, 0, 0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 0, 0, 1, 0, 0], // 後半を vi へ寄せる
+      [0, 0, 0, 0, 0, 0, 1, 0], // 終盤を ii → V
+      [0, 0, 0, 0, 0, 0, 0, 1], // 最後を IV → V
+      [0, 0, 0, 0, 0, 1, 1, 1], // vi → ii → IV・V
+    ],
   },
   {
     id: 'jttou',
     name: 'Just the Two of Us 進行',
     feel: 'シティポップ・浮遊感',
     usage: 'AT 中/通常時向き',
-    slots: [[['IVM7']], [['III7']], [['vi7']], [['v7', 'I7']]],
+    slots: [[['IVM7'], ['ii7']], [['III7'], ['iii7']], [['vi7']], [['v7', 'I7'], ['I7']]],
     defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [1, 0, 0, 0], // ii7 → III7 → vi7 → v7・I7
+      [0, 1, 0, 0], // IVM7 → iii7 → vi7 → v7・I7
+      [0, 0, 0, 1], // 最後の I7 を長く鳴らす
+      [1, 1, 0, 1], // ダイアトニック寄りに柔らかくする
+    ],
   },
 ];
 
