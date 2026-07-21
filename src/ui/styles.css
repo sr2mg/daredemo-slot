@@ -54,6 +54,23 @@ body {
   border-color: #5a5a78;
 }
 
+.large-display-toggle {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #3a3a55;
+  border-radius: 10px;
+  background: #1e1e2c;
+  color: #c7c9e8;
+  font-size: clamp(13px, 2vmin, 16px);
+}
+
+.large-display-toggle:hover,
+.large-display-toggle-active {
+  color: #17171f;
+  border-color: #ffd54f;
+  background: #ffd54f;
+}
+
 .machine-select {
   font-family: inherit;
   font-size: clamp(16px, 2.6vmin, 22px);
@@ -421,6 +438,88 @@ button:disabled {
   font-family: 'Consolas', monospace;
   font-size: clamp(28px, 5vmin, 44px);
   color: #7fff9f;
+}
+
+/* ===== 大画面モード =====
+ * 完成画面への transform: scale() は使わず、目的の実寸で再レイアウトする。
+ * CSS の文字・線・陰影と元解像度 640x400 の図柄をブラウザが最終寸法で描くため、
+ * 3840x1600 級でも通常モードの拡大コピーより鮮明に見える。
+ */
+
+.app-large-display {
+  width: 100%;
+  max-width: min(100%, var(--large-app-w));
+  padding-inline: clamp(16px, 1.5vw, 48px);
+}
+
+.app-large-display .cabinet {
+  padding: clamp(20px, calc(var(--large-cell-h) * 0.16), 40px);
+  border-width: clamp(2px, calc(var(--large-cell-h) * 0.012), 3px);
+  border-radius: clamp(20px, calc(var(--large-cell-h) * 0.12), 30px);
+}
+
+.app-large-display .panel-art {
+  width: min(100%, var(--large-panel-w));
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.app-large-display .reels {
+  gap: clamp(7px, calc(var(--large-cell-h) * 0.035), 12px);
+  padding: clamp(8px, calc(var(--large-cell-h) * 0.04), 12px);
+  margin-bottom: clamp(24px, calc(var(--large-cell-h) * 0.12), 34px);
+}
+
+.app-large-display .reel {
+  --cell-h: var(--large-cell-h);
+  width: var(--large-reel-w);
+}
+
+.app-large-display .controls {
+  gap: clamp(14px, calc(var(--large-cell-h) * 0.075), 22px);
+  margin-bottom: clamp(24px, calc(var(--large-cell-h) * 0.12), 34px);
+}
+
+.app-large-display .controls button {
+  min-height: clamp(58px, calc(var(--large-cell-h) * 0.34), 82px);
+  padding: clamp(16px, calc(var(--large-cell-h) * 0.09), 24px);
+  font-size: clamp(18px, calc(var(--large-cell-h) * 0.105), 26px);
+}
+
+.app-large-display .bet-btn,
+.app-large-display .stop-btn {
+  width: clamp(110px, calc(var(--large-cell-h) * 0.68), 164px);
+}
+
+.app-large-display .counter-row {
+  gap: clamp(48px, calc(var(--large-cell-h) * 0.3), 72px);
+}
+
+.app-large-display .counter-label {
+  font-size: clamp(13px, calc(var(--large-cell-h) * 0.07), 17px);
+}
+
+.app-large-display .counter-value {
+  font-size: clamp(44px, calc(var(--large-cell-h) * 0.26), 62px);
+}
+
+.app-large-display .notice-lamp {
+  width: clamp(22px, calc(var(--large-cell-h) * 0.15), 36px);
+  height: clamp(22px, calc(var(--large-cell-h) * 0.15), 36px);
+}
+
+.app-large-display .log,
+.app-large-display .tab-bar,
+.app-large-display .tab-content {
+  max-width: 980px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .large-display-toggle {
+    transition: none;
+  }
 }
 
 .win-value {

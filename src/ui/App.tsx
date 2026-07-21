@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MutableRefObject } from 'react';
+import type { CSSProperties, MutableRefObject } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { playPerfect } from '../core/sim.js';
 import { NavLayer } from '../core/nav.js';
@@ -23,6 +23,8 @@ import { Subboard } from './subboard.js';
 import type { SubboardView } from './subboard.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
 import { SoundTestPanel } from './sound-test.js';
+import { calculateLargeDisplayMetrics } from './display-mode.js';
+import type { BrowserViewport } from './display-mode.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
@@ -73,6 +75,8 @@ const FORCE_PURE_MISS = 'PURE_MISS';
 const CUSTOM_KEY = 'daredemo.customMachines.v1';
 /** 最後に遊んでいた機種名（再訪時に同じ台へ座り直す） */
 const MACHINE_KEY = 'daredemo.machine.v1';
+/** 大画面モード。モニターを使う人は再訪時も同じ表示にする */
+const LARGE_DISPLAY_KEY = 'daredemo.largeDisplay.v1';
 
 /** ツールタブ。遊ぶ場所（筐体）は常時表示で、道具だけを役割別に分ける */
 type TabId = 'play' | 'sound' | 'build' | 'lab';
@@ -107,6 +111,38 @@ interface ReelView {
 
 const freshReels = (machine: MachineDef): ReelView[] =>
   machine.strips.map(() => ({ top: 0, stopped: true }));
+
+function readBrowserViewport(): BrowserViewport {
+  const viewport = window.visualViewport;
+  return {
+    width: Math.round(viewport?.width ?? document.documentElement.clientWidth ?? window.innerWidth),
+    height: Math.round(viewport?.height ?? document.documentElement.clientHeight ?? window.innerHeight),
+    devicePixelRatio: window.devicePixelRatio || 1,
+  };
+}
+
+/** Chrome のアドレスバー等を除いた、実際にページが使える領域へ追従する */
+function useBrowserViewport(): BrowserViewport {
+  const [viewport, setViewport] = useState<BrowserViewport>(readBrowserViewport);
+
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => setViewport(readBrowserViewport()));
+    };
+    const visualViewport = window.visualViewport;
+    window.addEventListener('resize', update);
+    visualViewport?.addEventListener('resize', update);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', update);
+      visualViewport?.removeEventListener('resize', update);
+    };
+  }, []);
+
+  return viewport;
+}
 
 interface ReelColumnProps {
   strip: readonly string[];
@@ -275,6 +311,22 @@ export function App() {
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [debug, setDebug] = usePersistentState('daredemo.debugMode.v1', false, oneOf(true, false));
+  const [largeDisplay, setLargeDisplay] = usePersistentState(LARGE_DISPLAY_KEY, false, oneOf(true, false));
+  const browserViewport = useBrowserViewport();
+  const largeDisplayMetrics = useMemo(
+    () => calculateLargeDisplayMetrics(browserViewport),
+    [browserViewport],
+  );
+  const largeDisplayStyle = useMemo(
+    () =>
+      ({
+        '--large-cell-h': `${largeDisplayMetrics.cellHeight}px`,
+        '--large-reel-w': `${largeDisplayMetrics.reelWidth}px`,
+        '--large-panel-w': `${largeDisplayMetrics.panelWidth}px`,
+        '--large-app-w': `${largeDisplayMetrics.appWidth}px`,
+      }) as CSSProperties,
+    [largeDisplayMetrics],
+  );
   const [forceSel, setForceSel] = useState('');
   /** 即入賞（教材モード）の対象ボーナス */
   const [instantSel, setInstantSel] = useState(() => machines[0]!.bonuses[0]?.id ?? '');
@@ -742,7 +794,7 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${largeDisplay ? 'app-large-display' : ''}`} style={largeDisplayStyle}>
       <div className="machine-select-row">
         <select
           className="machine-select"
@@ -781,6 +833,20 @@ export function App() {
         <a className="repo-link" href={REPOSITORY_URL} target="_blank" rel="noreferrer">
           GitHub
         </a>
+        <button
+          type="button"
+          className={`large-display-toggle ${largeDisplay ? 'large-display-toggle-active' : ''}`}
+          aria-pressed={largeDisplay}
+          data-testid="large-display-toggle"
+          onClick={() => setLargeDisplay(!largeDisplay)}
+          title={
+            largeDisplay
+              ? `表示領域 ${browserViewport.width}×${browserViewport.height} CSS px / 実描画 ${largeDisplayMetrics.physicalWidth}×${largeDisplayMetrics.physicalHeight} px / リール1コマ ${largeDisplayMetrics.cellHeight}px`
+              : 'Chromeの表示領域に合わせて、筐体を高精細に再レイアウトします'
+          }
+        >
+          {largeDisplay ? `↙ 通常表示 (${largeDisplayMetrics.scale.toFixed(1)}×)` : '⛶ 大画面'}
+        </button>
       </div>
 
       <div className="status-row">
