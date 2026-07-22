@@ -150,7 +150,26 @@ export interface StyleDef {
   kick: readonly number[];
   snare: readonly number[];
   hat: readonly number[];
+  /** 16 小節曲の B セクション用。バックビートは保ち、密度やシンコペーションだけを変える。 */
+  sectionB: {
+    kick: readonly number[];
+    snare: readonly number[];
+    hat: readonly number[];
+  };
   bass: 'octave8' | 'root8' | 'rootFifth';
+  /** 主旋律の8分グリッド上の語彙。拍節の違いを音色だけでなく作曲へ反映する。 */
+  melody: {
+    /** step 0..7 の発音しやすさ。0・4は生成側で必ず強拍として残す。 */
+    onsetWeights: readonly number[];
+    /** 1小節の音数範囲。 */
+    density: readonly [number, number];
+    /** 音価に対するゲート比。短いほど歯切れがよい。 */
+    gate: number;
+    /** 弱拍で順次進行を選ぶ確率。 */
+    stepwisePercent: number;
+  };
+  /** フレーズ終端で次コードへ接続するベースの作法。 */
+  bassCadence: 'chromatic' | 'chordTone' | 'diatonicPickup';
 }
 
 export const STYLES: StyleDef[] = [
@@ -161,7 +180,19 @@ export const STYLES: StyleDef[] = [
     kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
     snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
     hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+    sectionB: {
+      kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0],
+      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+      hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+    },
     bass: 'octave8',
+    melody: {
+      onsetWeights: [100, 72, 38, 76, 100, 68, 42, 78],
+      density: [5, 6],
+      gate: 0.78,
+      stepwisePercent: 72,
+    },
+    bassCadence: 'chromatic',
   },
   {
     id: 'rock',
@@ -170,7 +201,19 @@ export const STYLES: StyleDef[] = [
     kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
     snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
     hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+    sectionB: {
+      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0],
+      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+      hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+    },
     bass: 'root8',
+    melody: {
+      onsetWeights: [100, 24, 82, 28, 100, 22, 78, 34],
+      density: [4, 5],
+      gate: 0.9,
+      stepwisePercent: 62,
+    },
+    bassCadence: 'chordTone',
   },
   {
     id: 'ska',
@@ -179,13 +222,27 @@ export const STYLES: StyleDef[] = [
     kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
     snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
     hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+    sectionB: {
+      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0],
+      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+      hat: [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
+    },
     bass: 'rootFifth',
+    melody: {
+      onsetWeights: [100, 82, 30, 88, 100, 84, 34, 90],
+      density: [5, 6],
+      gate: 0.58,
+      stepwisePercent: 78,
+    },
+    bassCadence: 'diatonicPickup',
   },
 ];
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 
 export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11] as const;
+/** 陽旋法寄りの五音音階。強拍のコードトーンと組み合わせ、和風の節回しに使う。 */
+export const YO_SCALE = [0, 2, 5, 7, 9] as const;
 
 /** サウンドテストで選べるキー（明るいメジャーの定番どころ） */
 export const KEYS: readonly { root: number; label: string }[] = [

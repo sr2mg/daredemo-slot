@@ -14,7 +14,8 @@ import { ASSIGNABLE_SFX, PRESET_SFX, resolveSfxAssign } from './sfx-library.js';
  * - BGM は作曲エンジン + OPLL 編曲（opll-arrange.ts）のシーケンスを
  *   ensureComposedBgm でレンダリングして鳴らす（プリセット曲も自作曲も同じ経路）
  * - AudioContext はブラウザの自動再生制限のため、最初の play()（= ユーザー操作起点）で生成
- * - BGM は AudioBufferSourceNode.loop でループ。効果音より少し下げてミックス
+ * - BGM は AudioBufferSourceNode.loop でループ。イントロ付き曲は初回だけ先頭から鳴らし、
+ *   2周目以降は指定されたAの頭へ戻る。効果音より少し下げてミックス
  */
 
 const STORAGE_KEY = 'daredemo.sfx.v1';
@@ -251,6 +252,11 @@ export class SfxPlayer {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.loop = opts.loop ?? true;
+      if (source.loop) {
+        // loopStart/End を設定しても初回の start() は0秒から始まるため、イントロは一度だけ鳴る。
+        source.loopStart = Math.max(0, Math.min(def.loopStart, buffer.duration));
+        source.loopEnd = Math.max(source.loopStart, Math.min(def.loopEnd, buffer.duration));
+      }
       source.connect(this.bgmGain!);
       const remaining = Math.max(0, delaySec - (performance.now() - requestedAt) / 1000);
       source.start(ctx.currentTime + remaining);

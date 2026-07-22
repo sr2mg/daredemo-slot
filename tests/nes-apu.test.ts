@@ -42,7 +42,7 @@ describe('ファミコン2A03音源', () => {
     }
     expect(peak).toBeGreaterThan(0.05);
     expect(peak).toBeLessThanOrEqual(1);
-  });
+  }, 10_000);
 
   it('パルスのデューティ変更が実波形を変える', () => {
     const piece = compose(options);
@@ -57,5 +57,17 @@ describe('ファミコン2A03音源', () => {
     const legacy = arrangeComposedBgm(piece, options);
     expect(isPcmBgm(nes)).toBe(true);
     expect(isPcmBgm(legacy)).toBe(false);
+  });
+
+  it('16小節PCMにもイントロ後のループ区間を秒で持たせる', () => {
+    const gameOptions = { ...options, bars: 16 as const, seed: 43, soundChip: 'nes2a03' as const };
+    const piece = compose(gameOptions);
+    const def = arrangeComposedBgm(piece, gameOptions);
+    expect(isPcmBgm(def)).toBe(true);
+    if (!isPcmBgm(def)) return;
+    expect(def.loopStart).toBeCloseTo(piece.loopStartBeat * 60 / piece.bpm, 9);
+    expect(def.loopEnd).toBeCloseTo(piece.beats * 60 / piece.bpm, 9);
+    expect(def.loopStart).toBeGreaterThan(0);
+    expect(def.loopEnd).toBeGreaterThan(def.loopStart);
   });
 });

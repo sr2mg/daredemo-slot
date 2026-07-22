@@ -1,4 +1,6 @@
-import type { NesVoiceOptions, Piece } from '../core/music/compose.js';
+import type {
+  ArrangementSectionPlan, NesVoiceOptions, NoteEvent, Piece,
+} from '../core/music/compose.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;
@@ -84,6 +86,21 @@ function sortGateEvents(events: GateEvent[]): void {
   events.sort((a, b) => a.sample - b.sample || Number(a.on) - Number(b.on));
 }
 
+const notesOverlap = (a: NoteEvent, b: NoteEvent): boolean =>
+  a.beat < b.beat + b.dur && b.beat < a.beat + a.dur;
+
+const nesVolumeFor = (note: NoteEvent, fallback: number): number => note.velocity === undefined
+  ? fallback
+  : Math.max(0, Math.min(15, Math.round(note.velocity * 15)));
+
+function sectionPlanAt(piece: Piece, beat: number): ArrangementSectionPlan | null {
+  if (beat < piece.loopStartBeat) return null;
+  const bodyBeat = beat - piece.loopStartBeat;
+  return piece.bars === 16 && bodyBeat >= 8 * 4
+    ? piece.arrangementPlan.sectionB
+    : piece.arrangementPlan.sectionA;
+}
+
 function clockPulse(state: PulseState): number {
   const periodSamples = (state.timer + 1) * 2 * NES_SAMPLE_RATE / NES_CPU_CLOCK;
   state.phase += 1 / periodSamples;
@@ -160,14 +177,35 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
 
   for (const n of piece.melody) {
     const strong = n.beat % 4 === 0 || n.beat % 4 === 2;
-    addNoteEvents(pulse1Events, n.beat, n.dur, piece.bpm, n.midi, strong ? 15 : 11);
+    addNoteEvents(
+      pulse1Events, n.beat, n.dur, piece.bpm, n.midi,
+      nesVolumeFor(n, strong ? 15 : 11),
+    );
   }
+  const chordBacking: (NoteEvent & { volume: number })[] = [];
   for (const chord of piece.chords) {
     const third = chord.midis[1] ?? chord.midis[0]!;
     const fifth = chord.midis[2] ?? third;
     for (let beat = 0; beat < chord.dur; beat++) {
-      addNoteEvents(pulse2Events, chord.beat + beat + 0.5, 0.2, piece.bpm, beat % 2 === 0 ? third : fifth, 7);
+      const absoluteBeat = chord.beat + beat + 0.5;
+      const sectionPlan = sectionPlanAt(piece, absoluteBeat);
+      const thin = sectionPlan === null || sectionPlan.backingDensity === 'sparse';
+      // sparse区間はパルス2の裏打ちを半分にし、full区間では毎拍鳴らす。
+      if (thin && beat % 2 === 0) continue;
+      chordBacking.push({
+        beat: absoluteBeat,
+        dur: 0.2,
+        midi: beat % 2 === 0 ? third : fifth,
+        volume: thin ? 5 : 7,
+      });
     }
+  }
+  const counter = piece.counterMelody ?? [];
+  for (const n of chordBacking.filter((note) => !counter.some((response) => notesOverlap(note, response)))) {
+    addNoteEvents(pulse2Events, n.beat, n.dur, piece.bpm, n.midi, n.volume);
+  }
+  for (const n of counter) {
+    addNoteEvents(pulse2Events, n.beat, n.dur, piece.bpm, n.midi, nesVolumeFor(n, 11));
   }
   for (const n of piece.bass) addTriangleEvents(triangleEvents, n.beat, n.dur, piece.bpm, n.midi);
   sortGateEvents(pulse1Events);

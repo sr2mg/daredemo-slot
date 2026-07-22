@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   compose,
+  ARRANGEMENT_ARC_LABELS,
+  COUNTER_ROLE_LABELS,
   defaultChoiceFor,
+  diagnosePiece,
   hasVariedChoiceFor,
-  validatePiece,
+  INTRO_ROLE_LABELS,
   variedChoiceFor,
 } from '../core/music/compose.js';
-import type { ComposeOptions, NesVoiceOptions, Piece, VoiceOverride } from '../core/music/compose.js';
+import type {
+  ComposeBars,
+  ComposeOptions,
+  DiagnosticCategory,
+  MelodyMode,
+  NesVoiceOptions,
+  Piece,
+  VoiceOverride,
+} from '../core/music/compose.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
 import {
   DEFAULT_ASSIGN,
@@ -43,6 +54,16 @@ const newSeed = (): number => (Math.random() * 0xffff_ffff) >>> 0;
 
 const newSongId = (): string => `s${Date.now().toString(36)}${newSeed().toString(36)}`;
 
+const DIAGNOSTIC_LABELS: Record<DiagnosticCategory, string> = {
+  harmony: '和声',
+  melody: '旋律',
+  voiceLeading: '声部進行',
+  rhythm: 'リズム',
+  counterpoint: '副旋律',
+  form: 'フォーム',
+  loop: 'ループ',
+};
+
 /** 音色を上書きできるパート（リズムは OPLL リズムモード固定、エコーはリード追従） */
 const VOICE_PARTS: readonly { part: keyof VoiceOverride; label: string }[] = [
   { part: 'lead', label: 'リード' },
@@ -58,7 +79,10 @@ function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
   const chip = options.soundChip === 'nes2a03' ? 'ファミコン2A03' : 'OPLL';
-  const base = `${chip} / ${options.bars === 8 ? 'BB風8小節' : 'RB風4小節'} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const form = options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
+  const intro = options.bars === 16 && options.intro === false ? ' / イントロなし' : '';
+  const melody = options.melodyMode === 'japanese' ? ' / 和風五音' : '';
+  const base = `${chip} / ${form}${intro}${melody} / ${prog} / キー${key} / BPM${options.bpm}`;
   if (options.soundChip === 'nes2a03') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
@@ -69,9 +93,10 @@ function songSummary(options: ComposeOptions): string {
 const FORM_KEY = 'daredemo.bgmComposer.form.v1';
 
 interface ComposerForm {
-  bars: 4 | 8;
+  bars: ComposeBars;
   progId: string;
   styleId: string;
+  melodyMode: MelodyMode;
   keyRoot: number;
   bpm: number;
   soundChip: 'opll' | 'nes2a03';
@@ -79,6 +104,7 @@ interface ComposerForm {
   nes: NesVoiceOptions;
   choice: number[];
   autoVary: boolean;
+  intro: boolean;
   seed: number;
   loop: boolean;
 }
@@ -90,7 +116,7 @@ function loadComposerForm(): ComposerForm {
     {},
     (v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v),
   );
-  const bars = raw.bars === 8 ? 8 : 4;
+  const bars: ComposeBars = raw.bars === 16 ? 16 : raw.bars === 8 ? 8 : 4;
   const progId =
     typeof raw.progId === 'string' && PROGRESSIONS.some((p) => p.id === raw.progId && p.slots.length <= bars)
       ? raw.progId
@@ -106,6 +132,7 @@ function loadComposerForm(): ComposerForm {
     bars,
     progId,
     styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
+    melodyMode: raw.melodyMode === 'japanese' ? 'japanese' : 'major',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
     soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
@@ -123,6 +150,7 @@ function loadComposerForm(): ComposerForm {
         ? (raw.choice as number[])
         : defaultChoiceFor(PROGRESSIONS.find((p) => p.id === progId)!, bars),
     autoVary: raw.autoVary !== false,
+    intro: raw.intro !== false,
     seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
     loop: raw.loop !== false,
   };
@@ -130,9 +158,10 @@ function loadComposerForm(): ComposerForm {
 
 export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [initial] = useState(loadComposerForm);
-  const [bars, setBars] = useState<4 | 8>(initial.bars);
+  const [bars, setBars] = useState<ComposeBars>(initial.bars);
   const [progId, setProgId] = useState(initial.progId);
   const [styleId, setStyleId] = useState(initial.styleId);
+  const [melodyMode, setMelodyMode] = useState<MelodyMode>(initial.melodyMode);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
   const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
@@ -141,6 +170,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [nes, setNes] = useState<NesVoiceOptions>(initial.nes);
   const [choice, setChoice] = useState<number[]>(initial.choice);
   const [autoVary, setAutoVary] = useState(initial.autoVary);
+  const [intro, setIntro] = useState(initial.intro);
   const [seed, setSeed] = useState(initial.seed);
   const [loop, setLoop] = useState(initial.loop);
   const [piece, setPiece] = useState<Piece | null>(null);
@@ -162,21 +192,23 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
 
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
-    saveStored(FORM_KEY, { bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, seed, loop });
-  }, [bars, progId, styleId, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, seed, loop]);
+    saveStored(FORM_KEY, {
+      bars, progId, styleId, melodyMode, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop,
+    });
+  }, [bars, progId, styleId, melodyMode, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
   const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);
   const prog = progs.find((p) => p.id === progId) ?? progs[0]!;
   const canVaryChords = useMemo(() => hasVariedChoiceFor(prog, bars, choice), [bars, choice, prog]);
 
-  const resetChoice = (nextProgId: string, nextBars: 4 | 8) => {
+  const resetChoice = (nextProgId: string, nextBars: ComposeBars) => {
     const p = PROGRESSIONS.find((q) => q.id === nextProgId)!;
     setChoice(defaultChoiceFor(p, nextBars));
     setAutoVary(true);
   };
 
-  const selectBars = (next: 4 | 8) => {
+  const selectBars = (next: ComposeBars) => {
     const nextProgId = PROGRESSIONS.find((p) => p.id === prog.id && p.slots.length <= next)
       ? prog.id
       : PROGRESSIONS.filter((p) => p.slots.length <= next)[0]!.id;
@@ -238,6 +270,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       seed: nextSeed,
       choice: nextChoice,
       soundChip,
+      ...(intro ? {} : { intro: false }),
+      ...(melodyMode === 'japanese' ? { melodyMode } : {}),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
     });
@@ -288,7 +322,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     }
   };
 
-  const violations = piece ? validatePiece(piece) : [];
+  const diagnosis = piece ? diagnosePiece(piece) : null;
 
   const assignSelect = (slot: 'bb' | 'rb') => (
     <label className="assign-item">
@@ -316,6 +350,89 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     <details className="panel">
       <summary>BGM 作成（コード進行から作曲）</summary>
       <div className="panel-body">
+        <details className="composer-theory" data-testid="st-theory">
+          <summary>📖 作曲の仕組み・音楽理論</summary>
+          <div className="composer-theory-body">
+            <dl>
+              <dt>キーとコード進行</dt>
+              <dd>
+                コードはキーを基準にしたローマ数字で管理します。たとえば <code>I–vi–IV–V</code> は、
+                キーCなら <code>C–Am–F–G</code>、キーFなら <code>F–Dm–B♭–C</code>
+                （画面ではB♭をA#と表示）へ平行移動します。
+              </dd>
+
+              <dt>4小節、8小節、16小節</dt>
+              <dd>
+                4小節は短く覚えやすいループです。8小節では前半を基本形A、後半を変化形A&apos;として扱い、
+                最後をドミナントへ寄せて次のループへ戻りやすくします。16小節ではAを8小節、Bを8小節に分け、
+                必要なら、その前に2小節のイントロを一度だけ鳴らします。イントロはAの冒頭モチーフとスタイルから派生し、
+                主題予告・グルーヴ提示・ファンファーレ・駆け上がりのうち、曲調に合う役割を選びます。直前の1.5拍を
+                空けてAを強調し、ループ時はイントロを飛ばしてAの頭へ戻ります。A→Bの展開は毎回同じ足し算にせず、
+                後半を厚くする「積み上げ」、後半で引く「対比」、密度を段階的に切り替える「段丘」から決めます。
+              </dd>
+
+              <dt>ゲームBGMのイントロ</dt>
+              <dd>
+                イントロは曲本体の短縮版ではなく、「世界観を示す」「主題を予告する」「Aの開始位置を知らせる」ための
+                初回専用トランジションです。この生成では先に役割を決め、Aのモチーフやスタイルのリズムを変形して内容を
+                作り、拍単位のブレイクからAへ渡します。イントロなしを選んだ場合は、ループ本体のAから直接始まります。
+              </dd>
+
+              <dt>コード変化レシピ</dt>
+              <dd>
+                各進行には3〜5個の確認済みレシピがあります。「コード変化して再生」は現在と同じ形を除外して抽選し、
+                8小節では前半を保ったまま後半だけを変化させます。16小節ではAを保ち、Bに変化レシピを展開します。
+                自由なランダム置換はしません。
+              </dd>
+
+              <dt>メロディ</dt>
+              <dd>
+                先に各小節の役割、音域の起伏、終止の種類、到達音をPhrasePlanとして決めます。メロディは2小節を
+                「提示＋応答」の1フレーズとして反復・変奏し、応答の末尾では半終止・終止・ターンアラウンドの
+                目標音へ実際に到達します。各小節の1・3拍目はその時点のコードトーンです。最高音はセクション後半の
+                2候補からシードで選び、毎曲まったく同じ位置には固定しません。最終小節の後半は音数を減らして
+                ループ頭へ余白を渡します。「王道メジャー」は7音音階です。「和風五音」は旋律だけを差し替えるのでなく、
+                陽旋法寄りの5音音階、同音反復、4度/5度跳躍、終止直前の前打音、開いた根音‐5度の伴奏配置、
+                音階内のベース接続を一つの様式として連動させます。
+              </dd>
+
+              <dt>副旋律とベース</dt>
+              <dd>
+                副旋律を後から隙間へ差すのではなく、PhrasePlanで主旋律と同時に専用の発音位置を予約します。
+                音程は主旋律に対する反行を優先します。展開型に応じてコードトーンで短く返答する型と、
+                小節をまたいで継続的に動く独立対旋律を使い分けます。ベースのフレーズ終端は小節番号ではなく、
+                半終止・終止・ループ接続と次コードを参照します。接続方法もユーロビートは半音接近、ロックはコードトーン、
+                スカは音階内のピックアップというように作曲スタイルへ合わせます。各声部の密度は選ばれた展開型に従います。
+              </dd>
+
+              <dt>リズムとドラム</dt>
+              <dd>
+                主旋律のリズムもスタイルごとに異なります。ユーロビートは細かな推進、ロックは表拍寄りの長めの音、
+                スカは裏拍と短い音を優先します。提示と応答には異なる8分音符単位のリズムを使い、Bでさらに変えます。
+                8小節目の末尾には短いドラムフィルを置き、その後は展開型に応じてB用グルーヴへ進むか、
+                打点を引いたブレイクダウンへ切り替えます。最終小節の最後の1拍は空けてAへ戻します。
+                自動生成時は最終コードもV（またはI7）へ寄せ、スタイル別のベース接続と合わせて次のAへ引っ張ります。
+                ベースはコードのルートを基準に、スタイルごとにオクターブや5度を混ぜます。
+              </dd>
+
+              <dt>伴奏と作曲診断</dt>
+              <dd>
+                コード伴奏は構成音を固定オクターブへ置かず、転回形を含む候補から直前の声部に最も近い配置を選びます。
+                音符には強弱とアクセント、スタッカート、テヌートを持たせ、FM音源と2A03それぞれの音量段階・音価へ反映します。
+                生成後はコードをトニック・プレドミナント・ドミナント等の機能でも評価し、和声、旋律、声部進行、
+                リズム、副旋律、フォーム、ループ接続を別々に診断します。
+                総合点だけでなく、気になる項目と具体的な位置も確認できます。
+              </dd>
+
+              <dt>シードとBPM</dt>
+              <dd>
+                BPMは曲全体の再生速度で、音符やコードの並びそのものは変えません。同じシードと設定なら同じ曲を再現します。
+                「作曲」「コード変化」は新しいシードでメロディも作り直し、「同じメロディで再生」は最後の曲をそのまま再現します。
+              </dd>
+            </dl>
+          </div>
+        </details>
+
         <div className="panel-controls">
           <select
             value={soundChip}
@@ -328,12 +445,13 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
           </select>
           <select
             value={bars}
-            onChange={(e) => selectBars(Number(e.target.value) as 4 | 8)}
+            onChange={(e) => selectBars(Number(e.target.value) as ComposeBars)}
             data-testid="st-bars"
-            title="用途 = 尺。RB はループ回数が多いので単純に、BB は A+A' で展開"
+            title="用途 = 尺。RB は短いループ、BB は A+A'、16小節は A→B で展開"
           >
             <option value={4}>RB 風（4小節ループ）</option>
             <option value={8}>BB 風（8小節ループ）</option>
+            <option value={16}>ゲームBGM風（16小節 A→B）</option>
           </select>
           <select value={keyRoot} onChange={(e) => setKeyRoot(Number(e.target.value))} data-testid="st-key">
             {KEYS.map((k) => (
@@ -359,6 +477,15 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 {s.name}（{s.feel}）
               </option>
             ))}
+          </select>
+          <select
+            value={melodyMode}
+            onChange={(e) => setMelodyMode(e.target.value as MelodyMode)}
+            data-testid="st-melody-mode"
+            title="旋律の音選びだけを変更します。副旋律とベースフレーズは両方で生成されます"
+          >
+            <option value="major">旋律: 王道メジャー</option>
+            <option value="japanese">旋律: 和風五音（陽旋法寄り）</option>
           </select>
         </div>
 
@@ -430,42 +557,68 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         </div>
 
         {/* コード進行のスロット選択: 選択肢が 1 つの小節は固定表示 */}
-        <div className="slot-row" data-testid="st-slots">
-          {Array.from({ length: bars }, (_, bar) => {
-            const slot = prog.slots[bar % prog.slots.length]!;
-            const idx = Math.min(choice[bar] ?? 0, slot.length - 1);
-            return (
-              <div key={bar} className="slot-item">
-                <span className="slot-label">{bar + 1}小節</span>
-                {slot.length === 1 ? (
-                  <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, keyRoot)).join(' ')}</span>
-                ) : (
-                  <select
-                    value={idx}
-                    onChange={(e) => {
-                      const next = [...choice];
-                      next[bar] = Number(e.target.value);
-                      setChoice(next);
-                      setAutoVary(false);
-                    }}
-                  >
-                    {slot.map((opt, i) => (
-                      <option key={i} value={i}>
-                        {opt.map((t) => chordName(t, keyRoot)).join(' ')}
-                      </option>
-                    ))}
-                  </select>
-                )}
+        <div className="slot-sections" data-testid="st-slots">
+          {(bars === 16
+            ? [
+                { label: 'A', start: 0, end: 8 },
+                { label: 'B', start: 8, end: 16 },
+              ]
+            : [{ label: '', start: 0, end: bars }]
+          ).map((section) => (
+            <div key={section.label || 'all'} className="slot-section">
+              {section.label && <div className="slot-section-title">{section.label} セクション</div>}
+              <div className="slot-row">
+                {Array.from({ length: section.end - section.start }, (_, offset) => section.start + offset).map((bar) => {
+                  const slot = prog.slots[bar % prog.slots.length]!;
+                  const idx = Math.min(choice[bar] ?? 0, slot.length - 1);
+                  return (
+                    <div key={bar} className="slot-item">
+                      <span className="slot-label">{bar + 1}小節</span>
+                      {slot.length === 1 ? (
+                        <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, keyRoot)).join(' ')}</span>
+                      ) : (
+                        <select
+                          value={idx}
+                          onChange={(e) => {
+                            const next = [...choice];
+                            next[bar] = Number(e.target.value);
+                            setChoice(next);
+                            setAutoVary(false);
+                          }}
+                        >
+                          {slot.map((opt, i) => (
+                            <option key={i} value={i}>
+                              {opt.map((t) => chordName(t, keyRoot)).join(' ')}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
 
         <div className="panel-controls">
           <label>
             <input type="checkbox" checked={autoVary} onChange={(e) => setAutoVary(e.target.checked)} />
-            作曲時、25%の確率でコード変化レシピを選ぶ（8小節は後半のみ）
+            {bars === 16
+              ? '作曲時、Bセクションへコード変化レシピを必ず展開する'
+              : '作曲時、25%の確率でコード変化レシピを選ぶ（8小節は後半のみ）'}
           </label>
+          {bars === 16 && (
+            <label>
+              <input
+                type="checkbox"
+                checked={intro}
+                onChange={(e) => setIntro(e.target.checked)}
+                data-testid="st-intro"
+              />
+              2小節イントロを付ける（初回のみ）
+            </label>
+          )}
         </div>
 
         <div className="panel-controls">
@@ -480,7 +633,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
           >
             🎹 コード変化して再生
           </button>
-          <button onClick={() => composeAndPlay(seed)} disabled={!piece || progress !== null} data-testid="st-replay">
+          <button
+            onClick={() => lastOpts && void playOptions(lastOpts)}
+            disabled={!lastOpts || progress !== null}
+            data-testid="st-replay"
+          >
             ▶ 同じメロディで再生
           </button>
           <button onClick={stop} disabled={!playing} data-testid="st-stop">
@@ -512,16 +669,62 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         {error && <p className="badge-ng">{error}</p>}
         {piece && (
           <div data-testid="st-result">
-            <div className="chord-line">| {piece.barChordNames.join(' | ')} |</div>
-            <div className="melody-line">{piece.melody.map((n) => noteName(n.midi)).join(' ')}</div>
-            <p className="panel-note">
-              シード {seed} ／ 強拍コードトーン検証:{' '}
-              {violations.length === 0 ? (
-                <span className="badge-ok">OK</span>
+            <div className={`chord-line${piece.bars === 16 ? ' chord-form' : ''}`}>
+              {piece.bars === 16 ? (
+                <>
+                  {piece.introBars > 0 && (
+                    <span>
+                      <b>
+                        Intro（初回のみ・{piece.introBars}小節
+                        {piece.introRole ? `・${INTRO_ROLE_LABELS[piece.introRole]}` : ''}）
+                      </b> | {piece.introChordNames.join(' | ')} |
+                    </span>
+                  )}
+                  <span><b>A</b> | {piece.barChordNames.slice(0, 8).join(' | ')} |</span>
+                  <span><b>B</b> | {piece.barChordNames.slice(8).join(' | ')} |</span>
+                </>
               ) : (
-                <span className="badge-ng">NG {violations.length} 件</span>
+                <>| {piece.barChordNames.join(' | ')} |</>
               )}
-              （同じシード + 同じ設定なら同じ曲になります）
+            </div>
+            <div className="melody-line">
+              主旋律: {piece.melody.filter((n) => n.beat >= piece.loopStartBeat).map((n) => noteName(n.midi)).join(' ')}
+            </div>
+            <div className="melody-line">副旋律: {piece.counterMelody.map((n) => noteName(n.midi)).join(' ')}</div>
+            <p className="panel-note">
+              展開: {ARRANGEMENT_ARC_LABELS[piece.arrangementPlan.arc]} ／
+              副旋律: {COUNTER_ROLE_LABELS[piece.arrangementPlan.counterRole]}
+              {piece.melodyMode === 'japanese' ? ' ／ 和風様式（五音・開放5度・前打音）' : ''}
+            </p>
+            {diagnosis && (
+              <details className="composer-diagnosis" data-testid="st-diagnosis">
+                <summary>
+                  作曲診断: <span className={diagnosis.overall >= 90 ? 'badge-ok' : 'badge-ng'}>
+                    総合 {diagnosis.overall}点
+                  </span>
+                  {diagnosis.issues.length > 0 && ` ／ 指摘 ${diagnosis.issues.length}件`}
+                </summary>
+                <div className="diagnosis-grid">
+                  {(Object.entries(diagnosis.scores) as [DiagnosticCategory, number][]).map(([category, score]) => (
+                    <span key={category}>
+                      {DIAGNOSTIC_LABELS[category]} <b className={score >= 90 ? 'badge-ok' : 'badge-ng'}>{score}</b>
+                    </span>
+                  ))}
+                </div>
+                {diagnosis.issues.length > 0 && (
+                  <ul className="diagnosis-issues">
+                    {diagnosis.issues.slice(0, 8).map((issue, index) => (
+                      <li key={`${issue.category}-${issue.beat}-${index}`}>
+                        {issue.severity === 'error' ? '要修正' : '注意'}・{DIAGNOSTIC_LABELS[issue.category]}・
+                        {issue.beat.toFixed(2)}拍: {issue.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </details>
+            )}
+            <p className="panel-note">
+              シード {seed}（同じシード + 同じ設定なら同じ曲になります）
             </p>
             <div className="panel-controls">
               <input
