@@ -1,7 +1,5 @@
-import type {
-  ArrangementSectionPlan, NesVoiceOptions, NoteEvent, Piece,
-} from '../core/music/compose.js';
-import { grooveBeat } from '../core/music/compose.js';
+import type { NesVoiceOptions, NoteEvent, Piece } from '../core/music/compose.js';
+import { arrangementSectionFor, grooveBeat } from '../core/music/compose.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;
@@ -113,14 +111,6 @@ const nesVolumeFor = (note: NoteEvent, fallback: number): number => note.velocit
   ? fallback
   : Math.max(0, Math.min(15, Math.round(note.velocity * 15)));
 
-function sectionPlanAt(piece: Piece, beat: number): ArrangementSectionPlan | null {
-  if (beat < piece.loopStartBeat) return null;
-  const bodyBeat = beat - piece.loopStartBeat;
-  return piece.bars === 16 && bodyBeat >= 8 * 4
-    ? piece.arrangementPlan.sectionB
-    : piece.arrangementPlan.sectionA;
-}
-
 function clockPulse(state: PulseState): number {
   const periodSamples = (state.timer + 1) * 2 * NES_SAMPLE_RATE / NES_CPU_CLOCK;
   state.phase += 1 / periodSamples;
@@ -209,8 +199,8 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
     const fifth = chord.midis[2] ?? third;
     for (let beat = 0; beat < chord.dur; beat++) {
       const absoluteBeat = grooveBeat(chord.beat + beat + 0.5, piece.grooveFeel);
-      const sectionPlan = sectionPlanAt(piece, absoluteBeat);
-      const thin = sectionPlan === null || sectionPlan.backingDensity === 'sparse';
+      const sectionPlan = arrangementSectionFor(piece, absoluteBeat);
+      const thin = absoluteBeat < piece.loopStartBeat || sectionPlan.backingDensity === 'sparse';
       // sparse区間はパルス2の裏打ちを半分にし、full区間では毎拍鳴らす。
       if (thin && beat % 2 === 0) continue;
       chordBacking.push({
@@ -238,6 +228,8 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
     const sample = toSample(d.beat * spb);
     if (d.inst === 'kick') noiseHits.push({ sample, period: 14, mode: 1, volume: 15, decayFrames: 3 });
     else if (d.inst === 'snare') noiseHits.push({ sample, period: 8, mode: 0, volume: 13, decayFrames: 2 });
+    else if (d.inst === 'tom') noiseHits.push({ sample, period: 11, mode: 1, volume: 12, decayFrames: 3 });
+    else if (d.inst === 'cymbal') noiseHits.push({ sample, period: 2, mode: 0, volume: 11, decayFrames: 4 });
     else noiseHits.push({ sample, period: 3, mode: 0, volume: 7, decayFrames: 1 });
   }
   noiseHits.sort((a, b) => a.sample - b.sample);

@@ -36,6 +36,9 @@ export class SfxPlayer {
   private gain: GainNode | null = null;
   private bgmGain: GainNode | null = null;
   private bgmSource: AudioBufferSourceNode | null = null;
+  /** PCM化後も効果音を前へ出すための、OPLL実機のBGMボイス退避に相当する短いダック。 */
+  private sfxDuckUntil = 0;
+  private sfxDuckTimer: ReturnType<typeof setTimeout> | null = null;
   private loading: Promise<void> | null = null;
   private exports: OpllExports | null = null;
   private opll = 0;
@@ -184,11 +187,42 @@ export class SfxPlayer {
   /** BGM 音量（0..1。0.5 = 従来の内蔵 BGM 音量）。再生中でも即座に反映 */
   setBgmVolume(v: number): void {
     this.bgmVolume = Math.max(0, Math.min(1, v));
-    if (this.bgmGain) this.bgmGain.gain.value = this.effectiveBgmGain();
+    if (this.bgmGain) {
+      const ducked = this.ctx && this.ctx.currentTime < this.sfxDuckUntil;
+      this.bgmGain.gain.value = this.effectiveBgmGain() * (ducked ? 0.58 : 1);
+    }
   }
 
   private effectiveBgmGain(): number {
     return BGM_GAIN * (this.bgmVolume / 0.5);
+  }
+
+  /**
+   * 現構成はBGM/SFXを別PCMへ事前レンダリングするため、再生中のYM2413チャンネルを直接奪えない。
+   * 代わりにSFXの長さだけBGMを高速に下げ、実機ドライバの「低優先度BGM声部をSFXへ譲る」聞こえ方を再現する。
+   */
+  private duckBgmFor(duration: number): void {
+    if (!this.ctx || !this.bgmGain || !this.bgmSource) return;
+    const now = this.ctx.currentTime;
+    this.sfxDuckUntil = Math.max(this.sfxDuckUntil, now + duration);
+    const param = this.bgmGain.gain;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    param.linearRampToValueAtTime(this.effectiveBgmGain() * 0.58, now + 0.008);
+    if (this.sfxDuckTimer !== null) clearTimeout(this.sfxDuckTimer);
+    this.sfxDuckTimer = setTimeout(() => {
+      if (!this.ctx || !this.bgmGain) return;
+      const restoreAt = this.ctx.currentTime;
+      if (restoreAt + 0.01 < this.sfxDuckUntil) {
+        this.duckBgmFor(this.sfxDuckUntil - restoreAt);
+        return;
+      }
+      const gain = this.bgmGain.gain;
+      gain.cancelScheduledValues(restoreAt);
+      gain.setValueAtTime(gain.value, restoreAt);
+      gain.linearRampToValueAtTime(this.effectiveBgmGain(), restoreAt + 0.04);
+      this.sfxDuckTimer = null;
+    }, Math.max(0, (this.sfxDuckUntil - now) * 1000));
   }
 
   /**
@@ -310,6 +344,7 @@ export class SfxPlayer {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(this.gain!);
+      this.duckBgmFor(buffer.duration);
       source.start();
     } catch {
       // 音は演出。失敗してもゲームを止めない

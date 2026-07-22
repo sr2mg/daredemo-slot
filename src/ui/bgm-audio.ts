@@ -29,5 +29,5 @@ export function arrangeComposedBgm(piece: Piece, options: ComposeOptions): Compo
       loopEnd: piece.beats * spb,
     };
   }
-  return arrangePiece(piece, options.styleId, options.voices);
+  return arrangePiece(piece, options.styleId, options.voices, options.opllUserPatch);
 }

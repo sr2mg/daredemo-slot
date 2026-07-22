@@ -3,16 +3,19 @@ import {
   compose,
   ARRANGEMENT_ARC_LABELS,
   COUNTER_ROLE_LABELS,
+  TEXTURE_STRATEGY_LABELS,
   GROOVE_FEEL_LABELS,
   JAPANESE_SCALE_LABELS,
   ORNAMENT_LABELS,
   PHRASE_FUNCTION_LABELS,
+  checkPieceStructure,
   defaultChoiceFor,
-  diagnosePiece,
   hasVariedChoiceFor,
   INTRO_ROLE_LABELS,
   suggestCompositionRepair,
   variedChoiceFor,
+  resolveMelodicLanguage,
+  resolveTonality,
 } from '../core/music/compose.js';
 import type {
   ComposeBars,
@@ -21,9 +24,11 @@ import type {
   DiagnosticCategory,
   GrooveFeel,
   JapaneseScaleChoice,
-  MelodyMode,
+  MelodicLanguage,
   NesVoiceOptions,
+  OpllUserPatchId,
   Piece,
+  Tonality,
   VoiceOverride,
 } from '../core/music/compose.js';
 import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
@@ -40,7 +45,7 @@ import {
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import { arrangeComposedBgm } from './bgm-audio.js';
 import { NES_DUTIES } from './nes-apu.js';
-import { defaultVoicesFor } from './opll-arrange.js';
+import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
 import { OPLL_VOICES } from './opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
@@ -68,35 +73,49 @@ const DIAGNOSTIC_LABELS: Record<DiagnosticCategory, string> = {
   voiceLeading: '声部進行',
   rhythm: 'リズム',
   counterpoint: '副旋律',
+  texture: '編成',
   form: 'フォーム',
   loop: 'ループ',
 };
 
-/** 音色を上書きできるパート（リズムは OPLL リズムモード固定、エコーはリード追従） */
+const STRUCTURAL_STATUS_LABELS = {
+  pass: '問題なし',
+  attention: '要確認',
+  error: '要修正',
+} as const;
+
+/** 音色を上書きできる旋律パート（リズム5音は OPLL リズムモード固定） */
 const VOICE_PARTS: readonly { part: keyof VoiceOverride; label: string }[] = [
   { part: 'lead', label: 'リード' },
   { part: 'backing', label: 'バッキング' },
   { part: 'bass', label: 'ベース' },
+  { part: 'counter', label: '副旋律' },
+  { part: 'ostinato', label: '分散和音' },
 ];
 
 const voiceLabel = (id: number): string =>
-  OPLL_VOICES.find((v) => v.id === id)?.label.split('（')[0] ?? String(id);
+  id === 0 ? 'ユーザー音色' : OPLL_VOICES.find((v) => v.id === id)?.label.split('（')[0] ?? String(id);
 
 /** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
 function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
   const chip = options.soundChip === 'nes2a03' ? 'ファミコン2A03' : 'OPLL';
-  const form = options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
-  const intro = options.bars === 16 && options.intro === false ? ' / イントロなし' : '';
-  const melody = options.melodyMode === 'japanese'
+  const form = options.bars === 40
+    ? 'OPLL BIG風40小節'
+    : options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
+  const intro = (options.bars === 16 || options.bars === 40) && options.intro === false ? ' / イントロなし' : '';
+  const tonality = resolveTonality(options);
+  const melodicLanguage = resolveMelodicLanguage(options);
+  const tonalLabel = tonality === 'minor' ? ' / 短調' : '';
+  const melody = melodicLanguage === 'japanese'
     ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
     : '';
   const groove = options.grooveFeel && options.grooveFeel !== 'straight'
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
   const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
-  const base = `${chip} / ${form}${intro}${melody}${groove}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
   if (options.soundChip === 'nes2a03') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
@@ -110,13 +129,15 @@ interface ComposerForm {
   bars: ComposeBars;
   progId: string;
   styleId: string;
-  melodyMode: MelodyMode;
+  tonality: Tonality;
+  melodicLanguage: MelodicLanguage;
   japaneseScale: JapaneseScaleChoice;
   grooveFeel: GrooveFeel;
   keyRoot: number;
   bpm: number;
   soundChip: 'opll' | 'nes2a03';
   voices: VoiceOverride;
+  opllUserPatch: OpllUserPatchId;
   nes: NesVoiceOptions;
   choice: number[];
   autoVary: boolean;
@@ -132,23 +153,34 @@ function loadComposerForm(): ComposerForm {
     {},
     (v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v),
   );
-  const bars: ComposeBars = raw.bars === 16 ? 16 : raw.bars === 8 ? 8 : 4;
+  const bars: ComposeBars = raw.bars === 40 ? 40 : raw.bars === 16 ? 16 : raw.bars === 8 ? 8 : 4;
+  const legacyMode = raw.melodyMode === 'japanese'
+    ? 'japanese'
+    : raw.melodyMode === 'minor' ? 'minor' : 'major';
+  const tonality: Tonality = raw.tonality === 'minor'
+    ? 'minor'
+    : raw.tonality === 'major' ? 'major' : legacyMode === 'minor' ? 'minor' : 'major';
+  const melodicLanguage: MelodicLanguage = raw.melodicLanguage === 'japanese'
+    ? 'japanese'
+    : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
   const progId =
-    typeof raw.progId === 'string' && PROGRESSIONS.some((p) => p.id === raw.progId && p.slots.length <= bars)
+    typeof raw.progId === 'string'
+      && PROGRESSIONS.some((p) => p.id === raw.progId && p.slots.length <= bars && p.tonality === tonality)
       ? raw.progId
-      : 'royal-pop';
+      : tonality === 'minor' ? 'minor-pedal' : 'royal-pop';
   const voices: VoiceOverride = {};
   if (raw.voices !== null && typeof raw.voices === 'object') {
-    for (const part of ['lead', 'backing', 'bass'] as const) {
+    for (const part of ['lead', 'backing', 'bass', 'counter', 'ostinato'] as const) {
       const v = (raw.voices as Record<string, unknown>)[part];
-      if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 15) voices[part] = v;
+      if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 15) voices[part] = v;
     }
   }
   return {
     bars,
     progId,
     styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
-    melodyMode: raw.melodyMode === 'japanese' ? 'japanese' : 'major',
+    tonality,
+    melodicLanguage,
     japaneseScale: ['ritsu', 'minyo', 'miyakobushi'].includes(String(raw.japaneseScale))
       ? raw.japaneseScale as JapaneseScaleChoice
       : 'auto',
@@ -159,6 +191,9 @@ function loadComposerForm(): ComposerForm {
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
     soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
     voices,
+    opllUserPatch: ['brightLead', 'metalBell', 'punchBass'].includes(String(raw.opllUserPatch))
+      ? raw.opllUserPatch as OpllUserPatchId
+      : 'brightLead',
     nes: {
       pulse1Duty: [0, 1, 2, 3].includes((raw.nes as NesVoiceOptions | undefined)?.pulse1Duty ?? -1)
         ? ((raw.nes as NesVoiceOptions).pulse1Duty as 0 | 1 | 2 | 3)
@@ -183,7 +218,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [bars, setBars] = useState<ComposeBars>(initial.bars);
   const [progId, setProgId] = useState(initial.progId);
   const [styleId, setStyleId] = useState(initial.styleId);
-  const [melodyMode, setMelodyMode] = useState<MelodyMode>(initial.melodyMode);
+  const [tonality, setTonality] = useState<Tonality>(initial.tonality);
+  const [melodicLanguage, setMelodicLanguage] = useState<MelodicLanguage>(initial.melodicLanguage);
   const [japaneseScale, setJapaneseScale] = useState<JapaneseScaleChoice>(initial.japaneseScale);
   const [grooveFeel, setGrooveFeel] = useState<GrooveFeel>(initial.grooveFeel);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
@@ -191,6 +227,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
   /** パート別音色の上書き。未指定パートはスタイル既定（選ばない限り保存データにも入らない） */
   const [voices, setVoices] = useState<VoiceOverride>(initial.voices);
+  const [opllUserPatch, setOpllUserPatch] = useState<OpllUserPatchId>(initial.opllUserPatch);
   const [nes, setNes] = useState<NesVoiceOptions>(initial.nes);
   const [choice, setChoice] = useState<number[]>(initial.choice);
   const [autoVary, setAutoVary] = useState(initial.autoVary);
@@ -219,16 +256,19 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
     saveStored(FORM_KEY, {
-      bars, progId, styleId, melodyMode, japaneseScale, grooveFeel,
-      keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop,
+      bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel,
+      keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
     });
   }, [
-    bars, progId, styleId, melodyMode, japaneseScale, grooveFeel,
-    keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop,
+    bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel,
+    keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
-  // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
-  const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);
+  // 尺と調性に合う進行だけを選ばせる。旋律語法を変えても進行は保持する。
+  const progs = useMemo(
+    () => PROGRESSIONS.filter((p) => p.slots.length <= bars && p.tonality === tonality),
+    [bars, tonality],
+  );
   const prog = progs.find((p) => p.id === progId) ?? progs[0]!;
   const canVaryChords = useMemo(() => hasVariedChoiceFor(prog, bars, choice), [bars, choice, prog]);
 
@@ -239,9 +279,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   };
 
   const selectBars = (next: ComposeBars) => {
-    const nextProgId = PROGRESSIONS.find((p) => p.id === prog.id && p.slots.length <= next)
+    const nextProgId = PROGRESSIONS.find((p) => p.id === prog.id && p.slots.length <= next && p.tonality === tonality)
       ? prog.id
-      : PROGRESSIONS.filter((p) => p.slots.length <= next)[0]!.id;
+      : PROGRESSIONS.filter((p) => p.slots.length <= next && p.tonality === tonality)[0]!.id;
     setBars(next);
     setProgId(nextProgId);
     resetChoice(nextProgId, next);
@@ -302,12 +342,14 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       choice: nextChoice,
       soundChip,
       ...(intro ? {} : { intro: false }),
-      ...(melodyMode === 'japanese' ? {
-        melodyMode,
-        ...(japaneseScale === 'auto' ? {} : { japaneseScale }),
+      ...(tonality === 'minor' ? { tonality } : {}),
+      ...(melodicLanguage === 'japanese' ? {
+        melodicLanguage,
+        ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
       } : {}),
       ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
+      ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
     });
   };
@@ -319,6 +361,13 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     setSongs(next);
     saveSongs(next);
     setSongName('');
+  };
+
+  const selectTonality = (nextTonality: Tonality) => {
+    const nextProg = PROGRESSIONS.find((p) => p.tonality === nextTonality && p.slots.length <= bars)!;
+    setTonality(nextTonality);
+    setProgId(nextProg.id);
+    resetChoice(nextProg.id, bars);
   };
 
   const applyRepair = (repair: CompositionRepair) => {
@@ -374,7 +423,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     }
   };
 
-  const diagnosis = useMemo(() => piece ? diagnosePiece(piece) : null, [piece]);
+  const diagnosis = useMemo(() => piece ? checkPieceStructure(piece) : null, [piece]);
   const displayedDiagnosisItems = useMemo(
     () => piece && diagnosis
       ? diagnosis.issues
@@ -426,7 +475,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 （画面ではB♭をA#と表示）へ平行移動します。
               </dd>
 
-              <dt>4小節、8小節、16小節</dt>
+              <dt>4小節、8小節、16小節、OPLL BIG</dt>
               <dd>
                 4小節は短く覚えやすいループです。8小節では前半を基本形A、後半を変化形A&apos;として扱い、
                 最後をドミナントへ寄せて次のループへ戻りやすくします。16小節ではAを8小節、Bを8小節に分け、
@@ -434,6 +483,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 主題予告・グルーヴ提示・ファンファーレ・駆け上がりのうち、曲調に合う役割を選びます。直前の1.5拍を
                 空けてAを強調し、ループ時はイントロを飛ばしてAの頭へ戻ります。A→Bの展開は毎回同じ足し算にせず、
                 後半を厚くする「積み上げ」、後半で引く「対比」、密度を段階的に切り替える「段丘」から決めます。
+                40小節は8小節ずつのA–B–C–D–Eです。Aでフックを先に提示し、Bで薄い変奏、Cで密度を落とし、
+                Dでフックを回帰、Eをコーダ兼ループ接続にします。2小節イントロを付けた場合は全42小節です。
               </dd>
 
               <dt>ゲームBGMのイントロ</dt>
@@ -447,7 +498,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               <dd>
                 各進行には3〜5個の確認済みレシピがあります。「コード変化して再生」は現在と同じ形を除外して抽選し、
                 8小節では前半を保ったまま後半だけを変化させます。16小節ではAを保ち、Bに変化レシピを展開します。
-                自由なランダム置換はしません。
+                自由なランダム置換はしません。選択した進行をSongPlanへ取り込み、先に各小節を提示・継続・展開・解決・
+                ターンアラウンドへ割り当てます。基本は1小節1コードですが、展開で別機能へ早く移る場合は1拍＋3拍、
+                終止直前のドミナントは3拍＋1拍、それ以外は2拍＋2拍にします。非対称な場合はコード名へ拍数を表示し、
+                分散和音・ベース・主旋律も同じ変更点を参照します。40小節ではBの配分をEでも回帰させます。
               </dd>
 
               <dt>メロディ</dt>
@@ -458,10 +512,12 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 回帰させてから終止へ向かいます。応答の末尾では半終止・終止・ターンアラウンドの
                 目標音へ実際に到達します。各小節の1・3拍目はその時点のコードトーンです。最高音はセクション後半の
                 2候補からシードで選び、毎曲まったく同じ位置には固定しません。最終小節の後半は音数を減らして
-                ループ頭へ余白を渡します。「王道メジャー」は7音音階です。「和風五音」は旋律だけを差し替えるのでなく、
+                ループ頭へ余白を渡します。調性はコード進行と標準旋律の長音階・短音階を決め、旋律語法とは独立しています。
+                そのため短調の和声に和風五音の旋律を組み合わせることもできます。「和風五音」は旋律だけを差し替えるのでなく、
                 律・民謡・都節系の音組織から選び、4度離れた核音をフレーズ開始・終止の柱にします。同音反復、
                 4度/5度跳躍、開いた根音‐5度の伴奏配置、音階内のベース接続も連動します。さらに各応答小節へ
-                意図した休符＝「間」を確保します。
+                意図した休符＝「間」を確保します。短調の標準語法では自然短音階を基礎に、主和音を保って押すペダル型と、
+                i–VI–III–VII系のドライブ型を使います。
               </dd>
 
               <dt>モチーフの反復と変奏</dt>
@@ -480,13 +536,21 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 ピッチ操作へ変換します。
               </dd>
 
-              <dt>副旋律とベース</dt>
+              <dt>裏メロ・16分アルペジオ・ベース</dt>
               <dd>
                 副旋律を後から隙間へ差すのではなく、PhrasePlanで主旋律と同時に専用の発音位置を予約します。
                 音程は主旋律に対する反行を優先します。展開型に応じてコードトーンで短く返答する型と、
                 小節をまたいで継続的に動く独立対旋律を使い分けます。ベースのフレーズ終端は小節番号ではなく、
                 半終止・終止・ループ接続と次コードを参照します。接続方法もユーロビートは半音接近、ロックはコードトーン、
-                スカは音階内のピックアップというように作曲スタイルへ合わせます。各声部の密度は選ばれた展開型に従います。
+                スカは音階内のピックアップというように作曲スタイルへ合わせます。編成方針はseedだけで決めず、スタイル、
+                主旋律の密度、グルーヴ、区間のエネルギー、音源の同時発音能力から互換候補を絞ります。OPLLでは
+                「分散和音主導・対旋律主導・低音主導・交替型」を使い分け、2A03では独立アルペジオを生成後に捨てず、
+                2本のパルスと三角波で実現できる編成を最初から選びます。仕掛けは全区間へ貼らずに休止と再登場を作ります。
+                裏メロを選んだ区間では、主旋律が休む半小節へ3音の短い応答句としてまとめ、中央音だけに
+                次のコードトーンへ順次解決する経過音・刺繍音を許します。分散和音を選んだ区間では、
+                提示・反復を8分、展開を16分、結論を再び8分として、8小節を同じ刻みで埋めません。
+                各打点で現在のコードを引き直すため、半小節でコードが変わればアルペジオも同じ位置から構成音を切り替えます。
+                BIGのベースは通常曲より約1オクターブ下げ、ペダル低音は低音主導を選んだ曲だけで使います。
               </dd>
 
               <dt>リズムとドラム</dt>
@@ -502,15 +566,22 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 ベースはコードのルートを基準に、スタイルごとにオクターブや5度を混ぜます。
               </dd>
 
-              <dt>伴奏と作曲診断</dt>
+              <dt>伴奏と構造チェック</dt>
               <dd>
                 コード伴奏は構成音を固定オクターブへ置かず、転回形を含む候補から直前の声部に最も近い配置を選びます。
                 音符には強弱とアクセント、スタッカート、テヌートを持たせ、FM音源と2A03それぞれの音量段階・音価へ反映します。
-                生成後はコードをトニック・プレドミナント・ドミナント等の機能でも評価し、和声、旋律、声部進行、
-                リズム、副旋律、フォーム、ループ接続を別々に診断します。
-                総合点だけでなく、気になる項目と具体的な位置も確認できます。安全に局所修正できる注意には、
+                生成後はコードをトニック・プレドミナント・ドミナント等の機能でも確認し、和声、旋律、声部進行、
+                リズム、副旋律、編成、フォーム、ループ接続の構造的不整合を別々に検査します。これは曲の魅力を採点する
+                機能ではないため総合点は表示せず、「問題なし・要確認・要修正」で示します。安全に局所修正できる注意には、
                 非和声音を残して次音を解決する案を優先して提示します。候補は全曲を再診断し、新しい問題を増やさない
                 場合だけ採用でき、修正後もUndoできます。
+              </dd>
+
+              <dt>OPLLの音数と音色</dt>
+              <dd>
+                リズムモード時は旋律6チャンネルと、バスドラム・スネア・タム・シンバル・ハイハットの5打楽器です。
+                主旋律、ベース、裏メロ、分散和音、コード伴奏、薄いダブリングを優先度順に6音へ割り当て、
+                超えた瞬間だけ低優先度の音から省きます。内蔵15音色に加え、音色0番へ曲ごとに1種類のユーザー音色を定義できます。
               </dd>
 
               <dt>シードとBPM</dt>
@@ -536,11 +607,12 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             value={bars}
             onChange={(e) => selectBars(Number(e.target.value) as ComposeBars)}
             data-testid="st-bars"
-            title="用途 = 尺。RB は短いループ、BB は A+A'、16小節は A→B で展開"
+            title="用途 = 尺。40小節はOPLL BIG向けのA→B→C→D→Eフォーム"
           >
             <option value={4}>RB 風（4小節ループ）</option>
             <option value={8}>BB 風（8小節ループ）</option>
             <option value={16}>ゲームBGM風（16小節 A→B）</option>
+            <option value={40}>OPLL BIG風（40小節 A→B→C→D→E）</option>
           </select>
           <select value={keyRoot} onChange={(e) => setKeyRoot(Number(e.target.value))} data-testid="st-key">
             {KEYS.map((k) => (
@@ -568,15 +640,24 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             ))}
           </select>
           <select
-            value={melodyMode}
-            onChange={(e) => setMelodyMode(e.target.value as MelodyMode)}
-            data-testid="st-melody-mode"
-            title="和風では音組織・核音・間・装飾・伴奏配置をまとめて変更します"
+            value={tonality}
+            onChange={(e) => selectTonality(e.target.value as Tonality)}
+            data-testid="st-tonality"
+            title="コード進行と基礎音階の調性を選びます"
           >
-            <option value="major">旋律: 王道メジャー</option>
-            <option value="japanese">旋律: 和風五音</option>
+            <option value="major">調性: 長調</option>
+            <option value="minor">調性: 短調</option>
           </select>
-          {melodyMode === 'japanese' && (
+          <select
+            value={melodicLanguage}
+            onChange={(e) => setMelodicLanguage(e.target.value as MelodicLanguage)}
+            data-testid="st-melodic-language"
+            title="調性とは独立して、旋律の音使い・間・装飾を選びます"
+          >
+            <option value="standard">旋律語法: 標準</option>
+            <option value="japanese">旋律語法: 和風五音</option>
+          </select>
+          {melodicLanguage === 'japanese' && (
             <select
               value={japaneseScale}
               onChange={(e) => setJapaneseScale(e.target.value as JapaneseScaleChoice)}
@@ -605,21 +686,22 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             {VOICE_PARTS.map(({ part, label }) => (
               <select
                 key={part}
-                value={voices[part] ?? 0}
+                value={voices[part] ?? -1}
                 onChange={(e) => {
                   const v = Number(e.target.value);
                   setVoices((prev) => {
                     const next = { ...prev };
-                    if (v === 0) delete next[part];
+                    if (v === -1) delete next[part];
                     else next[part] = v;
                     return next;
                   });
                 }}
                 data-testid={`st-voice-${part}`}
               >
-                <option value={0}>
+                <option value={-1}>
                   {label}: スタイル既定（{voiceLabel(defaultVoicesFor(styleId)[part])}）
                 </option>
+                <option value={0}>{label}: ユーザー音色（曲ごとに1種）</option>
                 {OPLL_VOICES.map((v) => (
                   <option key={v.id} value={v.id}>
                     {label}: {v.label}
@@ -627,6 +709,18 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 ))}
               </select>
             ))}
+            {Object.values(voices).includes(0) && (
+              <select
+                value={opllUserPatch}
+                onChange={(e) => setOpllUserPatch(e.target.value as OpllUserPatchId)}
+                data-testid="st-opll-user-patch"
+                title="OPLLの音色0番は、1曲につき1種類だけレジスタ定義できます"
+              >
+                {OPLL_USER_PATCHES.map((patch) => (
+                  <option key={patch.id} value={patch.id}>ユーザー音色: {patch.label}</option>
+                ))}
+              </select>
+            )}
           </div>
         ) : (
           <>
@@ -653,6 +747,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             <p className="panel-note nes-budget" data-testid="st-nes-budget">
               2A03配線: パルス1=主旋律 / パルス2=伴奏 / 三角波=ベース（音量変更不可） /
               ノイズ=ドラム / DPCM=未使用。1チャンネル1音、整数タイマー音程、15段階音量です。
+              40小節フォームも再生できますが、新しい独立声部の2A03専用間引きは次段階です。
             </p>
           </>
         )}
@@ -669,7 +764,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
 
         {/* コード進行のスロット選択: 選択肢が 1 つの小節は固定表示 */}
         <div className="slot-sections" data-testid="st-slots">
-          {(bars === 16
+          {(bars === 40
+            ? ['A', 'B', 'C', 'D', 'E'].map((label, index) => ({ label, start: index * 8, end: index * 8 + 8 }))
+            : bars === 16
             ? [
                 { label: 'A', start: 0, end: 8 },
                 { label: 'B', start: 8, end: 16 },
@@ -715,11 +812,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         <div className="panel-controls">
           <label>
             <input type="checkbox" checked={autoVary} onChange={(e) => setAutoVary(e.target.checked)} />
-            {bars === 16
-              ? '作曲時、Bセクションへコード変化レシピを必ず展開する'
+            {bars === 16 || bars === 40
+              ? `作曲時、${bars === 40 ? '各8小節区間' : 'Bセクション'}へコード変化レシピを展開する`
               : '作曲時、25%の確率でコード変化レシピを選ぶ（8小節は後半のみ）'}
           </label>
-          {bars === 16 && (
+          {(bars === 16 || bars === 40) && (
             <label>
               <input
                 type="checkbox"
@@ -780,8 +877,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         {error && <p className="badge-ng">{error}</p>}
         {piece && (
           <div data-testid="st-result">
-            <div className={`chord-line${piece.bars === 16 ? ' chord-form' : ''}`}>
-              {piece.bars === 16 ? (
+            <div className={`chord-line${piece.bars >= 16 ? ' chord-form' : ''}`}>
+              {piece.bars >= 16 ? (
                 <>
                   {piece.introBars > 0 && (
                     <span>
@@ -791,8 +888,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                       </b> | {piece.introChordNames.join(' | ')} |
                     </span>
                   )}
-                  <span><b>A</b> | {piece.barChordNames.slice(0, 8).join(' | ')} |</span>
-                  <span><b>B</b> | {piece.barChordNames.slice(8).join(' | ')} |</span>
+                  {Array.from({ length: piece.bars / 8 }, (_, index) => (
+                    <span key={index}>
+                      <b>{String.fromCharCode(65 + index)}</b> | {piece.barChordNames.slice(index * 8, index * 8 + 8).join(' | ')} |
+                    </span>
+                  ))}
                 </>
               ) : (
                 <>| {piece.barChordNames.join(' | ')} |</>
@@ -802,8 +902,12 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               主旋律: {piece.melody.filter((n) => n.beat >= piece.loopStartBeat).map((n) => noteName(n.midi)).join(' ')}
             </div>
             <div className="melody-line">副旋律: {piece.counterMelody.map((n) => noteName(n.midi)).join(' ')}</div>
+            {piece.ostinato.length > 0 && (
+              <div className="melody-line">分散和音: {piece.ostinato.map((n) => noteName(n.midi)).join(' ')}</div>
+            )}
             <p className="panel-note">
               展開: {ARRANGEMENT_ARC_LABELS[piece.arrangementPlan.arc]} ／
+              編成: {TEXTURE_STRATEGY_LABELS[piece.arrangementPlan.textureStrategy]} ／
               副旋律: {COUNTER_ROLE_LABELS[piece.arrangementPlan.counterRole]} ／
               グルーヴ: {GROOVE_FEEL_LABELS[piece.grooveFeel]}
               {piece.japanesePlan && (
@@ -819,17 +923,21 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             {diagnosis && (
               <details className="composer-diagnosis" data-testid="st-diagnosis">
                 <summary>
-                  作曲診断: <span className={diagnosis.overall >= 90 ? 'badge-ok' : 'badge-ng'}>
-                    総合 {diagnosis.overall}点
+                  構造チェック: <span className={diagnosis.status === 'pass' ? 'badge-ok' : 'badge-ng'}>
+                    {STRUCTURAL_STATUS_LABELS[diagnosis.status]}
                   </span>
                   {diagnosis.issues.length > 0 && ` ／ 指摘 ${diagnosis.issues.length}件`}
                 </summary>
                 <div className="diagnosis-grid">
-                  {(Object.entries(diagnosis.scores) as [DiagnosticCategory, number][]).map(([category, score]) => (
+                  {(Object.entries(diagnosis.categoryStatus) as [DiagnosticCategory, keyof typeof STRUCTURAL_STATUS_LABELS][])
+                    .map(([category, status]) => (
                     <span key={category}>
-                      {DIAGNOSTIC_LABELS[category]} <b className={score >= 90 ? 'badge-ok' : 'badge-ng'}>{score}</b>
+                      {DIAGNOSTIC_LABELS[category]}{' '}
+                      <b className={status === 'pass' ? 'badge-ok' : 'badge-ng'}>
+                        {STRUCTURAL_STATUS_LABELS[status]}
+                      </b>
                     </span>
-                  ))}
+                    ))}
                 </div>
                 {diagnosis.observations.length > 0 && (
                   <div className="diagnosis-observations" data-testid="st-diagnosis-observations">
@@ -955,8 +1063,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             </>
           ) : (
             <>
-              OPLLではアクセント・チャンネルエコー・ビブラートも当時のレジスタ操作だけで掛けています。
-              音色はパートごとに内蔵15音色から選べます。
+              OPLLでは旋律6chを重要度順に動的配線し、リズム5音、アクセント、薄いダブリング、ビブラートも
+              当時のレジスタ操作だけで掛けています。音色は内蔵15種と、曲ごとに1種のユーザー音色から選べます。
             </>
           )}{' '}
           🔊はBGM全体の音量。保存した音源設定はBB/RBへの割り当てにもそのまま使われます。

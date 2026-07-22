@@ -16,6 +16,8 @@ export interface ChordDef {
   tones: readonly number[];
 }
 
+export type HarmonicFunction = 'tonic' | 'predominant' | 'dominant' | 'colour';
+
 export const CHORDS: Record<string, ChordDef> = {
   I: { root: 0, quality: '', tones: [0, 4, 7] },
   ii: { root: 2, quality: 'm', tones: [2, 5, 9] },
@@ -30,7 +32,24 @@ export const CHORDS: Record<string, ChordDef> = {
   vi7: { root: 9, quality: 'm7', tones: [9, 0, 4, 7] },
   v7: { root: 7, quality: 'm7', tones: [7, 10, 2, 5] },
   I7: { root: 0, quality: '7', tones: [0, 4, 7, 10] },
+  // 短調。大文字/小文字は主音から見た機能を明示し、keyRoot は常に主音として扱う。
+  i: { root: 0, quality: 'm', tones: [0, 3, 7] },
+  iiDim: { root: 2, quality: 'dim', tones: [2, 5, 8] },
+  III: { root: 3, quality: '', tones: [3, 7, 10] },
+  iv: { root: 5, quality: 'm', tones: [5, 8, 0] },
+  v: { root: 7, quality: 'm', tones: [7, 10, 2] },
+  V7m: { root: 7, quality: '7', tones: [7, 11, 2, 5] },
+  VI: { root: 8, quality: '', tones: [8, 0, 3] },
+  VII: { root: 10, quality: '', tones: [10, 2, 5] },
 };
+
+/** ローマ数字トークンを、フォーム設計で使う大まかな和声機能へ写す。 */
+export function harmonicFunctionForToken(token: string): HarmonicFunction {
+  if (['I', 'vi', 'vi7', 'iii', 'iii7', 'i', 'III'].includes(token)) return 'tonic';
+  if (['IV', 'IVM7', 'ii', 'ii7', 'iv', 'iiDim', 'VI'].includes(token)) return 'predominant';
+  if (['V', 'III7', 'I7', 'V7m', 'v', 'VII'].includes(token)) return 'dominant';
+  return 'colour';
+}
 
 /** 1 スロット選択肢 = その小節で鳴らすコード列（2 つなら半小節ずつ） */
 export type SlotOption = readonly string[];
@@ -40,6 +59,8 @@ export interface ProgressionDef {
   name: string;
   feel: string;
   usage: string;
+  /** 選択できる調性。和風五音は major カタログを開放五度化して共有する。 */
+  tonality: 'major' | 'minor';
   /** slots[小節] = 選択肢の配列 */
   slots: readonly (readonly SlotOption[])[];
   /** 定番の選び方（各小節のスロット index） */
@@ -54,6 +75,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: '王道ポップ',
     feel: '明るく安定',
     usage: 'RB 向き',
+    tonality: 'major',
     slots: [[['I']], [['vi'], ['V'], ['iii']], [['IV'], ['vi'], ['ii']], [['V'], ['IV', 'V'], ['IV']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -68,6 +90,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: 'ファンファーレ',
     feel: '祝祭・完結感',
     usage: '単発ジングル向き（末尾 I で着地）',
+    tonality: 'major',
     slots: [[['I']], [['IV'], ['ii']], [['V'], ['IV', 'V']], [['I'], ['V']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -82,6 +105,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: '田中・真部進行',
     feel: 'アニソン的疾走感・切なさ',
     usage: 'BB 向き',
+    tonality: 'major',
     // 1 小節目 = サブドミナント枠、2 小節目 = ドミナント枠、3 小節目 = Am 固定、4 小節目 = 自由枠
     slots: [
       [['IV'], ['ii']],
@@ -103,6 +127,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: '小室進行',
     feel: '疾走感・ドラマチック',
     usage: 'BPM170 と相性◎',
+    tonality: 'major',
     slots: [[['vi']], [['IV'], ['ii'], ['iii']], [['V'], ['IV', 'V'], ['IV']], [['I'], ['V']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -117,6 +142,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: 'カノン風',
     feel: '壮大',
     usage: 'BB(8小節) 専用',
+    tonality: 'major',
     slots: [[['I']], [['V']], [['vi']], [['iii']], [['IV']], [['I'], ['vi']], [['IV'], ['ii']], [['V'], ['IV', 'V']]],
     defaultChoice: [0, 0, 0, 0, 0, 0, 0, 0],
     variations: [
@@ -131,6 +157,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
     name: 'Just the Two of Us 進行',
     feel: 'シティポップ・浮遊感',
     usage: 'AT 中/通常時向き',
+    tonality: 'major',
     slots: [[['IVM7'], ['ii7']], [['III7'], ['iii7']], [['vi7']], [['v7', 'I7'], ['I7']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -138,6 +165,48 @@ export const PROGRESSIONS: ProgressionDef[] = [
       [0, 1, 0, 0], // IVM7 → iii7 → vi7 → v7・I7
       [0, 0, 0, 1], // 最後の I7 を長く鳴らす
       [1, 1, 0, 1], // ダイアトニック寄りに柔らかくする
+    ],
+  },
+  {
+    id: 'minor-pedal',
+    name: '短調ペダル・リフ',
+    feel: '主音を保ったままリフで押す',
+    usage: '4号機BIG・ゲームボス向き',
+    tonality: 'minor',
+    slots: [
+      [['i']],
+      [['i'], ['VII']],
+      [['i'], ['VI'], ['VI', 'VII']],
+      [['i'], ['VII', 'i'], ['V7m'], ['iv', 'V7m']],
+    ],
+    defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 2], // V7 で次の i を強く呼ぶ（1小節1コード）
+      [0, 1, 0, 2], // 一度だけ VII、末尾は V7
+      [0, 0, 2, 2], // VI・VII だけを半小節化し、末尾は V7
+      [0, 1, 2, 1], // 中盤の VI・VII と終止の VII・i で加速
+      [0, 1, 1, 2], // VII と VI を使うが、和声リズムは拡大しない
+    ],
+  },
+  {
+    id: 'minor-drive',
+    name: '短調ドライブ',
+    feel: '暗い疾走・回帰感',
+    usage: 'BIG・ゲームBGM向き',
+    tonality: 'minor',
+    slots: [
+      [['i']],
+      [['VI'], ['iv'], ['VI', 'VII']],
+      [['III'], ['VII'], ['iv', 'V7m']],
+      [['VII'], ['V7m'], ['v'], ['VII', 'V7m']],
+    ],
+    defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 1, 0, 0], // i → iv → III → VII
+      [0, 0, 1, 3], // i → VI → VII → VII・V7
+      [0, 0, 0, 1], // V7 で強く戻る
+      [0, 1, 1, 2], // 教会旋法寄りの v
+      [0, 2, 2, 3], // VI・VII → iv・V7 → VII・V7
     ],
   },
 ];
@@ -241,6 +310,7 @@ export const STYLES: StyleDef[] = [
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 
 export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11] as const;
+export const NATURAL_MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10] as const;
 /** 陽旋法寄りの五音音階。強拍のコードトーンと組み合わせ、和風の節回しに使う。 */
 export const YO_SCALE = [0, 2, 5, 7, 9] as const;
 
