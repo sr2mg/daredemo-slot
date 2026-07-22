@@ -1,6 +1,7 @@
 import type {
   ArrangementSectionPlan, NesVoiceOptions, NoteEvent, Piece,
 } from '../core/music/compose.js';
+import { grooveBeat } from '../core/music/compose.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;
@@ -44,7 +45,7 @@ export function triangleFrequencyForTimer(timer: number): number {
   return NES_CPU_CLOCK / (32 * (timer + 1));
 }
 
-type GateEvent = { sample: number; on: boolean; timer?: number; volume?: number };
+type GateEvent = { sample: number; on: boolean; timer?: number; volume?: number; retrigger?: boolean };
 type NoiseHit = { sample: number; period: number; mode: 0 | 1; volume: number; decayFrames: number };
 
 interface PulseState {
@@ -84,6 +85,25 @@ function addTriangleEvents(events: GateEvent[], beat: number, dur: number, bpm: 
 function sortGateEvents(events: GateEvent[]): void {
   // 同時刻は key-off → key-on。次の音が前の音の終了に潰されないようにする。
   events.sort((a, b) => a.sample - b.sample || Number(a.on) - Number(b.on));
+}
+
+/** 2A03パルスのタイマーだけを細かく揺らし、再発音せず「揺り」を近似する。 */
+function addShakeEvents(events: GateEvent[], note: NoteEvent, bpm: number): void {
+  if (note.ornament !== 'shake') return;
+  const spb = 60 / bpm;
+  const baseTimer = pulseTimerForMidi(note.midi);
+  let direction = 1;
+  for (let offset = 0.08; offset < note.dur; offset += 0.08) {
+    const cents = direction * 32;
+    const timer = Math.max(8, Math.min(
+      0x7ff,
+      Math.round((baseTimer + 1) * 2 ** (-cents / 1200) - 1),
+    ));
+    events.push({
+      sample: toSample((note.beat + offset) * spb), on: true, timer, retrigger: false,
+    });
+    direction *= -1;
+  }
 }
 
 const notesOverlap = (a: NoteEvent, b: NoteEvent): boolean =>
@@ -181,13 +201,14 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
       pulse1Events, n.beat, n.dur, piece.bpm, n.midi,
       nesVolumeFor(n, strong ? 15 : 11),
     );
+    addShakeEvents(pulse1Events, n, piece.bpm);
   }
   const chordBacking: (NoteEvent & { volume: number })[] = [];
   for (const chord of piece.chords) {
     const third = chord.midis[1] ?? chord.midis[0]!;
     const fifth = chord.midis[2] ?? third;
     for (let beat = 0; beat < chord.dur; beat++) {
-      const absoluteBeat = chord.beat + beat + 0.5;
+      const absoluteBeat = grooveBeat(chord.beat + beat + 0.5, piece.grooveFeel);
       const sectionPlan = sectionPlanAt(piece, absoluteBeat);
       const thin = sectionPlan === null || sectionPlan.backingDensity === 'sparse';
       // sparse区間はパルス2の裏打ちを半分にし、full区間では毎拍鳴らす。
@@ -248,7 +269,7 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
       state.enabled = event.on;
       if (event.timer !== undefined) state.timer = event.timer;
       if ('volume' in state && event.volume !== undefined) state.volume = event.volume;
-      if (event.on) {
+      if (event.on && event.retrigger !== false) {
         state.step = 0;
         state.phase = 0;
       }

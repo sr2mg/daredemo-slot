@@ -79,6 +79,36 @@ describe('arrangePiece（Piece → OPLL レジスタ列）', () => {
     expect(fnumWrites).toBeGreaterThan(piece.melody.length);
   });
 
+  it('和風の「揺り」は短い到達音にも即時の細かなピッチ変化を加える', () => {
+    const shakePiece = compose({
+      progressionId: 'tanaka-manabe', styleId: 'eurobeat', keyRoot: 0,
+      bpm: 170, bars: 4, seed: 1, melodyMode: 'japanese', japaneseScale: 'ritsu',
+    });
+    const shake = shakePiece.melody.find((note) => note.ornament === 'shake')!;
+    expect(shake).toBeDefined();
+    const shakeDef = arrangePiece(shakePiece, 'eurobeat');
+    const start = shake.beat * spb;
+    const end = (shake.beat + shake.dur) * spb;
+    const pitchWrites = shakeDef.events.filter(
+      (event) => event.reg === 0x12 && event.at >= start && event.at < end,
+    );
+    expect(pitchWrites.length).toBeGreaterThan(1);
+  });
+
+  it('跳ねる8分ではエコーも裏拍の2:1位置へ揃える', () => {
+    const bouncePiece = compose({
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0,
+      bpm: 170, bars: 4, seed: 42, grooveFeel: 'bounce',
+    });
+    const bounceDef = arrangePiece(bouncePiece, 'eurobeat');
+    const echo = bounceDef.events.filter((event) => event.reg === 0x35).sort((a, b) => a.at - b.at);
+    const expected = bouncePiece.melody
+      .map((note) => (note.beat * spb + spb * 2 / 3) % bounceDef.duration)
+      .sort((a, b) => a - b);
+    expect(echo).toHaveLength(expected.length);
+    echo.forEach((event, index) => expect(event.at).toBeCloseTo(expected[index]!, 6));
+  });
+
   it('バッキング（ch3）とベース（ch4）が鳴る', () => {
     expect(keyOns(3).length).toBeGreaterThan(0);
     expect(keyOns(4).length).toBe(piece.bass.length);

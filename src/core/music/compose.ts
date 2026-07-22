@@ -18,6 +18,11 @@ import type { ProgressionDef, StyleDef } from './theory.js';
 
 export type ComposeBars = 4 | 8 | 16;
 export type MelodyMode = 'major' | 'japanese';
+export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
+export type JapaneseScaleChoice = 'auto' | JapaneseScale;
+export type OrnamentType = 'grace' | 'turn' | 'shake';
+export type GrooveFeel = 'straight' | 'tripletOverlay' | 'bounce';
+export type PhraseFunction = 'statement' | 'restatement' | 'departure' | 'conclusion';
 export type IntroRole = 'motif' | 'groove' | 'fanfare' | 'runup';
 export type CadenceType = 'open' | 'half' | 'closed' | 'turnaround';
 export type ArrangementArc = 'build' | 'contrast' | 'terrace' | 'compact';
@@ -44,6 +49,49 @@ export const COUNTER_ROLE_LABELS: Record<CounterRole, string> = {
   counterline: '独立対旋律',
 };
 
+export const JAPANESE_SCALE_LABELS: Record<JapaneseScaleChoice, string> = {
+  auto: '自動',
+  ritsu: '律・陽旋法系',
+  minyo: '民謡音階系',
+  miyakobushi: '都節系',
+};
+
+export const ORNAMENT_LABELS: Record<OrnamentType, string> = {
+  grace: '前打音',
+  turn: '回し',
+  shake: '揺り',
+};
+
+export const GROOVE_FEEL_LABELS: Record<GrooveFeel, string> = {
+  straight: 'ストレート',
+  tripletOverlay: '三連オーバーレイ',
+  bounce: '跳ねる8分',
+};
+
+export const PHRASE_FUNCTION_LABELS: Record<PhraseFunction, string> = {
+  statement: '提示',
+  restatement: '変奏反復',
+  departure: '展開',
+  conclusion: '結論',
+};
+
+/** 決定論生成した主旋律へ後から再適用する、保存可能な局所編集。 */
+export interface MelodyEdit {
+  beat: number;
+  fromMidi: number;
+  toMidi: number;
+}
+
+export interface JapanesePlan {
+  id: JapaneseScale;
+  /** キー主音からの五音。西洋的な固定トニックではなく、核音配置を作る材料として使う。 */
+  intervals: number[];
+  /** 絶対ピッチクラス。 */
+  scalePcs: number[];
+  /** 4度枠を作る核音。終止とフレーズ開始で優先する。 */
+  nuclearPcs: number[];
+}
+
 export interface ComposeOptions {
   progressionId: string;
   styleId: string;
@@ -54,8 +102,14 @@ export interface ComposeOptions {
   bars: ComposeBars;
   /** 16小節曲の先頭へ、初回だけ鳴る2小節イントロを付ける。省略時は有効。 */
   intro?: boolean;
-  /** 省略時は従来どおりメジャー。japanese は陽旋法寄りの五音音階で弱拍を作る。 */
+  /** 省略時は従来どおりメジャー。japanese は選択した五音音組織・核音・間を連動させる。 */
   melodyMode?: MelodyMode;
+  /** 和風モードの音組織。省略時はシードから3様式を選ぶ。 */
+  japaneseScale?: JapaneseScaleChoice;
+  /** 和風様式とは独立したゲーム向けのリズム層。 */
+  grooveFeel?: GrooveFeel;
+  /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
+  melodyEdits?: readonly MelodyEdit[];
   seed: number;
   /** 全小節ぶんのスロット選択。省略時は defaultChoiceFor() */
   choice?: readonly number[];
@@ -92,6 +146,7 @@ export interface NoteEvent {
   /** 0..1。編曲層がチップ固有の音量段階へ変換する。 */
   velocity?: number;
   articulation?: NoteArticulation;
+  ornament?: OrnamentType;
   /** 装飾音はPhrasePlanの骨格リズム検証から除外する。 */
   role?: 'structural' | 'ornament';
 }
@@ -123,6 +178,14 @@ export interface PhraseBarPlan {
   counterSteps: number[];
   /** 16分グリッド上の短い装飾音位置。 */
   ornamentSteps: number[];
+  /** 装飾を入れる小節だけ種類を持つ。 */
+  ornamentType: OrnamentType | null;
+  /** 意図して空けた8分グリッド位置。 */
+  maSteps: number[];
+  /** 8小節を提示→変奏反復→展開→結論として捉えたフレーズ機能。 */
+  phraseFunction: PhraseFunction;
+  /** この小節が輪郭を受け継ぐ元小節。提示小節は自分自身。 */
+  motifSourceBar: number;
   cadence: CadenceType | null;
   /** フレーズが到達する音のピッチクラス。 */
   targetPc: number | null;
@@ -156,6 +219,8 @@ export interface Piece {
   bpm: number;
   styleId: string;
   melodyMode: MelodyMode;
+  japanesePlan: JapanesePlan | null;
+  grooveFeel: GrooveFeel;
   /** ループ本体の小節数。introBars は含めない。 */
   bars: number;
   /** 初回だけ鳴るイントロの小節数。16小節フォーム以外は0。 */
@@ -456,6 +521,82 @@ function harmonicFunction(token: string): HarmonicFunction {
   return 'colour';
 }
 
+const JAPANESE_INTERVALS: Record<JapaneseScale, readonly number[]> = {
+  // 4度枠 C-D-F / G-A-C に相当する、これまでの陽旋法寄り五音。
+  ritsu: YO_SCALE,
+  // 国立劇場の民謡音階例 C-Eb-F / G-Bb-C。
+  minyo: [0, 3, 5, 7, 10],
+  // 半音を含む都節系 C-Db-F / G-Ab-C。
+  miyakobushi: [0, 1, 5, 7, 8],
+};
+
+/** 五音を固定トニックとしてではなく、4度離れた核音を持つ旋律計画へ展開する。 */
+export function japanesePlanFor(
+  keyRoot: number,
+  choice: JapaneseScaleChoice = 'auto',
+  seed = 0,
+): JapanesePlan {
+  const ids: readonly JapaneseScale[] = ['ritsu', 'minyo', 'miyakobushi'];
+  const id = choice === 'auto' ? ids[(seed >>> 1) % ids.length]! : choice;
+  const intervals = [...JAPANESE_INTERVALS[id]];
+  return {
+    id,
+    intervals,
+    scalePcs: intervals.map((interval) => (keyRoot + interval) % 12),
+    // 二つの4度枠の端点。フレーズの柱として扱い、中間音は方向づけに使う。
+    nuclearPcs: [keyRoot, (keyRoot + 5) % 12, (keyRoot + 7) % 12],
+  };
+}
+
+/** 跳ねる8分だけを2:1へ遅らせる。三連オーバーレイはドラム層だけで扱う。 */
+export function grooveBeat(beat: number, feel: GrooveFeel): number {
+  if (feel !== 'bounce') return beat;
+  const floor = Math.floor(beat);
+  const fraction = beat - floor;
+  return Math.abs(fraction - 0.5) < 0.001 ? floor + 2 / 3 : beat;
+}
+
+/**
+ * 元の16分ハット譜を三連グリッドへ要約する。
+ * 1拍を常に3発で埋めず、表拍は表、単独の裏拍は三連の後ろ、
+ * 裏が2発以上ある細かい譜だけを三連の中・後ろへ写す。
+ */
+function tripletHatOffsets(pattern: readonly number[], quarter: number): number[] {
+  const start = quarter * 4;
+  const offsets: number[] = [];
+  if (pattern[start]) offsets.push(0);
+  const offbeatCount = pattern.slice(start + 1, start + 4).filter(Boolean).length;
+  if (offbeatCount === 1) offsets.push(2 / 3);
+  else if (offbeatCount >= 2) offsets.push(1 / 3, 2 / 3);
+  return offsets;
+}
+
+function withMelodyEdits(notes: readonly NoteEvent[], edits: readonly MelodyEdit[] = []): NoteEvent[] {
+  const result = notes.map((note) => ({ ...note }));
+  for (const edit of edits) {
+    const target = result.find((note) => (
+      Math.abs(note.beat - edit.beat) < 0.001 && note.midi === edit.fromMidi
+    ));
+    if (target) target.midi = edit.toMidi;
+  }
+  return result;
+}
+
+/** 4小節ごとに一度だけ装飾し、同じ応答処理が2小節おきに続くのを避ける。 */
+function ornamentPlanFor(bars: ComposeBars, seed: number): Map<number, OrnamentType> {
+  const rng = new Xoshiro128((seed ^ 0x4f52_4e4d) >>> 0);
+  const selected: number[] = [];
+  for (let phrase = 0; phrase < bars; phrase += 4) {
+    const candidates = [phrase + 1, phrase + 3].filter((bar) => bar < bars);
+    selected.push(candidates[rng.nextInt(candidates.length)]!);
+  }
+  const turnIndex = selected.length > 1 ? rng.nextInt(selected.length) : -1;
+  return new Map(selected.map((bar, index) => [
+    bar,
+    index === turnIndex ? 'turn' : ((seed + index) & 1) === 0 ? 'grace' : 'shake',
+  ]));
+}
+
 /** 16小節のA→Bを、常に「後半を足す」一択にしないための編成設計。 */
 export function arrangementPlanFor(bars: ComposeBars, seed: number): ArrangementPlan {
   if (bars !== 16) {
@@ -493,6 +634,14 @@ function closestPcToMidi(target: number, pcs: readonly number[], lo = 48, hi = 9
   return nearestWithPc(target, pcs, lo, hi) % 12;
 }
 
+/** 4小節では各小節、8小節単位では各2小節をSRDC（提示・反復・展開・結論）へ割り当てる。 */
+function phraseFunctionFor(bar: number, bars: ComposeBars): PhraseFunction {
+  const functions: readonly PhraseFunction[] = ['statement', 'restatement', 'departure', 'conclusion'];
+  if (bars === 4) return functions[bar]!;
+  const barInSection = bars === 16 && bar >= 8 ? bar - 8 : bar;
+  return functions[Math.min(3, Math.floor(barInSection / 2))]!;
+}
+
 /** フレーズの役割・終止目標・対旋律の空間を、各声部より先に決める。 */
 function makePhrasePlan(
   opts: ComposeOptions,
@@ -502,6 +651,7 @@ function makePhrasePlan(
   startMidi: number,
   melodyMode: MelodyMode,
   scalePcs: readonly number[],
+  japanesePlan: JapanesePlan | null,
   arrangementPlan: ArrangementPlan,
 ): PhrasePlan {
   const promptA = makeMotifRhythm(style, rng);
@@ -509,6 +659,7 @@ function makePhrasePlan(
   const promptB = opts.bars === 16 ? makeMotifRhythm(style, rng, promptA) : promptA;
   const answerB = opts.bars === 16 ? makeMotifRhythm(style, rng, answerA) : answerA;
   const lateClimax = (opts.seed & 1) === 1;
+  const ornaments = melodyMode === 'japanese' ? ornamentPlanFor(opts.bars, opts.seed) : new Map();
   // 山は新しいフレーズを提示する小節頭へ置く。位置だけを前後2候補から選ぶ。
   const climaxBar = opts.bars === 16 ? (lateClimax ? 14 : 12) : opts.bars === 8 ? (lateClimax ? 6 : 4) : 2;
   const bars: PhraseBarPlan[] = [];
@@ -516,6 +667,9 @@ function makePhrasePlan(
   for (let bar = 0; bar < opts.bars; bar++) {
     const section: 'A' | 'B' = opts.bars === 16 && bar >= 8 ? 'B' : 'A';
     const barInSection = section === 'B' ? bar - 8 : bar;
+    const phraseFunction = phraseFunctionFor(bar, opts.bars);
+    const sectionStart = section === 'B' ? 8 : 0;
+    const motifSourceBar = opts.bars === 4 ? 0 : sectionStart + (barInSection % 2);
     const isAnswer = barInSection % 2 === 1;
     const rhythm = [...(section === 'B'
       ? (isAnswer ? answerB : promptB)
@@ -570,9 +724,14 @@ function makePhrasePlan(
       const targetPcs = melodyMode === 'japanese' && modalChordPcs.length > 0
         ? modalChordPcs
         : targetChord.pcs;
-      if (cadence === 'open') targetPc = targetPcs.at(-1) ?? rootPc;
-      else if (cadence === 'turnaround') targetPc = closestPcToMidi(startMidi, targetPcs);
-      else targetPc = rootPc;
+      const nuclearTargets = japanesePlan
+        ? targetPcs.filter((pc) => japanesePlan.nuclearPcs.includes(pc))
+        : [];
+      const cadencePcs = nuclearTargets.length > 0 ? nuclearTargets : targetPcs;
+      if (cadence === 'open') targetPc = cadencePcs.at(-1) ?? rootPc;
+      else if (cadence === 'turnaround' || japanesePlan) {
+        targetPc = closestPcToMidi(startMidi, cadencePcs);
+      } else targetPc = rootPc;
     }
 
     if (
@@ -597,8 +756,32 @@ function makePhrasePlan(
     }
 
     const ornamentSteps: number[] = [];
-    if (melodyMode === 'japanese' && isAnswer && targetStep !== null && targetStep > 0) {
-      ornamentSteps.push(targetStep * 2 - 1);
+    const ornamentType = targetStep !== null ? ornaments.get(bar) ?? null : null;
+    if (targetStep !== null && targetStep > 0) {
+      if (ornamentType === 'grace') ornamentSteps.push(targetStep * 2 - 1);
+      if (ornamentType === 'turn') ornamentSteps.push(targetStep * 2 - 2, targetStep * 2 - 1);
+    }
+
+    // 「間」は音数の不足ではなく、フレーズ上で意図した空白として記録する。
+    const maSteps: number[] = [];
+    if (melodyMode === 'japanese' && isAnswer) {
+      if (ornamentType && targetStep !== null) {
+        const beforeTarget = targetStep - 1;
+        if (beforeTarget > 0 && beforeTarget !== 4 && !counterSteps.includes(beforeTarget)) {
+          rhythm[beforeTarget] = false;
+          maSteps.push(beforeTarget);
+        }
+      } else {
+        const weakSteps = [7, 5, 3, 1].filter(
+          (step) => step !== targetStep && !counterSteps.includes(step),
+        );
+        const active = weakSteps.find((step) => rhythm[step] && rhythm.filter(Boolean).length > 4);
+        const maStep = active ?? weakSteps.find((step) => !rhythm[step]);
+        if (maStep !== undefined) {
+          rhythm[maStep] = false;
+          maSteps.push(maStep);
+        }
+      }
     }
 
     const cycleEnergy = [1, 2, 3, 1][barInSection % 4]!;
@@ -613,8 +796,8 @@ function makePhrasePlan(
           ? 'continuation'
           : 'statement';
     bars.push({
-      bar, section, role, rhythm, counterSteps, ornamentSteps,
-      cadence, targetPc, targetStep, energy, dynamic,
+      bar, section, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
+      phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
     });
   }
   return { climaxBar, bars };
@@ -700,7 +883,11 @@ export function compose(opts: ComposeOptions): Piece {
   const rng = new Xoshiro128(opts.seed >>> 0);
   const keyRoot = ((opts.keyRoot % 12) + 12) % 12;
   const melodyMode = opts.melodyMode ?? 'major';
-  const scalePcs = (melodyMode === 'japanese' ? YO_SCALE : MAJOR_SCALE).map((t) => (t + keyRoot) % 12);
+  const japanesePlan = melodyMode === 'japanese'
+    ? japanesePlanFor(keyRoot, opts.japaneseScale ?? 'auto', opts.seed)
+    : null;
+  const scalePcs = japanesePlan?.scalePcs ?? MAJOR_SCALE.map((t) => (t + keyRoot) % 12);
+  const grooveFeel = opts.grooveFeel ?? 'straight';
   const arrangementPlan = arrangementPlanFor(opts.bars, opts.seed);
   const choice = opts.choice ?? defaultChoiceFor(prog, opts.bars);
 
@@ -752,17 +939,23 @@ export function compose(opts: ComposeOptions): Piece {
   // --- PhrasePlan（旋律・副旋律・ベースが共有する設計図） ---
   const melodyPcsForChord = (chord: ChordEvent): readonly number[] => {
     const modalTones = chord.pcs.filter((pc) => scalePcs.includes(pc));
-    return melodyMode === 'japanese' && modalTones.length > 0 ? modalTones : chord.pcs;
+    if (melodyMode !== 'japanese' || modalTones.length === 0) return chord.pcs;
+    // 核音はPhrasePlanの到達点で優先する。通常の強拍まで核音だけに絞ると、
+    // コードによって使用可能音が1音になり旋律線が痩せるため、ここでは共通音をすべて使う。
+    return modalTones;
   };
   const startMidi = nearestWithPc(76, melodyPcsForChord(chordAt(0)));
   const phrasePlan = makePhrasePlan(
-    opts, style, rng, chordAt, startMidi, melodyMode, scalePcs, arrangementPlan,
+    opts, style, rng, chordAt, startMidi, melodyMode, scalePcs, japanesePlan, arrangementPlan,
   );
   const phraseGesture = makePhraseGesture(rng, style);
   const baseCenter = style.id === 'rock' ? 77 : style.id === 'ska' ? 79 : 78;
+  const climaxChord = chordAt(phrasePlan.climaxBar * 4);
   const climaxMidi = nearestWithPc(
     MELODY_HI,
-    melodyPcsForChord(chordAt(phrasePlan.climaxBar * 4)),
+    // 五音とコードの共通音が1音しかない場合も、山だけはコード全体へ開いて
+    // 十分な高さを確保する。和声上は安定し、以後の音域制限にも12音分の余地が残る。
+    climaxChord.pcs,
   );
 
   // --- 主旋律（PhrasePlanの目標音へ向かうモチーフ展開） ---
@@ -779,16 +972,18 @@ export function compose(opts: ComposeOptions): Piece {
       : baseCenter + barPlan.energy - 2;
     const onsets: number[] = [];
     barPlan.rhythm.forEach((on, step) => on && onsets.push(step));
+    let motifTranspose: number | null = null;
 
     for (let index = 0; index < onsets.length; index++) {
       const step = onsets[index]!;
-      const beat = bar * 4 + step * 0.5;
-      const chord = chordAt(beat);
+      const logicalBeat = bar * 4 + step * 0.5;
+      const beat = grooveBeat(logicalBeat, grooveFeel);
+      const chord = chordAt(logicalBeat);
       const structuralPcs = melodyPcsForChord(chord);
       const strong = step === 0 || step === 4;
       let midi: number;
       if (bar === phrasePlan.climaxBar && step === 0) {
-        midi = nearestWithPc(MELODY_HI, structuralPcs);
+        midi = climaxMidi;
       } else if (barPlan.targetStep === step && barPlan.targetPc !== null) {
         // 応答小節は、先に決めた終止音へ実際に到達させる。
         if (barPlan.cadence === 'turnaround') {
@@ -809,6 +1004,7 @@ export function compose(opts: ComposeOptions): Piece {
         const move = phraseGesture[phraseStepOffset + step]!;
         let dir = move.direction;
         if (isAnswerVariation && phraseStepOffset + step >= 12) dir = dir === 1 ? -1 : 1;
+        if (barPlan.phraseFunction === 'departure') dir = dir === 1 ? -1 : 1;
         if (barPlan.section === 'B' && phraseStepOffset + step >= 8) dir = dir === 1 ? -1 : 1;
         const phraseStep = phraseStepOffset + step;
         if (melodyMode === 'japanese' && phraseStep % 4 === 3 && scalePcs.includes(prev % 12)) {
@@ -822,13 +1018,34 @@ export function compose(opts: ComposeOptions): Piece {
         }
       }
       const nextPlannedStep = index + 1 < onsets.length ? onsets[index + 1]! : null;
-      if (
+      const bridgesToCadence = (
         barPlan.cadence === 'turnaround'
         && barPlan.targetPc !== null
         && nextPlannedStep === barPlan.targetStep
-      ) {
-        const loopTarget = nearestWithPc(startMidi, [barPlan.targetPc]);
+      );
+      if (bridgesToCadence) {
+        const loopTarget = nearestWithPc(startMidi, [barPlan.targetPc!]);
         midi = bridgeWithPc(prev, loopTarget, strong ? chord.pcs : scalePcs);
+      }
+      const repeatsMotif = barPlan.motifSourceBar !== bar && (
+        barPlan.phraseFunction === 'restatement'
+        || (barPlan.phraseFunction === 'conclusion' && step < 4)
+      );
+      if (
+        repeatsMotif
+        && !bridgesToCadence
+        && barPlan.targetStep !== step
+        && !(bar === phrasePlan.climaxBar && step === 0)
+      ) {
+        const sourceBeat = grooveBeat(barPlan.motifSourceBar * 4 + step * 0.5, grooveFeel);
+        const source = melody.find((note) => (
+          note.role !== 'ornament' && Math.abs(note.beat - sourceBeat) < 0.001
+        ));
+        if (source) {
+          if (motifTranspose === null) motifTranspose = midi - source.midi;
+          const allowedPcs = strong ? structuralPcs : scalePcs;
+          midi = nearestWithPc(source.midi + motifTranspose, allowedPcs);
+        }
       }
       if (
         !(bar === phrasePlan.climaxBar && step === 0)
@@ -852,8 +1069,9 @@ export function compose(opts: ComposeOptions): Piece {
         .map((ornamentStep) => ornamentStep * 0.5)
         .find((ornamentStep) => ornamentStep > step) ?? 8;
       const boundaryStep = Math.min(nextLeadStep, nextCounterStep, nextOrnamentStep);
+      const boundaryBeat = grooveBeat(bar * 4 + boundaryStep * 0.5, grooveFeel);
       const articulation: NoteArticulation = barPlan.targetStep === step
-        ? 'tenuto'
+        ? barPlan.ornamentType === 'shake' ? 'ornament' : 'tenuto'
         : bar === phrasePlan.climaxBar && step === 0
           ? 'accent'
           : strong
@@ -871,23 +1089,30 @@ export function compose(opts: ComposeOptions): Piece {
       const velocity = Math.min(1, barPlan.dynamic + (strong ? 0.08 : 0) + (articulation === 'accent' ? 0.08 : 0));
       melody.push({
         beat,
-        dur: Math.max(0.1, (boundaryStep - step) * 0.5 * gate),
+        dur: Math.max(0.1, (boundaryBeat - beat) * gate),
         midi,
         velocity,
         articulation,
+        ...(barPlan.targetStep === step && barPlan.ornamentType === 'shake'
+          ? { ornament: barPlan.ornamentType }
+          : {}),
         role: 'structural',
       });
       prev = midi;
-      prevBeat = beat;
+      prevBeat = logicalBeat;
     }
 
     // 和風モードの装飾は独立した「飛び道具」ではなく、応答の到達音へ食い込む前打音として置く。
-    for (const ornamentStep of barPlan.ornamentSteps) {
-      const beat = bar * 4 + ornamentStep * 0.25;
-      const targetBeat = beat + 0.25;
+    for (let ornamentIndex = 0; ornamentIndex < barPlan.ornamentSteps.length; ornamentIndex++) {
+      const ornamentStep = barPlan.ornamentSteps[ornamentIndex]!;
+      const beat = grooveBeat(bar * 4 + ornamentStep * 0.25, grooveFeel);
+      const targetBeat = grooveBeat(bar * 4 + barPlan.targetStep! * 0.5, grooveFeel);
       const target = melody.find((note) => Math.abs(note.beat - targetBeat) < 0.001);
       if (!target) continue;
-      const direction: 1 | -1 = ((bar + opts.seed) & 1) === 0 ? -1 : 1;
+      const baseDirection: 1 | -1 = ((bar + opts.seed) & 1) === 0 ? -1 : 1;
+      const direction: 1 | -1 = barPlan.ornamentType === 'turn' && ornamentIndex === 1
+        ? (baseDirection === 1 ? -1 : 1)
+        : baseDirection;
       const midi = stepOnScale(target.midi, direction, scalePcs);
       melody.push({
         beat,
@@ -895,6 +1120,7 @@ export function compose(opts: ComposeOptions): Piece {
         midi,
         velocity: Math.max(0.35, barPlan.dynamic - 0.18),
         articulation: 'ornament',
+        ...(barPlan.ornamentType ? { ornament: barPlan.ornamentType } : {}),
         role: 'ornament',
       });
     }
@@ -910,8 +1136,9 @@ export function compose(opts: ComposeOptions): Piece {
     const barNotes = melody.filter((note) => note.beat >= barStart && note.beat < barStart + 4);
     for (let index = 0; index < barPlan.counterSteps.length; index++) {
       const step = barPlan.counterSteps[index]!;
-      const beat = barStart + step * 0.5;
-      const chord = chordAt(beat);
+      const logicalBeat = barStart + step * 0.5;
+      const beat = grooveBeat(logicalBeat, grooveFeel);
+      const chord = chordAt(logicalBeat);
       const leadBefore = [...barNotes].reverse().find((note) => note.beat < beat);
       const leadBeforeBefore = leadBefore
         ? [...barNotes].reverse().find((note) => note.beat < leadBefore.beat)
@@ -923,7 +1150,7 @@ export function compose(opts: ComposeOptions): Piece {
         : previousCounter + (leadMotion > 0 ? -2 : leadMotion < 0 ? 2 : 0);
       const midi = nearestWithPc(contraryTarget, melodyPcsForChord(chord), COUNTER_LO, COUNTER_HI);
       const nextCounterBeat = barPlan.counterSteps[index + 1] !== undefined
-        ? barStart + barPlan.counterSteps[index + 1]! * 0.5
+        ? grooveBeat(barStart + barPlan.counterSteps[index + 1]! * 0.5, grooveFeel)
         : barStart + 4;
       const boundary = Math.min(leadAfter?.beat ?? barStart + 4, nextCounterBeat);
       const maxDur = arrangementPlan.counterRole === 'counterline'
@@ -956,7 +1183,9 @@ export function compose(opts: ComposeOptions): Piece {
     } else {
       for (let e = 0; e < c.dur * 2; e++) {
         const midi = style.bass === 'octave8' && e % 2 === 1 ? root + 12 : root;
-        bass.push({ beat: c.beat + e * 0.5, dur: 0.4, midi });
+        const beat = grooveBeat(c.beat + e * 0.5, grooveFeel);
+        const nextBeat = grooveBeat(c.beat + (e + 1) * 0.5, grooveFeel);
+        bass.push({ beat, dur: Math.min(0.4, Math.max(0.18, (nextBeat - beat) * 0.8)), midi });
       }
     }
   }
@@ -991,7 +1220,7 @@ export function compose(opts: ComposeOptions): Piece {
           distance++;
         }
         const pickup: NoteEvent = {
-          beat: bar * 4 + 3.5,
+          beat: grooveBeat(bar * 4 + 3.5, grooveFeel),
           dur: 0.35,
           midi: nearestWithPc(last.midi, [approachPc], 36, 64),
           velocity: Math.max(0.4, barPlan.dynamic - 0.1),
@@ -1018,12 +1247,12 @@ export function compose(opts: ComposeOptions): Piece {
     const sectionPlan = barPlan.section === 'B' ? arrangementPlan.sectionB : arrangementPlan.sectionA;
     const pattern = sectionPlan.drum === 'sectionB' ? style.sectionB : style;
     for (let s = 0; s < 16; s++) {
-      const beat = bar * 4 + s * 0.25;
+      const beat = grooveBeat(bar * 4 + s * 0.25, grooveFeel);
       if (barPlan.cadence === 'half' && barPlan.section === 'A' && s >= 12) {
         // Aの半終止だけを細かくし、次のBセクションを予告する。
         if (s === 12 && style.kick[s]) drums.push({ beat, inst: 'kick' });
         if (s === 12 || s === 14 || s === 15) drums.push({ beat, inst: 'snare' });
-        if (s === 13 || s === 15) drums.push({ beat, inst: 'hat' });
+        if (grooveFeel !== 'tripletOverlay' && (s === 13 || s === 15)) drums.push({ beat, inst: 'hat' });
         continue;
       }
       // 最終小節の最後の 1 拍を空け、B の勢いを整理してループ先の A を迎える。
@@ -1031,12 +1260,28 @@ export function compose(opts: ComposeOptions): Piece {
       if (sectionPlan.drum === 'breakdown') {
         if (s === 0 || s === 8) drums.push({ beat, inst: 'kick' });
         if (s === 4 || s === 12) drums.push({ beat, inst: 'snare' });
-        if (s === 2 || s === 6 || s === 10 || s === 14) drums.push({ beat, inst: 'hat' });
+        if (grooveFeel !== 'tripletOverlay' && (s === 2 || s === 6 || s === 10 || s === 14)) {
+          drums.push({ beat, inst: 'hat' });
+        }
         continue;
       }
       if (pattern.kick[s]) drums.push({ beat, inst: 'kick' });
       if (pattern.snare[s]) drums.push({ beat, inst: 'snare' });
-      if (pattern.hat[s]) drums.push({ beat, inst: 'hat' });
+      if (grooveFeel !== 'tripletOverlay' && pattern.hat[s]) drums.push({ beat, inst: 'hat' });
+    }
+    if (grooveFeel === 'tripletOverlay') {
+      // 三連を常時ロールとして足さず、元のスタイル譜を三連位置へ写す。
+      // A→Bフィルとループ直前は最終拍のハットを休ませ、スネアと余白を立てる。
+      const quarters = barPlan.cadence === 'turnaround'
+        || (barPlan.cadence === 'half' && barPlan.section === 'A')
+        ? 3
+        : 4;
+      for (let quarter = 0; quarter < quarters; quarter++) {
+        const offsets = sectionPlan.drum === 'breakdown'
+          ? [2 / 3]
+          : tripletHatOffsets(pattern.hat, quarter);
+        for (const offset of offsets) drums.push({ beat: bar * 4 + quarter + offset, inst: 'hat' });
+      }
     }
   }
 
@@ -1099,11 +1344,13 @@ export function compose(opts: ComposeOptions): Piece {
         if (strong) midi = nearestWithPc(midi, introChordPcs);
         const nextStep = index + 1 < onsets.length ? onsets[index + 1]! : 16;
         // 応答末尾は6.5拍の手前で切り、拍グリッド上でAまで1.5拍の余白を取る。
+        const soundedBeat = grooveBeat(bar * 4 + step * 0.25, grooveFeel);
+        const nextSoundedBeat = grooveBeat(bar * 4 + nextStep * 0.25, grooveFeel);
         const dur = bar === 1 && index === onsets.length - 1
           ? 0.2
-          : (nextStep - step) * 0.25 * 0.8;
+          : (nextSoundedBeat - soundedBeat) * 0.8;
         introMelody.push({
-          beat: bar * 4 + step * 0.25,
+          beat: soundedBeat,
           dur,
           midi,
           velocity: strong ? 0.78 : 0.65,
@@ -1126,7 +1373,7 @@ export function compose(opts: ComposeOptions): Piece {
         const step = onsets[index]!;
         const lastAnswerNote = bar === 1 && index === onsets.length - 1;
         introBass.push({
-          beat: bar * 4 + step * 0.25,
+          beat: grooveBeat(bar * 4 + step * 0.25, grooveFeel),
           dur: lastAnswerNote ? 0.2 : bar === 0 ? 0.4 : 0.2,
           midi: nearestWithPc(root + bassTargets[index % bassTargets.length]!, firstChord.pcs, 36, 64),
           velocity: bar === 0 ? 0.64 : 0.72,
@@ -1140,9 +1387,22 @@ export function compose(opts: ComposeOptions): Piece {
     if (introPlan.role === 'groove') {
       for (let bar = 0; bar < introBars; bar++) {
         introDrums.push({ beat: bar * 4, inst: 'kick' });
-        for (let step = 0; step < 16; step++) {
-          if (bar === 1 && step > 8) break;
-          if (style.hat[step]) introDrums.push({ beat: bar * 4 + step * 0.25, inst: 'hat' });
+        if (grooveFeel === 'tripletOverlay') {
+          const quarters = bar === 1 ? 2 : 4;
+          for (let quarter = 0; quarter < quarters; quarter++) {
+            for (const offset of tripletHatOffsets(style.hat, quarter)) {
+              introDrums.push({ beat: bar * 4 + quarter + offset, inst: 'hat' });
+            }
+          }
+        } else {
+          for (let step = 0; step < 16; step++) {
+            if (bar === 1 && step > 8) break;
+            if (style.hat[step]) {
+              introDrums.push({
+                beat: grooveBeat(bar * 4 + step * 0.25, grooveFeel), inst: 'hat',
+              });
+            }
+          }
         }
       }
     }
@@ -1156,10 +1416,14 @@ export function compose(opts: ComposeOptions): Piece {
     for (const event of drums) event.beat += loopStartBeat;
   }
 
+  const editedMelody = withMelodyEdits([...introMelody, ...melody], opts.melodyEdits);
+
   return {
     bpm: opts.bpm,
     styleId: style.id,
     melodyMode,
+    japanesePlan,
+    grooveFeel,
     bars: opts.bars,
     introBars,
     introRole,
@@ -1167,7 +1431,7 @@ export function compose(opts: ComposeOptions): Piece {
     beats: loopStartBeat + opts.bars * 4,
     keyRoot,
     chords: [...introChords, ...chords],
-    melody: [...introMelody, ...melody],
+    melody: editedMelody,
     counterMelody,
     bass: [...introBass, ...bass],
     drums: [...introDrums, ...drums],
@@ -1196,12 +1460,69 @@ export type DiagnosticCategory =
 export interface CompositionIssue extends Violation {
   category: DiagnosticCategory;
   severity: 'error' | 'warning';
+  code?: 'melody-large-leap' | 'melody-unresolved-nonchord';
+  target?: { part: 'melody'; noteIndex: number };
+}
+
+export interface CompositionObservation {
+  beat: number;
+  kind: 'embellishment' | 'motif';
+  description: string;
+  relatedBeats: number[];
 }
 
 export interface CompositionReport {
   overall: number;
   scores: Record<DiagnosticCategory, number>;
   issues: CompositionIssue[];
+  observations: CompositionObservation[];
+}
+
+export interface CompositionRepair {
+  edit: MelodyEdit;
+  strategy: 'resolve-next' | 'stabilize-note' | 'reduce-leap';
+}
+
+function melodicDirection(from: number, to: number): -1 | 0 | 1 {
+  return to === from ? 0 : to > from ? 1 : -1;
+}
+
+/** 五音音階では3～4半音も「音階上の隣」になり得るため、半音数だけで順次進行を判定しない。 */
+function isMelodicStep(piece: Piece, from: number, to: number): boolean {
+  if (from === to) return false;
+  if (Math.abs(to - from) <= 2) return true;
+  const collection = piece.japanesePlan?.scalePcs;
+  if (!collection?.includes(((from % 12) + 12) % 12)) return false;
+  const direction = melodicDirection(from, to);
+  let cursor = from + direction;
+  while (Math.abs(cursor - from) <= 12) {
+    if (collection.includes(((cursor % 12) + 12) % 12)) return cursor === to;
+    cursor += direction;
+  }
+  return false;
+}
+
+function embellishmentAt(
+  piece: Piece,
+  before: NoteEvent | undefined,
+  note: NoteEvent,
+  after: NoteEvent,
+  nextChord: ChordEvent,
+): string | null {
+  const incomingDirection = before ? melodicDirection(before.midi, note.midi) : 0;
+  const outgoingDirection = melodicDirection(note.midi, after.midi);
+  const incomingStep = before ? isMelodicStep(piece, before.midi, note.midi) : false;
+  const outgoingStep = isMelodicStep(piece, note.midi, after.midi);
+  if (before?.midi === note.midi && outgoingStep) {
+    return outgoingDirection < 0 ? '掛留音' : '倚音的な保続';
+  }
+  if (note.midi === after.midi && nextChord.pcs.includes(note.midi % 12)) return '先取音';
+  if (incomingStep && outgoingStep) {
+    return incomingDirection === outgoingDirection ? '経過音' : '刺繍音';
+  }
+  if (!incomingStep && outgoingStep && incomingDirection === -outgoingDirection) return '倚音';
+  if (incomingStep && !outgoingStep && incomingDirection === -outgoingDirection) return '逸音';
+  return null;
 }
 
 /**
@@ -1210,6 +1531,7 @@ export interface CompositionReport {
  */
 export function diagnosePiece(piece: Piece): CompositionReport {
   const issues: CompositionIssue[] = [];
+  const observations: CompositionObservation[] = [];
   const categories: DiagnosticCategory[] = [
     'harmony', 'melody', 'voiceLeading', 'rhythm', 'counterpoint', 'form', 'loop',
   ];
@@ -1219,7 +1541,12 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     beat: number,
     midi: number,
     reason: string,
-  ) => issues.push({ category, severity, beat, midi, reason });
+    metadata: Pick<CompositionIssue, 'code' | 'target'> = {},
+  ) => issues.push({
+    category, severity, beat, midi, reason,
+    ...(metadata.code ? { code: metadata.code } : {}),
+    ...(metadata.target ? { target: metadata.target } : {}),
+  });
   const chordAt = (beat: number): ChordEvent => {
     let cur = piece.chords[0]!;
     for (const c of piece.chords) {
@@ -1244,21 +1571,83 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       }
     }
   }
-  const bodyMelody = piece.melody.filter((note) => note.beat >= piece.loopStartBeat);
-  for (let index = 1; index < bodyMelody.length; index++) {
-    const previous = bodyMelody[index - 1]!;
-    const current = bodyMelody[index]!;
-    if (Math.abs(current.midi - previous.midi) > 9) {
-      add('melody', 'warning', current.beat, current.midi, '主旋律の跳躍が9半音を超える');
+  const bodyMelody = piece.melody
+    .map((note, noteIndex) => ({ note, noteIndex }))
+    .filter(({ note }) => note.beat >= piece.loopStartBeat && note.role !== 'ornament');
+  const motifGroups = new Map<string, { position: number; beat: number }[]>();
+  for (let position = 0; position < bodyMelody.length; position++) {
+    const note = bodyMelody[position]!.note;
+    const relative = note.beat - piece.loopStartBeat;
+    const bar = Math.min(piece.bars - 1, Math.max(0, Math.floor(relative / 4)));
+    const plan = piece.phrasePlan.bars[bar]!;
+    const step = Math.round((relative - bar * 4) * 2);
+    const key = `${plan.motifSourceBar}:${step}`;
+    const group = motifGroups.get(key) ?? [];
+    group.push({ position, beat: note.beat });
+    motifGroups.set(key, group);
+  }
+  const contextSignature = (position: number): string => {
+    const before = bodyMelody[position - 1]?.note;
+    const note = bodyMelody[position]!.note;
+    const after = bodyMelody[position + 1]?.note;
+    if (!before || !after) return '';
+    const incoming = `${melodicDirection(before.midi, note.midi)}${isMelodicStep(piece, before.midi, note.midi) ? 's' : 'l'}`;
+    const outgoing = `${melodicDirection(note.midi, after.midi)}${isMelodicStep(piece, note.midi, after.midi) ? 's' : 'l'}`;
+    return `${incoming}:${outgoing}`;
+  };
+  const motifRelationsAt = (position: number): number[] => {
+    const note = bodyMelody[position]!.note;
+    const relative = note.beat - piece.loopStartBeat;
+    const bar = Math.min(piece.bars - 1, Math.max(0, Math.floor(relative / 4)));
+    const plan = piece.phrasePlan.bars[bar]!;
+    const step = Math.round((relative - bar * 4) * 2);
+    const signature = contextSignature(position);
+    if (!signature) return [];
+    const sameContext = (motifGroups.get(`${plan.motifSourceBar}:${step}`) ?? [])
+      .filter((entry) => entry.position !== position && contextSignature(entry.position) === signature)
+      .map((entry) => entry.beat);
+    const weakPosition = step !== 0 && step !== 4;
+    const pitchLanguage = piece.japanesePlan?.scalePcs
+      ?? MAJOR_SCALE.map((interval) => (piece.keyRoot + interval) % 12);
+    const inPitchLanguage = pitchLanguage.includes(note.midi % 12);
+    return weakPosition && inPitchLanguage ? sameContext : [];
+  };
+
+  for (let position = 0; position < bodyMelody.length; position++) {
+    const { note, noteIndex } = bodyMelody[position]!;
+    const before = bodyMelody[position - 1]?.note;
+    const after = bodyMelody[position + 1]?.note;
+    if (before && Math.abs(note.midi - before.midi) > 9) {
+      add('melody', 'warning', note.beat, note.midi, '主旋律の跳躍が9半音を超える', {
+        code: 'melody-large-leap', target: { part: 'melody', noteIndex },
+      });
     }
-    const chord = chordAt(previous.beat);
-    if (!chord.pcs.includes(previous.midi % 12)) {
-      const resolvesByStep = Math.abs(current.midi - previous.midi) <= 2;
-      const resolvesToHarmony = chordAt(current.beat).pcs.includes(current.midi % 12);
-      if (!resolvesByStep && !resolvesToHarmony) {
-        add('melody', 'warning', previous.beat, previous.midi, '非和声音の進行方向が不明瞭');
-      }
+    const chord = chordAt(note.beat);
+    if (!after || chord.pcs.includes(note.midi % 12)) continue;
+    const nextChord = chordAt(after.beat);
+    const resolvesByStep = isMelodicStep(piece, note.midi, after.midi);
+    const resolvesToHarmony = nextChord.pcs.includes(after.midi % 12);
+    if (resolvesByStep || resolvesToHarmony) continue;
+    const embellishment = embellishmentAt(piece, before, note, after, nextChord);
+    if (embellishment) {
+      observations.push({
+        beat: note.beat, kind: 'embellishment', description: `${embellishment}として成立`, relatedBeats: [],
+      });
+      continue;
     }
+    const relatedBeats = motifRelationsAt(position);
+    if (relatedBeats.length > 0) {
+      observations.push({
+        beat: note.beat,
+        kind: 'motif',
+        description: '反復する輪郭の特徴音として保持',
+        relatedBeats,
+      });
+      continue;
+    }
+    add('melody', 'warning', note.beat, note.midi, '非和声音の進行方向が不明瞭', {
+      code: 'melody-unresolved-nonchord', target: { part: 'melody', noteIndex },
+    });
   }
 
   for (let index = 0; index < piece.chords.length; index++) {
@@ -1333,7 +1722,10 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
     }
     if (barPlan.targetStep === null || barPlan.targetPc === null) continue;
-    const targetBeat = bodyStart + barPlan.bar * 4 + barPlan.targetStep * 0.5;
+    const targetBeat = bodyStart + grooveBeat(
+      barPlan.bar * 4 + barPlan.targetStep * 0.5,
+      piece.grooveFeel,
+    );
     const target = piece.melody.find((note) => Math.abs(note.beat - targetBeat) < 0.001);
     if (!target || target.midi % 12 !== barPlan.targetPc) {
       add('form', 'error', targetBeat, target?.midi ?? -1, `${barPlan.bar + 1}小節目が終止目標へ未到達`);
@@ -1357,14 +1749,15 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : piece.loopStartBeat;
     const nextChord = chordAt(nextChordBeat);
     const nextRootPc = (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
-    if (inBar !== 0.5 || !next || next.midi % 12 !== nextRootPc) {
+    const pickupPosition = piece.grooveFeel === 'bounce' ? 2 / 3 : 0.5;
+    if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextRootPc) {
       add('harmony', 'warning', note.beat, note.midi, 'ベースの経過音が弱拍から次コードの根音へ解決していない');
     }
   }
 
   if (bodyMelody.length > 1) {
-    const first = bodyMelody[0]!;
-    const last = bodyMelody.at(-1)!;
+    const first = bodyMelody[0]!.note;
+    const last = bodyMelody.at(-1)!.note;
     if (Math.abs(first.midi - last.midi) > 7) {
       add('loop', 'warning', last.beat, last.midi, '主旋律のループ境界が7半音を超える');
     }
@@ -1381,7 +1774,125 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     return [category, Math.max(0, score)];
   })) as Record<DiagnosticCategory, number>;
   const overall = Math.round(categories.reduce((sum, category) => sum + scores[category], 0) / categories.length);
-  return { overall, scores, issues };
+  return { overall, scores, issues, observations };
+}
+
+function chordAtInPiece(piece: Piece, beat: number): ChordEvent {
+  let current = piece.chords[0]!;
+  for (const chord of piece.chords) {
+    if (chord.beat <= beat) current = chord;
+    else break;
+  }
+  return current;
+}
+
+function protectedMelodyNote(piece: Piece, note: NoteEvent): boolean {
+  if (note.role === 'ornament' || note.ornament !== undefined) return true;
+  const relative = note.beat - piece.loopStartBeat;
+  if (relative < 0) return true;
+  const bar = Math.min(piece.bars - 1, Math.max(0, Math.floor(relative / 4)));
+  if (bar === piece.phrasePlan.climaxBar && Math.abs(relative - bar * 4) < 0.001) return true;
+  const plan = piece.phrasePlan.bars[bar]!;
+  if (plan.targetStep === null) return false;
+  const targetBeat = piece.loopStartBeat + grooveBeat(
+    bar * 4 + plan.targetStep * 0.5,
+    piece.grooveFeel,
+  );
+  return Math.abs(note.beat - targetBeat) < 0.001;
+}
+
+function midiCandidates(pcs: readonly number[], around: number): number[] {
+  return Array.from({ length: MELODY_HI - MELODY_LO + 1 }, (_, offset) => MELODY_LO + offset)
+    .filter((midi) => midi !== around && pcs.includes(midi % 12))
+    .sort((a, b) => Math.abs(a - around) - Math.abs(b - around));
+}
+
+/**
+ * 診断1件に対する最小変更を提案する。候補ごとに全診断を再実行し、対象の注意が消え、
+ * 新しい問題を増やさないものだけを返す。非和声音は、それ自体を消す前に次音での解決を試す。
+ */
+export function suggestCompositionRepair(
+  piece: Piece,
+  issue: CompositionIssue,
+): CompositionRepair | null {
+  if (!issue.code || !issue.target || issue.target.part !== 'melody') return null;
+  const target = piece.melody[issue.target.noteIndex];
+  if (!target) return null;
+  const structural = piece.melody
+    .map((note, noteIndex) => ({ note, noteIndex }))
+    .filter(({ note }) => note.beat >= piece.loopStartBeat && note.role !== 'ornament');
+  const position = structural.findIndex(({ noteIndex }) => noteIndex === issue.target!.noteIndex);
+  if (position < 0) return null;
+  const before = structural[position - 1];
+  const after = structural[position + 1];
+  const candidates: { edit: MelodyEdit; strategy: CompositionRepair['strategy']; priority: number }[] = [];
+
+  if (issue.code === 'melody-unresolved-nonchord') {
+    // まず特徴的な非和声音を残し、次の音だけを音階上の隣接コードトーンへ解決する。
+    if (after && !protectedMelodyNote(piece, after.note)) {
+      const nextChord = chordAtInPiece(piece, after.note.beat);
+      for (const midi of midiCandidates(nextChord.pcs, after.note.midi)) {
+        if (!isMelodicStep(piece, target.midi, midi)) continue;
+        candidates.push({
+          edit: { beat: after.note.beat, fromMidi: after.note.midi, toMidi: midi },
+          strategy: 'resolve-next',
+          priority: Math.abs(midi - after.note.midi),
+        });
+      }
+    }
+    // 解決音を安全に動かせない場合だけ、問題音そのものを最寄りのコードトーンへ寄せる。
+    if (!protectedMelodyNote(piece, target)) {
+      const chord = chordAtInPiece(piece, target.beat);
+      for (const midi of midiCandidates(chord.pcs, target.midi)) {
+        candidates.push({
+          edit: { beat: target.beat, fromMidi: target.midi, toMidi: midi },
+          strategy: 'stabilize-note',
+          priority: 20 + Math.abs(midi - target.midi),
+        });
+      }
+    }
+  }
+
+  if (issue.code === 'melody-large-leap' && before && !protectedMelodyNote(piece, target)) {
+    const relative = target.beat - piece.loopStartBeat;
+    const inBar = ((relative % 4) + 4) % 4;
+    const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
+    const chord = chordAtInPiece(piece, target.beat);
+    const collection = piece.japanesePlan?.scalePcs
+      ?? MAJOR_SCALE.map((interval) => (piece.keyRoot + interval) % 12);
+    const allowedPcs = strong ? chord.pcs : collection;
+    for (const midi of midiCandidates(allowedPcs, target.midi)) {
+      if (Math.abs(midi - before.note.midi) > 9) continue;
+      candidates.push({
+        edit: { beat: target.beat, fromMidi: target.midi, toMidi: midi },
+        strategy: 'reduce-leap',
+        priority: Math.abs(midi - target.midi),
+      });
+    }
+  }
+
+  const baseline = diagnosePiece(piece);
+  const baselineErrors = baseline.issues.filter((candidate) => candidate.severity === 'error').length;
+  for (const candidate of candidates.sort((a, b) => a.priority - b.priority)) {
+    const repaired: Piece = {
+      ...piece,
+      melody: withMelodyEdits(piece.melody, [candidate.edit]),
+    };
+    const report = diagnosePiece(repaired);
+    const targetRemains = report.issues.some((nextIssue) => (
+      nextIssue.code === issue.code && Math.abs(nextIssue.beat - issue.beat) < 0.001
+    ));
+    const errorCount = report.issues.filter((nextIssue) => nextIssue.severity === 'error').length;
+    if (
+      !targetRemains
+      && errorCount <= baselineErrors
+      && report.issues.length < baseline.issues.length
+      && report.overall >= baseline.overall
+    ) {
+      return { edit: candidate.edit, strategy: candidate.strategy };
+    }
+  }
+  return null;
 }
 
 /** 後方互換用の厳格検証。診断レポート中、生成上のエラーだけを返す。 */

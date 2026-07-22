@@ -936,6 +936,26 @@ button:disabled {
   color: #d8b9b9;
 }
 
+.diagnosis-issues li + li {
+  margin-top: 6px;
+}
+
+.diagnosis-issues .form-mini-btn {
+  margin-left: 8px;
+  padding: 4px 8px;
+}
+
+.diagnosis-observations .panel-note {
+  margin-bottom: 2px;
+}
+
+.diagnosis-observations ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #b8d6c4;
+  font-size: clamp(11px, 1.65vmin, 13px);
+}
+
 .guide-summary {
   font-size: clamp(13px, 1.9vmin, 15px);
   color: #ddd;

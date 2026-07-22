@@ -1,6 +1,7 @@
 import type {
   ArrangementSectionPlan, NoteEvent, Piece, VoiceOverride,
 } from '../core/music/compose.js';
+import { grooveBeat } from '../core/music/compose.js';
 import { initRhythmMode } from './mml.js';
 import { SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
@@ -124,7 +125,7 @@ export function arrangePiece(piece: Piece, styleId: string, override?: VoiceOver
   const spb = 60 / piece.bpm;
   const duration = piece.beats * spb;
   const loopStart = piece.loopStartBeat * spb;
-  const echoDelay = spb / 2; // 8 分遅れ
+  const echoDelay = spb * (piece.grooveFeel === 'bounce' ? 2 / 3 : 1 / 2);
   const b = new SeqBuilder();
 
   // --- リード（ch2）: アクセント + 長音ビブラート。エコー（ch5）は同じ列を遅れて複製 ---
@@ -136,11 +137,14 @@ export function arrangePiece(piece: Piece, styleId: string, override?: VoiceOver
     const vol = volumeFor(n, fallbackVol);
     const freq = midiFreq(n.midi);
     b.keyOn(CH_LEAD, voices.lead, vol, freq, t);
-    if (n.articulation !== 'staccato' && n.dur >= VIBRATO_MIN_BEATS) {
+    if (n.ornament === 'shake' || (n.articulation !== 'staccato' && n.dur >= VIBRATO_MIN_BEATS)) {
       // F ナンバーの毎フレーム書き換えによる揺れ（当時のドライバの常套手段）
-      const from = t + dur * VIBRATO_DELAY_RATIO;
-      for (let vt = from; vt < t + dur; vt += 0.025) {
-        const cents = VIBRATO_DEPTH_CENTS * Math.sin(2 * Math.PI * VIBRATO_HZ * (vt - from));
+      const isShake = n.ornament === 'shake';
+      const from = isShake ? t : t + dur * VIBRATO_DELAY_RATIO;
+      const depth = isShake ? 32 : VIBRATO_DEPTH_CENTS;
+      const hz = isShake ? 8.5 : VIBRATO_HZ;
+      for (let vt = from; vt < t + dur; vt += isShake ? 0.018 : 0.025) {
+        const cents = depth * Math.sin(2 * Math.PI * hz * (vt - from));
         b.pitch(CH_LEAD, freq * 2 ** (cents / 1200), vt);
       }
     }
@@ -179,7 +183,7 @@ export function arrangePiece(piece: Piece, styleId: string, override?: VoiceOver
         // イントロ/Aは半分だけ、Bでは毎拍鳴らして密度差を作る。
         if (thin && beat % 2 === 0) continue;
         chordBacking.push({
-          beat: c.beat + beat + 0.5,
+          beat: grooveBeat(c.beat + beat + 0.5, piece.grooveFeel),
           dur: 0.2,
           midi: beat % 2 === 0 ? lowerVoice : upperVoice,
           volume: backingVolume,

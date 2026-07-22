@@ -3,16 +3,24 @@ import {
   compose,
   ARRANGEMENT_ARC_LABELS,
   COUNTER_ROLE_LABELS,
+  GROOVE_FEEL_LABELS,
+  JAPANESE_SCALE_LABELS,
+  ORNAMENT_LABELS,
+  PHRASE_FUNCTION_LABELS,
   defaultChoiceFor,
   diagnosePiece,
   hasVariedChoiceFor,
   INTRO_ROLE_LABELS,
+  suggestCompositionRepair,
   variedChoiceFor,
 } from '../core/music/compose.js';
 import type {
   ComposeBars,
+  CompositionRepair,
   ComposeOptions,
   DiagnosticCategory,
+  GrooveFeel,
+  JapaneseScaleChoice,
   MelodyMode,
   NesVoiceOptions,
   Piece,
@@ -81,8 +89,14 @@ function songSummary(options: ComposeOptions): string {
   const chip = options.soundChip === 'nes2a03' ? 'ファミコン2A03' : 'OPLL';
   const form = options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
   const intro = options.bars === 16 && options.intro === false ? ' / イントロなし' : '';
-  const melody = options.melodyMode === 'japanese' ? ' / 和風五音' : '';
-  const base = `${chip} / ${form}${intro}${melody} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const melody = options.melodyMode === 'japanese'
+    ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
+    : '';
+  const groove = options.grooveFeel && options.grooveFeel !== 'straight'
+    ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
+    : '';
+  const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
+  const base = `${chip} / ${form}${intro}${melody}${groove}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
   if (options.soundChip === 'nes2a03') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
@@ -97,6 +111,8 @@ interface ComposerForm {
   progId: string;
   styleId: string;
   melodyMode: MelodyMode;
+  japaneseScale: JapaneseScaleChoice;
+  grooveFeel: GrooveFeel;
   keyRoot: number;
   bpm: number;
   soundChip: 'opll' | 'nes2a03';
@@ -133,6 +149,12 @@ function loadComposerForm(): ComposerForm {
     progId,
     styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
     melodyMode: raw.melodyMode === 'japanese' ? 'japanese' : 'major',
+    japaneseScale: ['ritsu', 'minyo', 'miyakobushi'].includes(String(raw.japaneseScale))
+      ? raw.japaneseScale as JapaneseScaleChoice
+      : 'auto',
+    grooveFeel: ['tripletOverlay', 'bounce'].includes(String(raw.grooveFeel))
+      ? raw.grooveFeel as GrooveFeel
+      : 'straight',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
     soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
@@ -162,6 +184,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [progId, setProgId] = useState(initial.progId);
   const [styleId, setStyleId] = useState(initial.styleId);
   const [melodyMode, setMelodyMode] = useState<MelodyMode>(initial.melodyMode);
+  const [japaneseScale, setJapaneseScale] = useState<JapaneseScaleChoice>(initial.japaneseScale);
+  const [grooveFeel, setGrooveFeel] = useState<GrooveFeel>(initial.grooveFeel);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
   const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
@@ -176,6 +200,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [piece, setPiece] = useState<Piece | null>(null);
   /** 最後に compose した正確なオプション（保存はこれを使う。UI をいじっただけでは変わらない） */
   const [lastOpts, setLastOpts] = useState<ComposeOptions | null>(null);
+  /** 局所修正前の設定を積み、再生成・再生・保存を含めてUndoできるようにする。 */
+  const [repairHistory, setRepairHistory] = useState<ComposeOptions[]>([]);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
   const [volume, setVolume] = useState(loadBgmVolume);
@@ -193,9 +219,13 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
     saveStored(FORM_KEY, {
-      bars, progId, styleId, melodyMode, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop,
+      bars, progId, styleId, melodyMode, japaneseScale, grooveFeel,
+      keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop,
     });
-  }, [bars, progId, styleId, melodyMode, keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop]);
+  }, [
+    bars, progId, styleId, melodyMode, japaneseScale, grooveFeel,
+    keyRoot, bpm, soundChip, voices, nes, choice, autoVary, intro, seed, loop,
+  ]);
 
   // 尺に収まる進行だけ選ばせる（8 小節進行は BB 専用）
   const progs = useMemo(() => PROGRESSIONS.filter((p) => p.slots.length <= bars), [bars]);
@@ -227,9 +257,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     setPlaying(false);
   };
 
-  const playOptions = async (opts: ComposeOptions) => {
+  const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
     try {
       const p = compose(opts);
+      if (!preserveRepairHistory) setRepairHistory([]);
       setError(player.enabled ? '' : '「音」が OFF のため音は鳴りません（このタブ上部で ON にできます）');
       setSeed(opts.seed);
       setPiece(p);
@@ -271,7 +302,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       choice: nextChoice,
       soundChip,
       ...(intro ? {} : { intro: false }),
-      ...(melodyMode === 'japanese' ? { melodyMode } : {}),
+      ...(melodyMode === 'japanese' ? {
+        melodyMode,
+        ...(japaneseScale === 'auto' ? {} : { japaneseScale }),
+      } : {}),
+      ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
     });
@@ -284,6 +319,23 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     setSongs(next);
     saveSongs(next);
     setSongName('');
+  };
+
+  const applyRepair = (repair: CompositionRepair) => {
+    if (!lastOpts) return;
+    const nextOptions: ComposeOptions = {
+      ...lastOpts,
+      melodyEdits: [...(lastOpts.melodyEdits ?? []), repair.edit],
+    };
+    setRepairHistory((history) => [...history, lastOpts]);
+    void playOptions(nextOptions, true);
+  };
+
+  const undoRepair = () => {
+    const previous = repairHistory.at(-1);
+    if (!previous) return;
+    setRepairHistory((history) => history.slice(0, -1));
+    void playOptions(previous, true);
   };
 
   const deleteSong = (id: string) => {
@@ -322,7 +374,20 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     }
   };
 
-  const diagnosis = piece ? diagnosePiece(piece) : null;
+  const diagnosis = useMemo(() => piece ? diagnosePiece(piece) : null, [piece]);
+  const displayedDiagnosisItems = useMemo(
+    () => piece && diagnosis
+      ? diagnosis.issues
+        .map((issue, originalIndex) => ({
+          issue,
+          originalIndex,
+          repair: suggestCompositionRepair(piece, issue),
+        }))
+        .sort((a, b) => Number(b.repair !== null) - Number(a.repair !== null) || a.originalIndex - b.originalIndex)
+        .slice(0, 8)
+      : [],
+    [diagnosis, piece],
+  );
 
   const assignSelect = (slot: 'bb' | 'rb') => (
     <label className="assign-item">
@@ -388,12 +453,31 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               <dt>メロディ</dt>
               <dd>
                 先に各小節の役割、音域の起伏、終止の種類、到達音をPhrasePlanとして決めます。メロディは2小節を
-                「提示＋応答」の1フレーズとして反復・変奏し、応答の末尾では半終止・終止・ターンアラウンドの
+                「提示＋応答」の基本アイデアとし、8小節の中で「提示→変奏反復→展開→結論」へ運びます。変奏反復では
+                元のリズムと輪郭を保ちながら和声に合わせて移調し、展開では進行方向を変え、結論では冒頭を部分的に
+                回帰させてから終止へ向かいます。応答の末尾では半終止・終止・ターンアラウンドの
                 目標音へ実際に到達します。各小節の1・3拍目はその時点のコードトーンです。最高音はセクション後半の
                 2候補からシードで選び、毎曲まったく同じ位置には固定しません。最終小節の後半は音数を減らして
                 ループ頭へ余白を渡します。「王道メジャー」は7音音階です。「和風五音」は旋律だけを差し替えるのでなく、
-                陽旋法寄りの5音音階、同音反復、4度/5度跳躍、終止直前の前打音、開いた根音‐5度の伴奏配置、
-                音階内のベース接続を一つの様式として連動させます。
+                律・民謡・都節系の音組織から選び、4度離れた核音をフレーズ開始・終止の柱にします。同音反復、
+                4度/5度跳躍、開いた根音‐5度の伴奏配置、音階内のベース接続も連動します。さらに各応答小節へ
+                意図した休符＝「間」を確保します。
+              </dd>
+
+              <dt>モチーフの反復と変奏</dt>
+              <dd>
+                モチーフは短い音程・リズム・輪郭のまとまりです。同じ形を置くだけでなく、移調、音程幅の変更、装飾、
+                和声変更を加えて「同じだと分かるが少し違う」反復にします。診断も単音だけをコードと照合せず、
+                音階上の隣接進行、経過音・刺繍音・倚音・逸音・掛留・先取音と、別小節で反復される輪郭を確認します。
+                反復文脈で特徴として成立する非和声音は減点せず、意図として表示します。
+              </dd>
+
+              <dt>和風の装飾</dt>
+              <dd>
+                装飾は和風モードの全応答へ機械的に足しません。4小節のまとまりごとに一度だけ場所を選び、
+                短い前打音、上下を回る「回し」、音程を細かく揺らす「揺り」を使い分けます。装飾前には間を予約し、
+                通常音・前打音・到達音が毎回16分で3連続するのを避けます。揺りはOPLLと2A03それぞれの
+                ピッチ操作へ変換します。
               </dd>
 
               <dt>副旋律とベース</dt>
@@ -409,6 +493,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               <dd>
                 主旋律のリズムもスタイルごとに異なります。ユーロビートは細かな推進、ロックは表拍寄りの長めの音、
                 スカは裏拍と短い音を優先します。提示と応答には異なる8分音符単位のリズムを使い、Bでさらに変えます。
+                ゲーム用グルーヴは旋律様式から独立しており、ストレート、主旋律とベースを均等分割のままハイハット譜を
+                三連位置へ写す「三連オーバーレイ」、裏の8分を2:1へ遅らせる「跳ねる8分」から選べます。
+                三連オーバーレイは1拍を常に3発で埋めず、元のスタイルにある打点だけを使います。
                 8小節目の末尾には短いドラムフィルを置き、その後は展開型に応じてB用グルーヴへ進むか、
                 打点を引いたブレイクダウンへ切り替えます。最終小節の最後の1拍は空けてAへ戻します。
                 自動生成時は最終コードもV（またはI7）へ寄せ、スタイル別のベース接続と合わせて次のAへ引っ張ります。
@@ -421,7 +508,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                 音符には強弱とアクセント、スタッカート、テヌートを持たせ、FM音源と2A03それぞれの音量段階・音価へ反映します。
                 生成後はコードをトニック・プレドミナント・ドミナント等の機能でも評価し、和声、旋律、声部進行、
                 リズム、副旋律、フォーム、ループ接続を別々に診断します。
-                総合点だけでなく、気になる項目と具体的な位置も確認できます。
+                総合点だけでなく、気になる項目と具体的な位置も確認できます。安全に局所修正できる注意には、
+                非和声音を残して次音を解決する案を優先して提示します。候補は全曲を再診断し、新しい問題を増やさない
+                場合だけ採用でき、修正後もUndoできます。
               </dd>
 
               <dt>シードとBPM</dt>
@@ -482,10 +571,32 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             value={melodyMode}
             onChange={(e) => setMelodyMode(e.target.value as MelodyMode)}
             data-testid="st-melody-mode"
-            title="旋律の音選びだけを変更します。副旋律とベースフレーズは両方で生成されます"
+            title="和風では音組織・核音・間・装飾・伴奏配置をまとめて変更します"
           >
             <option value="major">旋律: 王道メジャー</option>
-            <option value="japanese">旋律: 和風五音（陽旋法寄り）</option>
+            <option value="japanese">旋律: 和風五音</option>
+          </select>
+          {melodyMode === 'japanese' && (
+            <select
+              value={japaneseScale}
+              onChange={(e) => setJapaneseScale(e.target.value as JapaneseScaleChoice)}
+              data-testid="st-japanese-scale"
+              title="自動ではシードごとに律・民謡・都節の音組織を選びます"
+            >
+              {(['auto', 'ritsu', 'minyo', 'miyakobushi'] as const).map((id) => (
+                <option key={id} value={id}>和風音組織: {JAPANESE_SCALE_LABELS[id]}</option>
+              ))}
+            </select>
+          )}
+          <select
+            value={grooveFeel}
+            onChange={(e) => setGrooveFeel(e.target.value as GrooveFeel)}
+            data-testid="st-groove-feel"
+            title="旋律様式とは独立。三連は元のハイハット譜を三連位置へ写し、跳ねる8分は裏拍の位置を変えます"
+          >
+            {(['straight', 'tripletOverlay', 'bounce'] as const).map((feel) => (
+              <option key={feel} value={feel}>グルーヴ: {GROOVE_FEEL_LABELS[feel]}</option>
+            ))}
           </select>
         </div>
 
@@ -634,7 +745,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             🎹 コード変化して再生
           </button>
           <button
-            onClick={() => lastOpts && void playOptions(lastOpts)}
+            onClick={() => lastOpts && void playOptions(lastOpts, true)}
             disabled={!lastOpts || progress !== null}
             data-testid="st-replay"
           >
@@ -693,8 +804,17 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             <div className="melody-line">副旋律: {piece.counterMelody.map((n) => noteName(n.midi)).join(' ')}</div>
             <p className="panel-note">
               展開: {ARRANGEMENT_ARC_LABELS[piece.arrangementPlan.arc]} ／
-              副旋律: {COUNTER_ROLE_LABELS[piece.arrangementPlan.counterRole]}
-              {piece.melodyMode === 'japanese' ? ' ／ 和風様式（五音・開放5度・前打音）' : ''}
+              副旋律: {COUNTER_ROLE_LABELS[piece.arrangementPlan.counterRole]} ／
+              グルーヴ: {GROOVE_FEEL_LABELS[piece.grooveFeel]}
+              {piece.japanesePlan && (
+                <> ／ 和風音組織: {JAPANESE_SCALE_LABELS[piece.japanesePlan.id]}
+                  {' ／ '}装飾: {[...new Set(piece.phrasePlan.bars
+                    .flatMap((plan) => plan.ornamentType ? [plan.ornamentType] : []))]
+                    .map((type) => ORNAMENT_LABELS[type]).join('・') || 'なし'}
+                </>
+              )}
+              {' ／ '}モチーフ: {[...new Set(piece.phrasePlan.bars.map((plan) => plan.phraseFunction))]
+                .map((phraseFunction) => PHRASE_FUNCTION_LABELS[phraseFunction]).join('→')}
             </p>
             {diagnosis && (
               <details className="composer-diagnosis" data-testid="st-diagnosis">
@@ -711,15 +831,57 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                     </span>
                   ))}
                 </div>
+                {diagnosis.observations.length > 0 && (
+                  <div className="diagnosis-observations" data-testid="st-diagnosis-observations">
+                    <p className="panel-note">
+                      意図として許容: モチーフ反復
+                      {diagnosis.observations.filter((item) => item.kind === 'motif').length}件・装飾進行
+                      {diagnosis.observations.filter((item) => item.kind === 'embellishment').length}件
+                    </p>
+                    <ul>
+                      {diagnosis.observations.slice(0, 4).map((observation, index) => (
+                        <li key={`${observation.kind}-${observation.beat}-${index}`}>
+                          {observation.beat.toFixed(2)}拍: {observation.description}
+                          {observation.relatedBeats.length > 0
+                            ? `（同型 ${observation.relatedBeats.map((beat) => beat.toFixed(2)).join('・')}拍）`
+                            : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {diagnosis.issues.length > 0 && (
                   <ul className="diagnosis-issues">
-                    {diagnosis.issues.slice(0, 8).map((issue, index) => (
-                      <li key={`${issue.category}-${issue.beat}-${index}`}>
-                        {issue.severity === 'error' ? '要修正' : '注意'}・{DIAGNOSTIC_LABELS[issue.category]}・
-                        {issue.beat.toFixed(2)}拍: {issue.reason}
-                      </li>
-                    ))}
+                    {displayedDiagnosisItems.map(({ issue, originalIndex, repair }, index) => {
+                      return (
+                        <li key={`${issue.category}-${issue.beat}-${originalIndex}`}>
+                          {issue.severity === 'error' ? '要修正' : '注意'}・{DIAGNOSTIC_LABELS[issue.category]}・
+                          {issue.beat.toFixed(2)}拍: {issue.reason}
+                          {repair && (
+                            <button
+                              className="form-mini-btn"
+                              onClick={() => applyRepair(repair)}
+                              disabled={progress !== null}
+                              data-testid={`st-repair-${index}`}
+                              title={`${noteName(repair.edit.fromMidi)}から${noteName(repair.edit.toMidi)}へ最小修正し、全曲を再診断します`}
+                            >
+                              修正して試聴（{noteName(repair.edit.fromMidi)}→{noteName(repair.edit.toMidi)}）
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
+                )}
+                {repairHistory.length > 0 && (
+                  <button
+                    className="form-mini-btn"
+                    onClick={undoRepair}
+                    disabled={progress !== null}
+                    data-testid="st-repair-undo"
+                  >
+                    ↶ 直前の修正を戻して試聴
+                  </button>
                 )}
               </details>
             )}

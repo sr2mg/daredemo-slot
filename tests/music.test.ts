@@ -3,7 +3,10 @@ import {
   compose,
   defaultChoiceFor,
   diagnosePiece,
+  grooveBeat,
   hasVariedChoiceFor,
+  japanesePlanFor,
+  suggestCompositionRepair,
   validatePiece,
   variedChoiceFor,
 } from '../src/core/music/compose.js';
@@ -155,6 +158,58 @@ describe('compose', () => {
     expect(report.scores.voiceLeading).toBe(100);
   });
 
+  it('診断は反復する特徴音と定型装飾を、単独の非和声音エラーにしない', () => {
+    const piece = compose({
+      ...base,
+      progressionId: 'tanaka-manabe',
+      bars: 16,
+      seed: 1,
+      melodyMode: 'japanese',
+      japaneseScale: 'ritsu',
+      grooveFeel: 'bounce',
+    });
+    const report = diagnosePiece(piece);
+    const motifObservations = report.observations.filter((observation) => observation.kind === 'motif');
+    expect(motifObservations.length).toBeGreaterThan(0);
+    for (const observation of motifObservations) {
+      expect(observation.relatedBeats.length).toBeGreaterThan(0);
+      expect(report.issues.some((issue) => (
+        issue.code === 'melody-unresolved-nonchord'
+        && Math.abs(issue.beat - observation.beat) < 0.001
+      ))).toBe(false);
+    }
+  });
+
+  it('診断の局所修正は特徴音を残す解決を優先し、再診断・保存・Undo相当の再生成を通る', () => {
+    const options = {
+      ...base,
+      progressionId: 'tanaka-manabe',
+      bars: 16 as const,
+      seed: 1,
+      melodyMode: 'japanese' as const,
+      japaneseScale: 'ritsu' as const,
+      grooveFeel: 'bounce' as const,
+    };
+    const original = compose(options);
+    const originalReport = diagnosePiece(original);
+    const issue = originalReport.issues.find((candidate) => candidate.code === 'melody-unresolved-nonchord')!;
+    const repair = suggestCompositionRepair(original, issue);
+    expect(repair).not.toBeNull();
+    expect(repair!.strategy).toBe('resolve-next');
+    expect(repair!.edit.beat).not.toBe(issue.beat);
+
+    const repairedOptions = { ...options, melodyEdits: [repair!.edit] };
+    const repaired = compose(repairedOptions);
+    const repairedReport = diagnosePiece(repaired);
+    expect(repairedReport.issues.some((candidate) => (
+      candidate.code === issue.code && Math.abs(candidate.beat - issue.beat) < 0.001
+    ))).toBe(false);
+    expect(repairedReport.overall).toBeGreaterThanOrEqual(originalReport.overall);
+    expect(repaired.melody.filter((note, index) => note.midi !== original.melody[index]!.midi)).toHaveLength(1);
+    expect(compose(JSON.parse(JSON.stringify(repairedOptions)))).toEqual(repaired);
+    expect(compose(options)).toEqual(original);
+  });
+
   it('クライマックス候補はフォーム内でシードにより前後する', () => {
     expect(compose({ ...base, bars: 8, seed: 42 }).phrasePlan.climaxBar).toBe(4);
     expect(compose({ ...base, bars: 8, seed: 43 }).phrasePlan.climaxBar).toBe(6);
@@ -162,20 +217,24 @@ describe('compose', () => {
     expect(compose({ ...base, bars: 16, seed: 43 }).phrasePlan.climaxBar).toBe(14);
   });
 
-  it('全進行 × 全スタイル × 全旋律様式 × 4/8/16小節で生成検証を通る', () => {
+  it('全進行 × 全スタイル × 全旋律様式 × 全グルーヴ × 4/8/16小節で生成検証を通る', () => {
     for (const prog of PROGRESSIONS) {
       for (const style of STYLES) {
         for (const melodyMode of ['major', 'japanese'] as const) {
-          for (const bars of [4, 8, 16] as const) {
-            if (prog.slots.length > bars) continue;
-            for (const seed of [1, 42, 12345]) {
-              const piece = compose({
-                ...base, progressionId: prog.id, styleId: style.id, melodyMode, bars, seed,
-              });
-              expect(
-                validatePiece(piece),
-                `${prog.id}/${style.id}/${melodyMode}/${bars}小節/seed=${seed}`,
-              ).toEqual([]);
+          for (const grooveFeel of ['straight', 'tripletOverlay', 'bounce'] as const) {
+            for (const bars of [4, 8, 16] as const) {
+              if (prog.slots.length > bars) continue;
+              for (const [seedIndex, seed] of [1, 42, 12345].entries()) {
+                const japaneseScale = (['ritsu', 'minyo', 'miyakobushi'] as const)[seedIndex]!;
+                const piece = compose({
+                  ...base, progressionId: prog.id, styleId: style.id, melodyMode, grooveFeel, bars, seed,
+                  ...(melodyMode === 'japanese' ? { japaneseScale } : {}),
+                });
+                expect(
+                  validatePiece(piece),
+                  `${prog.id}/${style.id}/${melodyMode}/${grooveFeel}/${bars}小節/seed=${seed}`,
+                ).toEqual([]);
+              }
             }
           }
         }
@@ -352,27 +411,52 @@ describe('compose', () => {
     expect(inB.length).toBeGreaterThan(inA.length);
   });
 
-  it('メロディは2小節の提示＋応答を保ち、A1の音程型を後半で移調反復する', () => {
+  it('メロディは提示→変奏反復→展開→結論を持ち、反復では輪郭を保つ', () => {
     const piece = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, seed: 42 });
     const rhythmAt = (bar: number) =>
       piece.melody
         .filter((note) => note.beat >= bar * 4 && note.beat < (bar + 1) * 4)
         .map((note) => note.beat - bar * 4);
-    const intervalPatternAt = (bar: number) => {
+    const contourAt = (bar: number) => {
       const notes =
       piece.melody
         .filter((note) => note.beat >= bar * 4 && note.beat < (bar + 1) * 4)
         .map((note) => note.midi);
-      return notes.slice(1).map((midi, index) => (midi - notes[index]! + 120) % 12);
+      return notes.slice(1).map((midi, index) => Math.sign(midi - notes[index]!));
     };
 
     expect(rhythmAt(0)).not.toEqual(rhythmAt(1));
     expect(rhythmAt(0)).toEqual(rhythmAt(2));
     expect(rhythmAt(1)).toEqual(rhythmAt(3));
-    expect(intervalPatternAt(0)).toEqual(intervalPatternAt(4));
+    expect(piece.phrasePlan.bars.map((plan) => plan.phraseFunction)).toEqual([
+      'statement', 'statement', 'restatement', 'restatement',
+      'departure', 'departure', 'conclusion', 'conclusion',
+    ]);
+    expect(piece.phrasePlan.bars.map((plan) => plan.motifSourceBar)).toEqual([0, 1, 0, 1, 0, 1, 0, 1]);
+    expect(contourAt(2)).toEqual(contourAt(0));
+    expect(contourAt(4)).not.toEqual(contourAt(0));
+    expect(contourAt(6)).toEqual(contourAt(0));
   });
 
-  it('和風様式は骨格リズムを保ち、五音旋律・前打音・開放5度を連動させる', () => {
+  it('和風様式は3種の五音音組織と核音を持ち、キーと一緒に移調する', () => {
+    const specs = {
+      ritsu: [0, 2, 5, 7, 9],
+      minyo: [0, 3, 5, 7, 10],
+      miyakobushi: [0, 1, 5, 7, 8],
+    } as const;
+    for (const [id, intervals] of Object.entries(specs)) {
+      const plan = japanesePlanFor(2, id as keyof typeof specs);
+      expect(plan.id).toBe(id);
+      expect(plan.intervals).toEqual(intervals);
+      expect(plan.scalePcs).toEqual(intervals.map((interval) => (interval + 2) % 12));
+      expect(plan.nuclearPcs).toEqual([2, 7, 9]);
+    }
+    expect(japanesePlanFor(0, 'auto', 0).id).toBe('ritsu');
+    expect(japanesePlanFor(0, 'auto', 2).id).toBe('minyo');
+    expect(japanesePlanFor(0, 'auto', 4).id).toBe('miyakobushi');
+  });
+
+  it('和風様式は核音・応答の間・疎な装飾・開放5度を一つのフレーズ設計にする', () => {
     const major = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, seed: 42 });
     const japanese = compose({
       ...base,
@@ -380,13 +464,22 @@ describe('compose', () => {
       bars: 8,
       seed: 42,
       melodyMode: 'japanese',
+      japaneseScale: 'ritsu',
     });
     const japaneseSkeleton = japanese.melody.filter((note) => note.role !== 'ornament');
     const ornaments = japanese.melody.filter((note) => note.role === 'ornament');
-    expect(japaneseSkeleton.map((note) => note.beat)).toEqual(major.melody.map((note) => note.beat));
+    expect(japaneseSkeleton.map((note) => note.beat)).not.toEqual(major.melody.map((note) => note.beat));
     expect(japanese.melody.map((note) => note.midi)).not.toEqual(major.melody.map((note) => note.midi));
     expect(ornaments.length).toBeGreaterThan(0);
     expect(ornaments.every((note) => note.articulation === 'ornament')).toBe(true);
+    const ornamentBars = japanese.phrasePlan.bars.filter((plan) => plan.ornamentType !== null);
+    expect(ornamentBars).toHaveLength(2);
+    expect(ornamentBars.map((plan) => Math.floor(plan.bar / 4))).toEqual([0, 1]);
+    expect(ornamentBars.every((plan) => plan.bar % 2 === 1)).toBe(true);
+    expect(japanese.phrasePlan.bars.filter((plan) => plan.maSteps.length > 0)).toHaveLength(4);
+    for (const plan of japanese.phrasePlan.bars) {
+      expect(plan.maSteps.every((step) => !plan.rhythm[step])).toBe(true);
+    }
     const scalePcs = YO_SCALE.map((interval) => interval % 12);
     for (const note of japanese.melody) {
       const chord = [...japanese.chords].reverse().find((event) => event.beat <= note.beat)!;
@@ -395,12 +488,94 @@ describe('compose', () => {
         `beat=${note.beat}/midi=${note.midi}`,
       ).toBe(true);
     }
+    for (const plan of japanese.phrasePlan.bars) {
+      if (plan.targetStep === null || plan.targetPc === null) continue;
+      const targetBeat = plan.bar * 4 + plan.targetStep * 0.5;
+      const chord = [...japanese.chords].reverse().find((event) => event.beat <= targetBeat)!;
+      const availableNuclearTones = chord.pcs.filter((pc) => japanese.japanesePlan!.nuclearPcs.includes(pc));
+      if (availableNuclearTones.length > 0) expect(availableNuclearTones).toContain(plan.targetPc);
+    }
     for (const chord of japanese.chords) {
       const voicingPcs = new Set(chord.midis.map((midi) => midi % 12));
       expect(voicingPcs.size).toBeLessThanOrEqual(2);
       expect([...voicingPcs].every((pc) => pc === chord.pcs[0] || pc === chord.pcs[2])).toBe(true);
     }
     expect(validatePiece(japanese)).toEqual([]);
+  });
+
+  it('装飾は4小節に一度だけ抽選し、前打音・回し・揺りの3種を使い分ける', () => {
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 24; seed++) {
+      const piece = compose({
+        ...base, progressionId: 'tanaka-manabe', bars: 8, seed,
+        melodyMode: 'japanese', japaneseScale: 'ritsu',
+      });
+      const decorated = piece.phrasePlan.bars.filter((plan) => plan.ornamentType !== null);
+      expect(decorated).toHaveLength(2);
+      for (const plan of decorated) {
+        seen.add(plan.ornamentType!);
+        const expectedSteps = plan.ornamentType === 'turn' ? 2 : plan.ornamentType === 'grace' ? 1 : 0;
+        expect(plan.ornamentSteps).toHaveLength(expectedSteps);
+        if (plan.ornamentType === 'shake') {
+          const targetBeat = plan.bar * 4 + plan.targetStep! * 0.5;
+          expect(piece.melody.find((note) => note.beat === targetBeat)?.ornament).toBe('shake');
+        }
+      }
+    }
+    expect([...seen].sort()).toEqual(['grace', 'shake', 'turn']);
+  });
+
+  it('ゲームグルーヴは和風様式から独立し、三連レイヤーと跳ねる8分を別処理する', () => {
+    const straight = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, grooveFeel: 'straight' });
+    const triplet = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, grooveFeel: 'tripletOverlay' });
+    const bounce = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, grooveFeel: 'bounce' });
+
+    expect(triplet.melody).toEqual(straight.melody);
+    expect(triplet.bass).toEqual(straight.bass);
+    expect(triplet.drums.filter((event) => event.inst !== 'hat')).toEqual(
+      straight.drums.filter((event) => event.inst !== 'hat'),
+    );
+    const tripletHats = triplet.drums.filter((event) => event.inst === 'hat');
+    expect(tripletHats.some((event) => Math.abs(event.beat % 1 - 2 / 3) < 0.001)).toBe(true);
+    expect(tripletHats.length).toBeLessThanOrEqual(
+      straight.drums.filter((event) => event.inst === 'hat').length,
+    );
+    const hitsPerQuarter = new Map<number, number>();
+    for (const event of tripletHats) {
+      const quarter = Math.floor(event.beat + 0.001);
+      hitsPerQuarter.set(quarter, (hitsPerQuarter.get(quarter) ?? 0) + 1);
+    }
+    expect(Math.max(...hitsPerQuarter.values())).toBeLessThanOrEqual(2);
+
+    // 元譜に細かい裏打ちがある区間だけは1/3も残すが、常時3発にはしない。
+    const detailedTriplet = compose({
+      ...base, progressionId: 'tanaka-manabe', styleId: 'ska', bars: 16, seed: 42,
+      grooveFeel: 'tripletOverlay', intro: false,
+    });
+    const detailedHats = detailedTriplet.drums.filter((event) => event.inst === 'hat');
+    expect(detailedHats.some((event) => Math.abs(event.beat % 1 - 1 / 3) < 0.001)).toBe(true);
+    const detailedHitsPerQuarter = new Map<number, number>();
+    for (const event of detailedHats) {
+      const quarter = Math.floor(event.beat + 0.001);
+      detailedHitsPerQuarter.set(quarter, (detailedHitsPerQuarter.get(quarter) ?? 0) + 1);
+    }
+    expect(Math.max(...detailedHitsPerQuarter.values())).toBeLessThanOrEqual(2);
+
+    expect(grooveBeat(0.25, 'bounce')).toBe(0.25);
+    expect(grooveBeat(0.5, 'bounce')).toBeCloseTo(2 / 3, 9);
+    expect(grooveBeat(1.5, 'bounce')).toBeCloseTo(1 + 2 / 3, 9);
+    expect(bounce.melody.map((note) => note.midi)).toEqual(straight.melody.map((note) => note.midi));
+    expect(bounce.melody.map((note) => note.beat)).not.toEqual(straight.melody.map((note) => note.beat));
+    expect(bounce.melody.some((note) => Math.abs(note.beat % 1 - 2 / 3) < 0.001)).toBe(true);
+
+    const japaneseTriplet = compose({
+      ...base, progressionId: 'tanaka-manabe', bars: 8,
+      melodyMode: 'japanese', japaneseScale: 'miyakobushi', grooveFeel: 'tripletOverlay',
+    });
+    expect(japaneseTriplet.drums).toEqual(triplet.drums);
+    expect(validatePiece(triplet)).toEqual([]);
+    expect(validatePiece(bounce)).toEqual([]);
+    expect(validatePiece(japaneseTriplet)).toEqual([]);
   });
 
   it('16小節の編成設計は積み上げ・対比・段丘を持ち、対比と段丘では独立対旋律を使う', () => {

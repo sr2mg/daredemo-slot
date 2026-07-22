@@ -51,6 +51,23 @@ describe('ファミコン2A03音源', () => {
     expect(thin).not.toEqual(square);
   });
 
+  it('和風の「揺り」をパルス1のタイマー変化としてレンダリングする', () => {
+    const piece = compose({
+      ...options, progressionId: 'tanaka-manabe', seed: 1,
+      melodyMode: 'japanese', japaneseScale: 'ritsu',
+    });
+    expect(piece.melody.some((note) => note.ornament === 'shake')).toBe(true);
+    const withoutShake = {
+      ...piece,
+      melody: piece.melody.map((note) => {
+        if (note.ornament !== 'shake') return note;
+        const { ornament: _ornament, ...plainNote } = note;
+        return plainNote;
+      }),
+    };
+    expect(renderNesPiece(piece)).not.toEqual(renderNesPiece(withoutShake));
+  }, 10_000);
+
   it('音源指定をPCM BGM定義へ統合し、旧曲はOPLLのまま保つ', () => {
     const piece = compose(options);
     const nes = arrangeComposedBgm(piece, { ...options, soundChip: 'nes2a03' });
