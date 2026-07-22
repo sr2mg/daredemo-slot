@@ -230,28 +230,31 @@ describe('compose', () => {
   });
 
   it('診断の局所修正は特徴音を残す解決を優先し、再診断・保存・Undo相当の再生成を通る', () => {
-    const options = {
+    const commonOptions = {
       ...base,
       progressionId: 'tanaka-manabe',
       bars: 16 as const,
-      seed: 1,
       melodyMode: 'japanese' as const,
       japaneseScale: 'ritsu' as const,
       grooveFeel: 'bounce' as const,
     };
-    const original = compose(options);
-    const originalReport = diagnosePiece(original);
-    const issue = originalReport.issues.find((candidate) => candidate.code === 'melody-unresolved-nonchord')!;
-    const repair = suggestCompositionRepair(original, issue);
-    expect(repair).not.toBeNull();
-    expect(repair!.strategy).toBe('resolve-next');
-    expect(repair!.edit.beat).not.toBe(issue.beat);
+    const fixture = Array.from({ length: 128 }, (_, seed) => {
+      const options = { ...commonOptions, seed };
+      const original = compose(options);
+      const originalReport = diagnosePiece(original);
+      const issue = originalReport.issues.find((candidate) => candidate.code === 'melody-unresolved-nonchord');
+      const repair = issue ? suggestCompositionRepair(original, issue) : null;
+      return { options, original, originalReport, issue, repair };
+    }).find(({ repair }) => repair?.strategy === 'resolve-next');
+    expect(fixture).toBeDefined();
+    const { options, original, originalReport, issue, repair } = fixture!;
+    expect(repair!.edit.beat).not.toBe(issue!.beat);
 
     const repairedOptions = { ...options, melodyEdits: [repair!.edit] };
     const repaired = compose(repairedOptions);
     const repairedReport = diagnosePiece(repaired);
     expect(repairedReport.issues.some((candidate) => (
-      candidate.code === issue.code && Math.abs(candidate.beat - issue.beat) < 0.001
+      candidate.code === issue!.code && Math.abs(candidate.beat - issue!.beat) < 0.001
     ))).toBe(false);
     expect(repairedReport.overall).toBeGreaterThanOrEqual(originalReport.overall);
     expect(repaired.melody.filter((note, index) => note.midi !== original.melody[index]!.midi)).toHaveLength(1);
@@ -297,11 +300,33 @@ describe('compose', () => {
     expect(piece.barChordNames).toEqual(['F', 'G', 'Am', 'C']);
   });
 
+  it('短調ペダルはベースだけを保ち、既定和声をiだけへ固定しない', () => {
+    const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
+    expect(defaultChoiceFor(prog, 4)).toEqual([0, 0, 1, 2]);
+    const piece = compose({
+      ...base, progressionId: prog.id, tonality: 'minor', bars: 4,
+    });
+    expect(piece.songPlan.harmony.map((bar) => bar.tokens.join(',')))
+      .toEqual(['i', 'i', 'VI', 'V7m']);
+    expect(validatePiece(piece)).toEqual([]);
+  });
+
+  it('短調フォームの終端選択はVだけでなくV7mもドミナントとして扱う', () => {
+    const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-drive')!;
+    for (const bars of [8, 16, 40] as const) {
+      const choice = defaultChoiceFor(prog, bars);
+      const lastBar = bars - 1;
+      expect(prog.slots[lastBar % prog.slots.length]![choice[lastBar]!]!.at(-1), `${bars}小節`).toBe('V7m');
+    }
+    const varied = variedChoiceFor(prog, 16, 13, { chancePercent: 100 });
+    expect(prog.slots[3]![varied[15]!]!.at(-1)).toBe('V7m');
+  });
+
   it('4小節進行の BB(8小節) 展開は A+A\'（最終小節だけ V でループを引っ張る）', () => {
     const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;
     const choice = defaultChoiceFor(prog, 8);
     expect(choice.slice(0, 4)).toEqual(choice.slice(4).map((v, i) => (i === 3 ? choice[3]! : v)));
-    const piece = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8 });
+    const piece = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, choice });
     expect(piece.barChordNames.slice(0, 3)).toEqual(piece.barChordNames.slice(4, 7));
     expect(piece.barChordNames[7]).toBe('G'); // V
   });
@@ -351,50 +376,158 @@ describe('compose', () => {
     }
   });
 
-  it('8小節のコード変化は前半を固定し、後半を登録済みレシピにする', () => {
+  it('8小節のコード変化は登録済みレシピ2つを組み、開始側も固定しない', () => {
     const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;
-    const standard = defaultChoiceFor(prog, 8);
-    const recipeKeys = new Set(prog.variations.map((variation) => variation.join(',')));
+    const firstPhrases = new Set<string>();
     for (let seed = 0; seed < 200; seed++) {
       const choice = variedChoiceFor(prog, 8, seed);
-      expect(choice.slice(0, 4)).toEqual(standard.slice(0, 4));
-      expect(choice.join(',') === standard.join(',') || recipeKeys.has(choice.slice(4).join(','))).toBe(true);
+      expect(choice.slice(0, 4)).not.toEqual(choice.slice(4));
+      firstPhrases.add(choice.slice(0, 4).join(','));
+      expect(choice).toHaveLength(8);
+      choice.forEach((selected, bar) => expect(selected).toBeLessThan(prog.slots[bar % 4]!.length));
     }
+    expect(firstPhrases.size).toBeGreaterThan(1);
   });
 
-  it('16小節のコード変化はAを固定し、Bを確認済みレシピで展開する', () => {
+  it('16小節のコード変化はA・Bを異なる確認済みレシピで展開する', () => {
     for (const prog of PROGRESSIONS) {
-      const sectionA = defaultChoiceFor(prog, 8);
-      const choice = variedChoiceFor(prog, 16, 42);
-      expect(choice).toHaveLength(16);
-      expect(choice.slice(0, 8), prog.id).toEqual(sectionA);
-      expect(choice.slice(8), prog.id).not.toEqual(sectionA);
-      const lastSlot = prog.slots[15 % prog.slots.length]!;
-      const strongest = lastSlot.some((option) => ['V', 'I7'].includes(option[option.length - 1]!));
-      const lastTokens = lastSlot[choice[15]!]!;
-      if (strongest) expect(['V', 'I7'], `${prog.id}/ターンアラウンド`).toContain(lastTokens.at(-1));
-      const piece = compose({
-        ...base, progressionId: prog.id, bars: 16, choice,
-        ...(prog.tonality === 'minor' ? { melodyMode: 'minor' as const } : {}),
-      });
-      expect(validatePiece(piece), prog.id).toEqual([]);
+      const sectionAKeys = new Set<string>();
+      for (const seed of Array.from({ length: 32 }, (_, index) => index)) {
+        const choice = variedChoiceFor(prog, 16, seed);
+        expect(choice).toHaveLength(16);
+        expect(choice.slice(0, 8), `${prog.id}/seed=${seed}`).not.toEqual(choice.slice(8));
+        sectionAKeys.add(choice.slice(0, 8).join(','));
+        const lastSlot = prog.slots[15 % prog.slots.length]!;
+        const strongest = lastSlot.some((option) => ['V', 'V7m', 'I7'].includes(option.at(-1)!));
+        const lastTokens = lastSlot[choice[15]!]!;
+        if (strongest) expect(['V', 'V7m', 'I7'], `${prog.id}/ターンアラウンド`).toContain(lastTokens.at(-1));
+        const piece = compose({
+          ...base, progressionId: prog.id, bars: 16, choice, seed,
+          ...(prog.tonality === 'minor' ? { melodyMode: 'minor' as const } : {}),
+        });
+        expect(validatePiece(piece), `${prog.id}/seed=${seed}`).toEqual([]);
+      }
+      expect(sectionAKeys.size, `${prog.id}/A`).toBeGreaterThan(1);
     }
   });
 
-  it('40小節の半小節コード変化は任意の道具で、選んだ場合はBとEで回帰する', () => {
-    const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
-    const choices = Array.from({ length: 128 }, (_, seed) => variedChoiceFor(prog, 40, seed));
-    const splitBars = (choice: readonly number[], start: number, end: number) => (
-      Array.from({ length: end - start }, (_, offset) => offset)
-        .filter((offset) => prog.slots[(start + offset) % prog.slots.length]![choice[start + offset]!]!.length > 1)
-    );
-    expect(choices.some((choice) => splitBars(choice, 0, 40).length === 0)).toBe(true);
-    expect(choices.some((choice) => splitBars(choice, 0, 40).length > 0)).toBe(true);
-    const withSplit = choices.find((choice) => splitBars(choice, 8, 15).length > 0)!;
-    expect(splitBars(withSplit, 32, 39)).toEqual(splitBars(withSplit, 8, 15));
+  it('選択を省略した4・8・16小節生成も、尺に応じた変化と山を自動設計する', () => {
+    const overfixedReasons = ['完全コピー', '固定されている', '低エネルギー', '実音が生成されていない'];
+    for (const prog of PROGRESSIONS) {
+      for (const bars of [4, 8, 16] as const) {
+        if (prog.slots.length > bars) continue;
+        for (const seed of [0, 13, 42, 77]) {
+          const piece = compose({
+            ...base, progressionId: prog.id, tonality: prog.tonality, bars, seed,
+          });
+          expect(validatePiece(piece), `${prog.id}/${bars}小節/seed=${seed}`).toEqual([]);
+          expect(piece.songPlan.form.sections.every((section) => (
+            new Set(section.phraseRhythmVariants).size > 1
+          ))).toBe(true);
+          if (bars === 8 && prog.slots.length === 4) {
+            expect(piece.songPlan.harmony.slice(0, 4).map((bar) => bar.tokens), `${prog.id}/8小節`)
+              .not.toEqual(piece.songPlan.harmony.slice(4).map((bar) => bar.tokens));
+          }
+          if (bars === 16) {
+            expect(piece.songPlan.harmony.slice(0, 8).map((bar) => bar.tokens), `${prog.id}/16小節`)
+              .not.toEqual(piece.songPlan.harmony.slice(8).map((bar) => bar.tokens));
+            const climaxSection = piece.songPlan.form.sections.find((section) => (
+              piece.phrasePlan.climaxBar >= section.startBar
+              && piece.phrasePlan.climaxBar < section.startBar + section.bars
+            ))!;
+            expect(climaxSection.energy).toBe(Math.max(...piece.songPlan.form.sections.map((section) => section.energy)));
+          }
+          const overfixed = diagnosePiece(piece).issues.filter((issue) => (
+            overfixedReasons.some((reason) => issue.reason.includes(reason))
+          ));
+          expect(overfixed, `${prog.id}/${bars}小節/seed=${seed}`).toEqual([]);
+        }
+      }
+    }
+    expect(compose({ ...base, bars: 4, seed: 42 }).phrasePlan.climaxBar).toBe(2);
+    expect(compose({ ...base, bars: 4, seed: 43 }).phrasePlan.climaxBar).toBe(3);
   });
 
-  it('16小節フォームだけに2小節のフック＋応答イントロを置き、Aの頭をループ開始点にする', () => {
+  it('4・8小節の編成は互換候補から主役を選び、計画した声部を実際に鳴らす', () => {
+    for (const bars of [4, 8] as const) {
+      const pieces = Array.from({ length: 32 }, (_, seed) => compose({ ...base, bars, seed }));
+      expect(new Set(pieces.map((piece) => piece.arrangementPlan.textureStrategy)).size).toBeGreaterThan(1);
+      expect(new Set(pieces.map((piece) => {
+        const section = piece.arrangementPlan.sectionA;
+        return [
+          piece.arrangementPlan.textureStrategy,
+          section.backingDensity,
+          section.drum,
+          section.echo,
+          section.counterDensity,
+          section.ostinatoDensity,
+        ].join(':');
+      })).size).toBeGreaterThan(3);
+      pieces.forEach((piece, seed) => {
+        const section = piece.arrangementPlan.sectionA;
+        if (section.counterDensity > 0) expect(piece.counterMelody.length, `counter/${bars}/${seed}`).toBeGreaterThan(0);
+        if (section.ostinatoDensity > 0) expect(piece.ostinato.length, `arp/${bars}/${seed}`).toBeGreaterThan(0);
+      });
+    }
+
+    const nesPieces = Array.from({ length: 16 }, (_, seed) => compose({
+      ...base, bars: 8, seed, soundChip: 'nes2a03',
+    }));
+    expect(nesPieces.every((piece) => piece.arrangementPlan.textureStrategy !== 'arpDrive')).toBe(true);
+    expect(nesPieces.every((piece) => piece.ostinato.length === 0)).toBe(true);
+
+    const bResponse = compose({ ...base, bars: 16, seed: 20 });
+    expect(bResponse.arrangementPlan.sectionB.counterDensity).toBeGreaterThan(0);
+    expect(bResponse.counterMelody.some((note) => note.beat >= bResponse.loopStartBeat + 8 * 4)).toBe(true);
+  });
+
+  it('40小節のコード変化は各セクションを別レシピで構成し、半小節変化は任意にする', () => {
+    for (const prog of PROGRESSIONS) {
+      const choices = Array.from({ length: 32 }, (_, seed) => variedChoiceFor(prog, 40, seed));
+      for (const choice of choices) {
+        expect(choice).toHaveLength(40);
+        const sectionSignatures = Array.from(
+          { length: 5 }, (_, section) => choice.slice(section * 8, section * 8 + 8).join(','),
+        );
+        expect(new Set(sectionSignatures).size, prog.id).toBeGreaterThanOrEqual(4);
+        if (prog.slots.length === 4) {
+          const openings = Array.from(
+            { length: 5 }, (_, section) => choice.slice(section * 8, section * 8 + 4).join(','),
+          );
+          expect(new Set(openings).size, `${prog.id}/各区間の冒頭`).toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
+    const pedal = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
+    const splitCounts = Array.from({ length: 128 }, (_, seed) => variedChoiceFor(pedal, 40, seed))
+      .map((choice) => choice.filter((selected, bar) => (
+        pedal.slots[bar % pedal.slots.length]![selected]!.length > 1
+      )).length);
+    expect(splitCounts.some((count) => count === 0)).toBe(true);
+    expect(splitCounts.some((count) => count > 0)).toBe(true);
+  });
+
+  it('全進行の40小節自動展開が過剰固定の診断を出さず、構造検証を通る', () => {
+    for (const prog of PROGRESSIONS) {
+      for (const seed of [0, 13, 42, 77]) {
+        const piece = compose({
+          ...base,
+          progressionId: prog.id,
+          bars: 40,
+          seed,
+          choice: variedChoiceFor(prog, 40, seed),
+          ...(prog.tonality === 'minor' ? { tonality: 'minor' as const } : {}),
+        });
+        expect(validatePiece(piece), `${prog.id}/seed=${seed}`).toEqual([]);
+        const overfixed = diagnosePiece(piece).issues.filter((issue) => (
+          issue.reason.includes('完全コピー') || issue.reason.includes('固定されている')
+        ));
+        expect(overfixed, `${prog.id}/seed=${seed}`).toEqual([]);
+      }
+    }
+  });
+
+  it('2小節イントロをSongPlanで設計し、役割別の編成と和声からAへ接続する', () => {
     const evenSeed = compose({ ...base, bars: 16, seed: 42 });
     const oddSeed = compose({ ...base, bars: 16, seed: 43 });
     const withoutIntro = compose({ ...base, bars: 16, seed: 43, intro: false });
@@ -405,9 +538,13 @@ describe('compose', () => {
     expect(evenSeed.beats).toBe(8 + 16 * 4);
     expect(evenSeed.introChordNames).toHaveLength(2);
     expect(evenSeed.introRole).not.toBeNull();
+    expect(evenSeed.songPlan.intro.enabled).toBe(true);
+    expect(evenSeed.songPlan.intro.role).toBe(evenSeed.introRole);
     expect(oddSeed.introBars).toBe(2);
     expect(withoutIntro.introBars).toBe(0);
     expect(withoutIntro.introRole).toBeNull();
+    expect(withoutIntro.songPlan.intro.enabled).toBe(false);
+    expect(withoutIntro.songPlan.intro.barPlans).toEqual([]);
     expect(withoutIntro.loopStartBeat).toBe(0);
     expect(withoutIntro.beats).toBe(16 * 4);
     expect(withoutIntro.introChordNames).toEqual([]);
@@ -417,41 +554,63 @@ describe('compose', () => {
     expect(evenSeed.chords.find((chord) => chord.beat === evenSeed.loopStartBeat)?.name).toBe(evenSeed.barChordNames[0]);
 
     const variants = STYLES.flatMap((style) =>
-      Array.from({ length: 12 }, (_, seed) => compose({ ...base, bars: 16, styleId: style.id, seed: seed + 40 })),
+      Array.from({ length: 16 }, (_, seed) => compose({ ...base, bars: 16, styleId: style.id, seed: seed + 40 })),
     );
-    const leadRhythms = new Set<string>();
     const introRoles = new Set<string>();
+    const breakLengths = new Set<number>();
     for (const piece of variants) {
+      const plan = piece.songPlan.intro;
       const firstBarLead = piece.melody.filter((note) => note.beat < 4);
       const secondBarLead = piece.melody.filter((note) => note.beat >= 4 && note.beat < 8);
       const firstBarBass = piece.bass.filter((note) => note.beat < 4);
       const secondBarBass = piece.bass.filter((note) => note.beat >= 4 && note.beat < 8);
-      expect(firstBarLead.length).toBeGreaterThanOrEqual(4);
-      expect(firstBarLead.length).toBeLessThanOrEqual(7);
-      expect(secondBarLead.length).toBeGreaterThan(firstBarLead.length);
-      expect(secondBarLead.length).toBeLessThanOrEqual(11);
-      expect(firstBarBass.length).toBeGreaterThanOrEqual(4);
-      expect(secondBarBass.length).toBeGreaterThan(firstBarBass.length);
       const introDrums = piece.drums.filter((drum) => drum.beat < piece.loopStartBeat);
-      if (piece.introRole === 'groove') expect(introDrums.length).toBeGreaterThan(0);
-      else expect(introDrums).toEqual([]);
-      if (introDrums.length > 0) expect(Math.max(...introDrums.map((drum) => drum.beat))).toBeLessThanOrEqual(6);
-      expect(piece.chords.find((chord) => chord.beat === 4)?.dur).toBe(2.5);
-      expect(Math.max(...secondBarLead.map((note) => note.beat + note.dur))).toBeLessThanOrEqual(6.5);
-      expect(Math.max(...secondBarBass.map((note) => note.beat + note.dur))).toBeLessThanOrEqual(6.5);
-      expect(validatePiece(piece)).toEqual([]);
-      if (piece.introRole === 'motif') {
-        expect(firstBarLead.map((note) => note.beat)).toEqual(
-          piece.melody
-            .filter((note) => note.beat >= piece.loopStartBeat && note.beat < piece.loopStartBeat + 4)
-            .map((note) => note.beat - piece.loopStartBeat),
-        );
+      const introChords = piece.chords.filter((chord) => chord.beat < piece.loopStartBeat);
+      const firstBodyChord = piece.chords.find((chord) => chord.beat === piece.loopStartBeat)!;
+      expect(plan.barPlans).toHaveLength(2);
+      expect(plan.entryToken).toBe(firstBodyChord.token);
+      expect(introChords.every((chord) => chord.token === firstBodyChord.token)).toBe(false);
+      for (const barPlan of plan.barPlans) {
+        const actual = introChords.filter((chord) => chord.beat >= barPlan.bar * 4 && chord.beat < (barPlan.bar + 1) * 4);
+        expect(actual.map((chord) => chord.token)).toEqual(barPlan.tokens);
+        expect(actual.map((chord) => chord.dur)).toEqual(barPlan.durations);
       }
-      leadRhythms.add(piece.melody.filter((note) => note.beat < 8).map((note) => note.beat).join(','));
+      const breakStart = piece.loopStartBeat - plan.breakBeats;
+      expect(Math.max(...introChords.map((chord) => chord.beat + chord.dur))).toBeLessThanOrEqual(breakStart);
+      expect([...firstBarLead, ...secondBarLead].every((note) => note.beat + note.dur <= breakStart + 0.001)).toBe(true);
+      expect([...firstBarBass, ...secondBarBass].every((note) => note.beat + note.dur <= breakStart + 0.001)).toBe(true);
+      expect(introDrums.every((drum) => drum.beat < breakStart)).toBe(true);
+
+      if (piece.introRole === 'motif') {
+        const bodyFragment = piece.melody
+          .filter((note) => note.beat >= piece.loopStartBeat && note.beat < piece.loopStartBeat + 4 && note.role !== 'ornament')
+          .slice(0, firstBarLead.length);
+        expect(firstBarLead.map((note) => note.midi)).toEqual(bodyFragment.map((note) => note.midi));
+        expect(introDrums).toEqual([]);
+      } else if (piece.introRole === 'groove') {
+        expect(firstBarLead).toEqual([]);
+        expect(firstBarBass.length).toBeGreaterThan(secondBarBass.length);
+        expect(secondBarLead.length).toBeGreaterThan(0);
+        expect(introDrums.length).toBeGreaterThan(0);
+      } else if (piece.introRole === 'fanfare') {
+        expect(firstBarLead.length).toBeGreaterThan(secondBarLead.length);
+        expect(introDrums.some((drum) => drum.inst === 'cymbal')).toBe(true);
+      } else if (piece.introRole === 'runup') {
+        expect(firstBarLead).toHaveLength(2);
+        expect(secondBarLead.length).toBeGreaterThan(firstBarLead.length);
+        expect(introDrums.length).toBeGreaterThan(0);
+      }
+      expect(validatePiece(piece)).toEqual([]);
       if (piece.introRole) introRoles.add(piece.introRole);
+      breakLengths.add(plan.breakBeats);
     }
-    expect(leadRhythms.size).toBeGreaterThanOrEqual(4);
     expect([...introRoles].sort()).toEqual(['fanfare', 'groove', 'motif', 'runup']);
+    expect([...breakLengths].sort()).toEqual([0, 0.5, 1]);
+    const japaneseIntro = compose({
+      ...base, bars: 16, seed: 43, melodicLanguage: 'japanese', japaneseScale: 'ritsu',
+    });
+    expect(japaneseIntro.introRole).toBe('motif');
+    expect(japaneseIntro.songPlan.intro.breakBeats).toBe(1.5);
     expect(compose({ ...base, bars: 16, seed: 42 }).melody.filter((note) => note.beat < 8)).toEqual(
       evenSeed.melody.filter((note) => note.beat < 8),
     );
@@ -482,7 +641,7 @@ describe('compose', () => {
     ) <= 1)).toBe(true);
   });
 
-  it('メロディは提示→変奏反復→展開→結論を持ち、反復では輪郭を保つ', () => {
+  it('8小節メロディはSRDCを保ちつつ、同じ2小節リズムを4回貼らない', () => {
     const piece = compose({ ...base, progressionId: 'tanaka-manabe', bars: 8, seed: 42 });
     const rhythmAt = (bar: number) =>
       piece.melody
@@ -497,16 +656,17 @@ describe('compose', () => {
     };
 
     expect(rhythmAt(0)).not.toEqual(rhythmAt(1));
-    expect(rhythmAt(0)).toEqual(rhythmAt(2));
-    expect(rhythmAt(1)).toEqual(rhythmAt(3));
     expect(piece.phrasePlan.bars.map((plan) => plan.phraseFunction)).toEqual([
       'statement', 'statement', 'restatement', 'restatement',
       'departure', 'departure', 'conclusion', 'conclusion',
     ]);
-    expect(piece.phrasePlan.bars.map((plan) => plan.motifSourceBar)).toEqual([0, 1, 0, 1, 0, 1, 0, 1]);
-    expect(contourAt(2)).toEqual(contourAt(0));
+    expect(new Set(piece.songPlan.form.sections[0]!.phraseRhythmVariants).size).toBeGreaterThan(1);
+    expect(new Set(Array.from({ length: 4 }, (_, phrase) => (
+      `${rhythmAt(phrase * 2).join(',')}/${rhythmAt(phrase * 2 + 1).join(',')}`
+    ))).size).toBeGreaterThan(2);
+    expect(piece.phrasePlan.bars.slice(4, 6).map((plan) => plan.motifSourceBar)).toEqual([4, 5]);
     expect(contourAt(4)).not.toEqual(contourAt(0));
-    expect(contourAt(6)).toEqual(contourAt(0));
+    expect(piece.phrasePlan.bars[6]!.motifSourceBar).toBeLessThan(4);
   });
 
   it('和風様式は3種の五音音組織と核音を持ち、キーと一緒に移調する', () => {
@@ -804,7 +964,7 @@ describe('compose', () => {
     expect(Math.floor((at.beat - piece.loopStartBeat) / 4)).toBe(14);
   });
 
-  it('OPLL BIGは2小節イントロ＋40小節のA–Eフォームで、短調フックを回帰させる', () => {
+  it('OPLL BIGは2小節イントロ＋40小節のA–Eフォームで、主題を変形しながら回帰させる', () => {
     const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
     const choice = variedChoiceFor(prog, 40, 42);
     const piece = compose({
@@ -825,16 +985,20 @@ describe('compose', () => {
     expect(piece.arrangementPlan.sections).toHaveLength(5);
     expect(piece.phrasePlan.bars.filter((plan) => plan.bar % 8 === 0).map((plan) => plan.section))
       .toEqual(['A', 'B', 'C', 'D', 'E']);
-    expect(piece.phrasePlan.bars[8]!.motifSourceBar).toBe(0);
+    expect(piece.songPlan.form.sections.map((section) => section.motifSourceSection))
+      .toEqual([null, 'A', null, 'A', 'B']);
+    expect(new Set(piece.songPlan.form.sections.map((section) => section.rhythmVariant)).size)
+      .toBeGreaterThanOrEqual(3);
     expect(piece.phrasePlan.bars[16]!.motifSourceBar).toBe(16);
     expect(piece.phrasePlan.bars[24]!.motifSourceBar).toBe(0);
-    expect(piece.phrasePlan.bars[32]!.motifSourceBar).toBe(0);
+    expect(piece.phrasePlan.bars[32]!.motifSourceBar).toBe(8);
     const notesInSection = (startBar: number) => piece.ostinato.filter((note) => (
       note.beat >= piece.loopStartBeat + startBar * 4
       && note.beat < piece.loopStartBeat + (startBar + 8) * 4
     ));
-    expect([0, 1, 2, 3, 4].filter((section) => notesInSection(section * 8).length > 0))
-      .toEqual([1, 3]);
+    const ostinatoSections = [0, 1, 2, 3, 4].filter((section) => notesInSection(section * 8).length > 0);
+    expect(ostinatoSections.length).toBeGreaterThanOrEqual(1);
+    expect(ostinatoSections.length).toBeLessThanOrEqual(2);
     expect(piece.arrangementPlan.sections.every((section) => (
       Number(section.echo) + Number(section.counterDensity > 0) + Number(section.ostinatoDensity > 0)
     ) <= 1)).toBe(true);
@@ -868,6 +1032,31 @@ describe('compose', () => {
       .arrangementPlan.bassRole).toBe('pedal');
   });
 
+  it('40小節の起伏・山・フィル・仕掛け位置は単一の固定表へ収束しない', () => {
+    const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
+    const seeds = [0, 4, 8, 12, 1025];
+    const pieces = seeds.map((seed) => compose({
+      ...base, progressionId: prog.id, bars: 40, seed, melodyMode: 'minor',
+      choice: variedChoiceFor(prog, 40, seed),
+    }));
+    expect(new Set(pieces.map((piece) => (
+      piece.songPlan.form.sections.map((section) => section.energy).join(',')
+    ))).size).toBeGreaterThanOrEqual(4);
+    const climaxSections = new Set(pieces.map((piece) => Math.floor(piece.phrasePlan.climaxBar / 8)));
+    expect(climaxSections.size).toBeGreaterThanOrEqual(3);
+    expect(new Set(pieces.map((piece) => (
+      piece.arrangementPlan.sections.map((section) => section.exitFill).join(',')
+    ))).size).toBeGreaterThan(1);
+    for (const piece of pieces) {
+      expect(piece.arrangementPlan.sections.slice(0, -1).every((section) => section.exitFill === 'full'))
+        .toBe(false);
+      const overfixed = diagnosePiece(piece).issues.filter((issue) => (
+        issue.reason.includes('完全コピー') || issue.reason.includes('固定されている')
+      ));
+      expect(overfixed, `seed=${piece.songPlan.form.climaxBar}`).toEqual([]);
+    }
+  });
+
   it('密な副旋律はコードトーンだけでなく、順次解決する経過音・刺繍音を使う', () => {
     const piece = compose({
       ...base,
@@ -887,30 +1076,27 @@ describe('compose', () => {
     expect(report.observations.some((observation) => observation.description.startsWith('副旋律の'))).toBe(true);
   });
 
-  it('3+1の和声リズムは一部の展開・結論だけで使い、BとEで同じ位置へ回帰する', () => {
+  it('3+1の和声リズムは任意に使い、再登場してもBとEを完全コピーしない', () => {
     const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
-    const seed = 13;
-    const piece = compose({
-      ...base,
-      progressionId: prog.id,
-      bars: 40,
-      seed,
-      melodyMode: 'minor',
-      choice: variedChoiceFor(prog, 40, seed),
-    });
-    const splitAt = (startBar: number) => Array.from({ length: 7 }, (_, relativeBar) => relativeBar)
-      .filter((relativeBar) => {
-        const start = piece.loopStartBeat + (startBar + relativeBar) * 4;
-        const durations = piece.chords
-          .filter((chord) => chord.beat >= start && chord.beat < start + 4)
-          .map((chord) => chord.dur);
-        return durations.join(',') === '1,3' || durations.join(',') === '3,1';
+    const patterns = Array.from({ length: 128 }, (_, seed) => {
+      const piece = compose({
+        ...base, progressionId: prog.id, bars: 40, seed, melodyMode: 'minor',
+        choice: variedChoiceFor(prog, 40, seed),
       });
-    expect(splitAt(8).length).toBeGreaterThan(0);
-    expect(splitAt(32)).toEqual(splitAt(8));
+      const splitAt = (startBar: number) => piece.songPlan.harmony
+        .slice(startBar, startBar + 8)
+        .flatMap((bar, relativeBar) => bar.tokens.length > 1
+          ? [`${relativeBar}:${bar.durations.join('+')}`]
+          : []);
+      return { all: splitAt(0).length + splitAt(8).length + splitAt(16).length + splitAt(24).length + splitAt(32).length,
+        b: splitAt(8).join(','), e: splitAt(32).join(',') };
+    });
+    expect(patterns.some((pattern) => pattern.all === 0)).toBe(true);
+    expect(patterns.some((pattern) => pattern.all > 0)).toBe(true);
+    expect(patterns.some((pattern) => pattern.all > 0 && pattern.b !== pattern.e)).toBe(true);
   });
 
-  it('16分分散和音は8小節を同じ密度で埋めず、展開部だけ加速する', () => {
+  it('16分分散和音は8小節を同じ密度で埋めず、区間ごとに選んだ役割だけで加速する', () => {
     const piece = compose({
       ...base,
       progressionId: 'minor-pedal',
@@ -922,9 +1108,18 @@ describe('compose', () => {
       note.beat >= piece.loopStartBeat + bar * 4
       && note.beat < piece.loopStartBeat + (bar + 1) * 4
     )).length;
-    expect(notesInBar(8)).toBeGreaterThan(0);
-    expect(notesInBar(12)).toBeGreaterThan(notesInBar(8));
-    expect(notesInBar(12)).toBe(16);
+    const denseSection = piece.arrangementPlan.sections.findIndex((section) => section.ostinatoDensity === 2);
+    expect(denseSection).toBeGreaterThanOrEqual(0);
+    const startBar = denseSection * 8;
+    const counts = Array.from({ length: 8 }, (_, offset) => notesInBar(startBar + offset));
+    expect(Math.max(...counts)).toBe(16);
+    expect(Math.min(...counts)).toBeLessThan(16);
+    const peak = piece.arrangementPlan.sections[denseSection]!.ostinatoPeak;
+    const peakCounts = piece.phrasePlan.bars
+      .slice(startBar, startBar + 8)
+      .filter((bar) => bar.phraseFunction === peak)
+      .map((bar) => notesInBar(bar.bar));
+    expect(Math.max(...peakCounts)).toBe(16);
   });
 
   it('最終小節の後半は音を減らしてループの頭に渡す', () => {

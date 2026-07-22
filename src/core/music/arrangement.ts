@@ -13,10 +13,45 @@ const section = (
 ): ArrangementSectionPlan => ({
   backingDensity,
   drum,
+  entrance: 'none',
+  exitFill: 'none',
   echo: device === 'echo',
   counterDensity: device === 'counter1' ? 1 : device === 'counter2' ? 2 : 0,
   ostinatoDensity: device === 'arp1' ? 1 : device === 'arp2' ? 2 : 0,
+  ostinatoPeak: null,
 });
+
+function withTransitions(
+  source: readonly ArrangementSectionPlan[],
+  energies: readonly number[],
+  seed: number,
+): ArrangementSectionPlan[] {
+  const peakChoices = ['restatement', 'departure', 'conclusion'] as const;
+  return source.map((item, index) => {
+    const previousEnergy = index > 0 ? energies[index - 1]! : item.backingDensity === 'full' ? 2 : 3;
+    const nextEnergy = index + 1 < source.length ? energies[index + 1]! : null;
+    const deltaIn = energies[index]! - previousEnergy;
+    const entrance = index === 0 || (deltaIn > 0 && ((seed + index) & 1) === 0)
+      ? 'cymbal'
+      : 'none';
+    let exitFill: ArrangementSectionPlan['exitFill'] = 'none';
+    if (nextEnergy !== null) {
+      const deltaOut = nextEnergy - energies[index]!;
+      if (deltaOut >= 2) exitFill = 'full';
+      else if (deltaOut > 0) exitFill = ((seed + index * 3) & 1) === 0 ? 'light' : 'full';
+      else if (deltaOut === 0) exitFill = ((seed + index * 5) % 3) === 0 ? 'light' : 'none';
+      else exitFill = ((seed + index * 7) % 4) === 0 ? 'light' : 'none';
+    }
+    return {
+      ...item,
+      entrance,
+      exitFill,
+      ostinatoPeak: item.ostinatoDensity > 0
+        ? peakChoices[(seed + index * 5) % peakChoices.length]!
+        : null,
+    };
+  });
+}
 
 /** seedは互換候補内の揺らぎにだけ使い、候補集合そのものは曲調・密度・チップで決める。 */
 function textureStrategyFor(
@@ -24,9 +59,10 @@ function textureStrategyFor(
   seed: number,
   plan: SongPlan | undefined,
 ): ArrangementPlan['textureStrategy'] {
-  if (bars < 16) return 'classic';
   if (!plan) {
-    const fallback = ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'] as const;
+    const fallback = bars < 16
+      ? ['classic', 'counterDrive', 'arpDrive', 'bassDrive'] as const
+      : ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'] as const;
     return fallback[(seed >>> 1) % fallback.length]!;
   }
   let candidates: ArrangementPlan['textureStrategy'][];
@@ -41,7 +77,18 @@ function textureStrategyFor(
     candidates = ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'];
   }
   if (plan.melodyDensity >= 5.75) candidates = candidates.filter((item) => item !== 'hybrid');
-  if (plan.grooveFeel === 'tripletOverlay') candidates = candidates.filter((item) => item !== 'arpDrive');
+  // 短形式の三連は既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。
+  if (plan.grooveFeel === 'tripletOverlay' && bars >= 16) {
+    candidates = candidates.filter((item) => item !== 'arpDrive');
+  }
+  if (bars < 16) {
+    // 1区間しかない短形式では、複数奏法の交替を前提にするhybridを選ばない。
+    candidates = [
+      ...new Set<ArrangementPlan['textureStrategy']>([
+        'classic', ...candidates.filter((item) => item !== 'hybrid'),
+      ]),
+    ];
+  }
   if (candidates.length === 0) candidates = ['classic'];
   return candidates[(seed >>> 1) % candidates.length]!;
 }
@@ -65,43 +112,72 @@ export function arrangementPlanFor(
     : 'rootMotion';
 
   if (bars === 40) {
-    const sections = textureStrategy === 'counterDrive'
-      ? [
-        section('full', 'sectionB'), section('sparse', 'base', 'counter2'),
-        section('sparse', 'breakdown'), section('full', 'sectionB', 'counter2'), section('full', 'sectionB'),
-      ]
-      : textureStrategy === 'arpDrive'
-        ? [
-          section('full', 'sectionB'), section('sparse', 'base', 'arp2'),
-          section('sparse', 'breakdown'), section('full', 'sectionB', 'arp2'), section('full', 'sectionB', 'echo'),
-        ]
-        : textureStrategy === 'bassDrive'
-          ? [
-            section('full', 'sectionB'), section('sparse', 'base', 'counter1'),
-            section('sparse', 'breakdown'), section('full', 'sectionB'), section('full', 'sectionB', 'counter1'),
-          ]
-          : textureStrategy === 'hybrid'
-            ? [
-              section('full', 'base', 'counter1'), section('sparse', 'sectionB', 'arp1'),
-              section('sparse', 'breakdown'), section('full', 'sectionB', 'arp2'), section('sparse', 'base', 'counter1'),
-            ]
-            : [
-              section('full', 'base'), section('sparse', 'sectionB', 'counter1'),
-              section('sparse', 'breakdown'), section('full', 'sectionB'), section('full', 'base', 'echo'),
-            ];
+    const energies = songPlan?.form.sections.map((item) => item.energy) ?? [4, 3, 2, 4, 5];
+    const sortedEnergy = [...energies].sort((a, b) => a - b);
+    const median = sortedEnergy[Math.floor(sortedEnergy.length / 2)]!;
+    const minimum = sortedEnergy[0]!;
+    const sections = energies.map((energy) => section(
+      energy >= median ? 'full' : 'sparse',
+      energy === minimum ? 'breakdown' : energy > median ? 'sectionB' : 'base',
+    ));
+    const rankedHigh = sections.map((_, index) => index).filter((index) => index > 0).sort((a, b) => (
+      energies[b]! - energies[a]! || ((a + seed) % 5) - ((b + seed) % 5)
+    ));
+    const rankedLow = sections.map((_, index) => index).filter((index) => index > 0).sort((a, b) => (
+      energies[a]! - energies[b]! || ((a + seed) % 5) - ((b + seed) % 5)
+    ));
+    const mainCount = 1 + ((seed >>> 11) & 1);
+    const applyDevice = (index: number, device: 'echo' | 'counter1' | 'counter2' | 'arp1' | 'arp2'): void => {
+      sections[index] = section(sections[index]!.backingDensity, sections[index]!.drum, device);
+    };
+    if (textureStrategy === 'counterDrive') {
+      rankedHigh.slice(0, mainCount).forEach((index) => applyDevice(index, 'counter2'));
+    } else if (textureStrategy === 'arpDrive') {
+      rankedHigh.slice(0, mainCount).forEach((index) => applyDevice(index, 'arp2'));
+      const echoIndex = rankedLow.find((index) => !rankedHigh.slice(0, mainCount).includes(index));
+      if (echoIndex !== undefined && ((seed >>> 12) & 1) === 1) applyDevice(echoIndex, 'echo');
+    } else if (textureStrategy === 'bassDrive') {
+      applyDevice(rankedLow[0]!, 'counter1');
+    } else if (textureStrategy === 'hybrid') {
+      applyDevice(rankedHigh[0]!, ((seed >>> 12) & 1) === 0 ? 'arp1' : 'arp2');
+      const counterIndex = rankedLow.find((index) => index !== rankedHigh[0]);
+      if (counterIndex !== undefined) applyDevice(counterIndex, 'counter1');
+      const echoIndex = rankedHigh.find((index) => index !== rankedHigh[0] && index !== counterIndex);
+      if (echoIndex !== undefined && ((seed >>> 13) & 1) === 1) applyDevice(echoIndex, 'echo');
+    } else {
+      applyDevice(rankedLow[0]!, ((seed >>> 12) & 1) === 0 ? 'counter1' : 'echo');
+    }
+    const plannedSections = withTransitions(sections, energies, seed);
     return {
       arc: 'hookFirst', counterRole, textureStrategy, bassRole,
-      sectionA: sections[0]!, sectionB: sections[1]!, sections,
+      sectionA: plannedSections[0]!, sectionB: plannedSections[1]!, sections: plannedSections,
     };
   }
   if (bars !== 16) {
-    const compact = {
-      ...section('full', 'base', 'counter1'),
-      // OPLLの短いフォームは、主旋律の薄いディレイを標準編成の一部として扱う。
-      echo: songPlan?.soundChip !== 'nes2a03',
-    };
+    const device = textureStrategy === 'counterDrive'
+      ? bars === 8 && ((seed >>> 4) & 1) === 1 ? 'counter2' : 'counter1'
+      : textureStrategy === 'arpDrive'
+        ? bars === 8 && ((seed >>> 4) & 1) === 1 ? 'arp2' : 'arp1'
+        : textureStrategy === 'classic' && ((seed >>> 5) & 1) === 1 ? 'counter1' : 'none';
+    const compact = section(
+      ((seed >>> 6) & 1) === 0 ? 'full' : 'sparse',
+      ((seed >>> 7) & 1) === 0 ? 'base' : 'sectionB',
+      device,
+    );
+    compact.echo = songPlan?.soundChip !== 'nes2a03'
+      && textureStrategy === 'classic'
+      && ((seed >>> 8) & 1) === 1;
+    compact.entrance = ((seed >>> 9) & 1) === 0 ? 'cymbal' : 'none';
+    if (compact.ostinatoDensity > 0) {
+      compact.ostinatoPeak = (['restatement', 'departure', 'conclusion'] as const)[
+        (seed >>> 10) % 3
+      ]!;
+    }
     return {
-      arc: 'compact', counterRole: 'response', textureStrategy: 'classic', bassRole: 'rootMotion',
+      arc: 'compact',
+      counterRole,
+      textureStrategy,
+      bassRole,
       sectionA: compact, sectionB: compact, sections: [compact],
     };
   }
@@ -123,9 +199,10 @@ export function arrangementPlanFor(
     sections[low] = section('sparse', 'base', 'counter1');
     sections[high] = section('full', 'sectionB', 'arp1');
   } else sections[low] = section('sparse', 'base', 'counter1');
+  const plannedSections = withTransitions(sections, energies, seed);
   return {
     arc, counterRole, textureStrategy, bassRole,
-    sectionA: sections[0]!, sectionB: sections[1]!, sections,
+    sectionA: plannedSections[0]!, sectionB: plannedSections[1]!, sections: plannedSections,
   };
 }
 

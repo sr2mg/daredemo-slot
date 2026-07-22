@@ -179,7 +179,8 @@ export const PROGRESSIONS: ProgressionDef[] = [
       [['i'], ['VI'], ['VI', 'VII']],
       [['i'], ['VII', 'i'], ['V7m'], ['iv', 'V7m']],
     ],
-    defaultChoice: [0, 0, 0, 0],
+    // ペダルはベース声部で担い、和声まで全小節iへ固定しない。後半でVI→V7としてAへ戻す。
+    defaultChoice: [0, 0, 1, 2],
     variations: [
       [0, 0, 0, 2], // V7 で次の i を強く呼ぶ（1小節1コード）
       [0, 1, 0, 2], // 一度だけ VII、末尾は V7

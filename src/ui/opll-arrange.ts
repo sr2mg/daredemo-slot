@@ -253,7 +253,7 @@ export function arrangePiece(
     const thin = chord.beat < piece.loopStartBeat || section.backingDensity === 'sparse';
     const volume = thin ? 9 : 7;
     if (voices.backingPattern === 'offbeat') {
-      for (let beat = 0; beat < chord.dur; beat++) {
+      for (let beat = 0; beat + 0.5 < chord.dur - 0.001; beat++) {
         if (thin && beat % 2 === 0) continue;
         candidates.push({
           part: 'backing',

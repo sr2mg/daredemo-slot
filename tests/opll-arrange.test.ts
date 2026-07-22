@@ -126,7 +126,11 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
     expect(arranged.voiceStats.parts.ostinato.assigned).toBeGreaterThan(0);
     expect(arranged.voiceStats.parts.backing.assigned).toBeGreaterThan(0);
     expect(arranged.voiceStats.parts.doubling.assigned).toBe(0);
-    expect(def.voiceStats.parts.doubling.assigned).toBeGreaterThan(0);
+    const echoPiece = compose({
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 4, seed: 256,
+    });
+    expect(echoPiece.arrangementPlan.sectionA.echo).toBe(true);
+    expect(arrangePiece(echoPiece, 'eurobeat').voiceStats.parts.doubling.assigned).toBeGreaterThan(0);
     expect(arranged.voiceStats.maxConcurrent).toBeLessThanOrEqual(6);
     expect(arranged.loopStart).toBeCloseTo(bigPiece.loopStartBeat * 60 / bigPiece.bpm, 9);
     expect(arranged.loopEnd).toBeCloseTo(arranged.duration, 9);

@@ -197,7 +197,7 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
   for (const chord of piece.chords) {
     const third = chord.midis[1] ?? chord.midis[0]!;
     const fifth = chord.midis[2] ?? third;
-    for (let beat = 0; beat < chord.dur; beat++) {
+    for (let beat = 0; beat + 0.5 < chord.dur - 0.001; beat++) {
       const absoluteBeat = grooveBeat(chord.beat + beat + 0.5, piece.grooveFeel);
       const sectionPlan = arrangementSectionFor(piece, absoluteBeat);
       const thin = absoluteBeat < piece.loopStartBeat || sectionPlan.backingDensity === 'sparse';

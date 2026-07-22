@@ -1,5 +1,6 @@
 import { CHORDS, MAJOR_SCALE, NATURAL_MINOR_SCALE } from './theory.js';
 import { grooveBeat } from './timing.js';
+import { melodicSectionSimilarities } from './diversity.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './compose.js';
 
 const MELODY_LO = 72;
@@ -306,6 +307,57 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   ) {
     add('form', 'error', bodyStart, -1, 'SongPlanと生成結果の作曲意図が一致しない');
   }
+  const introPlan = piece.songPlan.intro;
+  const hasIntro = piece.introBars > 0;
+  if (introPlan.enabled !== hasIntro || introPlan.bars !== piece.introBars || introPlan.role !== piece.introRole) {
+    add('form', 'error', 0, -1, 'SongPlanのイントロ設計と生成結果が一致しない');
+  }
+  if (hasIntro) {
+    if (introPlan.barPlans.length !== 2 || bodyStart !== 8) {
+      add('form', 'error', 0, -1, 'イントロが2小節の導入フォームとして計画されていない');
+    }
+    for (const barPlan of introPlan.barPlans) {
+      const start = barPlan.bar * 4;
+      const actual = piece.chords.filter((chord) => chord.beat >= start && chord.beat < start + 4);
+      const tokenMatch = actual.map((chord) => chord.token).join(',') === barPlan.tokens.join(',');
+      const durationMatch = actual.length === barPlan.durations.length
+        && actual.every((chord, index) => Math.abs(chord.dur - barPlan.durations[index]!) < 0.001);
+      if (!tokenMatch || !durationMatch) {
+        add('harmony', 'error', start, -1, `イントロ${barPlan.bar + 1}小節目がSongPlanの和声設計と一致しない`);
+      }
+    }
+    const firstBodyChord = piece.chords.find((chord) => chord.beat === bodyStart);
+    if (!firstBodyChord || firstBodyChord.token !== introPlan.entryToken) {
+      add('harmony', 'error', bodyStart, -1, 'イントロの到達先とA冒頭のコードが一致しない');
+    }
+    const introChords = piece.chords.filter((chord) => chord.beat < bodyStart);
+    if (introChords.length > 0 && introChords.every((chord) => chord.token === introPlan.entryToken)) {
+      add('harmony', 'warning', 0, -1, 'イントロがA冒頭と同じ和音だけで足踏みしている');
+    }
+    const breakStart = bodyStart - introPlan.breakBeats;
+    const soundingPastBreak = [
+      ...piece.melody.filter((note) => note.beat < bodyStart).map((note) => note.beat + note.dur),
+      ...piece.bass.filter((note) => note.beat < bodyStart).map((note) => note.beat + note.dur),
+      ...introChords.map((chord) => chord.beat + chord.dur),
+    ].some((end) => end > breakStart + 0.001);
+    const drumPastBreak = piece.drums.some((drum) => drum.beat < bodyStart && drum.beat >= breakStart - 0.001);
+    if (soundingPastBreak || drumPastBreak) {
+      add('rhythm', 'error', breakStart, -1, 'イントロのブレイクへ音がはみ出している');
+    }
+    const introLeadBar0 = piece.melody.filter((note) => note.beat < 4);
+    const introLeadBar1 = piece.melody.filter((note) => note.beat >= 4 && note.beat < bodyStart);
+    if (introPlan.role === 'groove' && (introLeadBar0.length !== 0 || introLeadBar1.length === 0)) {
+      add('texture', 'error', 0, -1, 'グルーヴ提示型でリズム隊から主旋律へ受け渡せていない');
+    }
+    if (introPlan.role === 'runup' && introLeadBar1.length <= introLeadBar0.length) {
+      add('texture', 'error', 4, -1, '駆け上がり型の後半で主旋律が加速していない');
+    }
+    const firstBodyLead = piece.melody.find((note) => note.beat >= bodyStart && note.role !== 'ornament');
+    const lastIntroLead = piece.melody.filter((note) => note.beat < bodyStart).at(-1);
+    if (firstBodyLead && lastIntroLead && Math.abs(firstBodyLead.midi - lastIntroLead.midi) > 7) {
+      add('melody', 'warning', lastIntroLead.beat, lastIntroLead.midi, 'イントロ末尾からA冒頭への跳躍が7半音を超える');
+    }
+  }
   for (const harmonyBar of piece.songPlan.harmony) {
     const start = bodyStart + harmonyBar.bar * 4;
     const actual = piece.chords.filter((chord) => chord.beat >= start && chord.beat < start + 4);
@@ -315,6 +367,90 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (!tokenMatch || !durationMatch) {
       add('harmony', 'error', start, -1, `${harmonyBar.bar + 1}小節目がSongPlanの和声設計と一致しない`);
     }
+  }
+  if (piece.bars === 8 && piece.songPlan.progressionBars === 4) {
+    const first = piece.songPlan.harmony.slice(0, 4).map((bar) => bar.tokens.join('+')).join('|');
+    const second = piece.songPlan.harmony.slice(4, 8).map((bar) => bar.tokens.join('+')).join('|');
+    if (first === second) {
+      add('harmony', 'warning', bodyStart, -1, '8小節の前後半が同じ4小節進行の完全コピーになっている');
+    }
+  }
+  if (piece.bars === 16) {
+    const sectionSignatures = [0, 8].map((start) => piece.songPlan.harmony
+      .slice(start, start + 8).map((bar) => bar.tokens.join('+')).join('|'));
+    if (sectionSignatures[0] === sectionSignatures[1]) {
+      add('harmony', 'warning', bodyStart, -1, '16小節のA・Bが同じ8小節進行の完全コピーになっている');
+    }
+    if (piece.songPlan.progressionBars === 4) {
+      for (const start of [0, 8]) {
+        const first = piece.songPlan.harmony.slice(start, start + 4).map((bar) => bar.tokens.join('+')).join('|');
+        const second = piece.songPlan.harmony.slice(start + 4, start + 8).map((bar) => bar.tokens.join('+')).join('|');
+        if (first === second) {
+          add('harmony', 'warning', bodyStart + start * 4, -1, '8小節区間の前後半が同じ進行へ固定されている');
+        }
+      }
+    }
+  }
+  if (piece.bars === 40) {
+    const harmonySections = Array.from({ length: 5 }, (_, sectionIndex) => (
+      piece.songPlan.harmony
+        .slice(sectionIndex * 8, sectionIndex * 8 + 8)
+        .map((bar) => bar.tokens.join('+'))
+        .join('|')
+    ));
+    if (new Set(harmonySections).size < 4) {
+      add('harmony', 'warning', bodyStart, -1, '40小節の和声が複数セクションで完全コピーになっている');
+    }
+    const firstPhrases = Array.from({ length: 5 }, (_, sectionIndex) => (
+      piece.songPlan.harmony
+        .slice(sectionIndex * 8, sectionIndex * 8 + 4)
+        .map((bar) => bar.tokens.join('+'))
+        .join('|')
+    ));
+    if (piece.songPlan.progressionBars === 4 && new Set(firstPhrases).size < 3) {
+      add('harmony', 'warning', bodyStart, -1, '各セクションの冒頭4小節が同じ進行へ固定されている');
+    }
+    const rhythmVariants = piece.songPlan.form.sections.map((section) => section.rhythmVariant);
+    if (new Set(rhythmVariants).size < 3) {
+      add('form', 'warning', bodyStart, -1, '40小節の主旋律リズムが少数の型へ固定されている');
+    }
+    const externalMotifSources = piece.songPlan.form.sections
+      .slice(1)
+      .map((section) => section.motifSourceSection)
+      .filter((source) => source !== null);
+    if (externalMotifSources.length >= 3 && new Set(externalMotifSources).size === 1) {
+      add('form', 'warning', bodyStart, -1, '複数の展開区間がすべて同じモチーフ区間だけを参照している');
+    }
+    if (new Set(piece.songPlan.form.sections.map((section) => section.energy)).size < 3) {
+      add('form', 'warning', bodyStart, -1, '40小節のエネルギー設計に十分な起伏がない');
+    }
+  }
+  for (const section of piece.songPlan.form.sections) {
+    if (new Set(section.phraseRhythmVariants).size < 2) {
+      add('form', 'warning', bodyStart + section.startBar * 4, -1, `${section.id}の全フレーズが同じリズム型へ固定されている`);
+    }
+  }
+  const excessiveMelodicCopies = melodicSectionSimilarities(piece).filter((comparison) => (
+    comparison.similarPhrases >= 3 || comparison.average >= 0.88
+  ));
+  for (const comparison of excessiveMelodicCopies) {
+    const first = piece.songPlan.form.sections[comparison.firstSection]?.id ?? comparison.firstSection + 1;
+    const second = piece.songPlan.form.sections[comparison.secondSection]?.id ?? comparison.secondSection + 1;
+    add(
+      'melody',
+      'warning',
+      bodyStart + comparison.secondSection * 8 * 4,
+      -1,
+      `${first}と${second}の旋律が、完全一致ではないがリズムと輪郭の似たフレーズへ収束している`,
+    );
+  }
+  const climaxSection = piece.songPlan.form.sections.find((section) => (
+    piece.phrasePlan.climaxBar >= section.startBar
+    && piece.phrasePlan.climaxBar < section.startBar + section.bars
+  ));
+  const peakSectionEnergy = Math.max(...piece.songPlan.form.sections.map((section) => section.energy));
+  if (climaxSection && climaxSection.energy < peakSectionEnergy) {
+    add('form', 'warning', bodyStart + piece.phrasePlan.climaxBar * 4, -1, 'クライマックスが低エネルギー区間へ固定されている');
   }
   const textureSections = piece.arrangementPlan.sections;
   if (textureSections.length !== expectedSections) {
@@ -327,6 +463,9 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       section.counterDensity,
       section.ostinatoDensity,
       section.drum,
+      section.entrance,
+      section.exitFill,
+      section.ostinatoPeak ?? '-',
     ].join(':'));
     if (new Set(signatures).size < 2) {
       add('texture', 'warning', bodyStart, -1, '全セクションの編成が同一で、出し引きがない');
@@ -342,6 +481,20 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         'エコー・対旋律・分散和音が同一区間で足し算になっている',
       );
     }
+    const sectionStart = bodyStart + sectionIndex * (piece.bars === 40 ? 8 : piece.bars === 16 ? 8 : piece.bars) * 4;
+    const sectionEnd = sectionStart + (piece.bars === 40 || piece.bars === 16 ? 8 : piece.bars) * 4;
+    if (
+      section.counterDensity > 0
+      && !piece.counterMelody.some((note) => note.beat >= sectionStart && note.beat < sectionEnd)
+    ) {
+      add('texture', 'warning', sectionStart, -1, '副旋律を計画した区間に実音が生成されていない');
+    }
+    if (
+      section.ostinatoDensity > 0
+      && !piece.ostinato.some((note) => note.beat >= sectionStart && note.beat < sectionEnd)
+    ) {
+      add('texture', 'warning', sectionStart, -1, '分散和音を計画した区間に実音が生成されていない');
+    }
   });
   const deviceCoverage = [
     ['エコー', textureSections.filter((section) => section.echo).length],
@@ -354,6 +507,18 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     } else if (textureSections.length >= 5 && coverage > 3) {
       add('texture', 'warning', bodyStart, -1, `${label}の使用区間が多く、対比を弱めている`);
     }
+  }
+  if (
+    textureSections.length >= 5
+    && textureSections.slice(0, -1).every((section) => section.exitFill === 'full')
+  ) {
+    add('rhythm', 'warning', bodyStart, -1, '全セクション境界へ同じフルフィルが固定されている');
+  }
+  const ostinatoPeaks = textureSections
+    .filter((section) => section.ostinatoDensity > 0)
+    .map((section) => section.ostinatoPeak);
+  if (ostinatoPeaks.length > 1 && new Set(ostinatoPeaks).size === 1) {
+    add('texture', 'warning', bodyStart, -1, '分散和音の加速位置が全区間で同じ役割へ固定されている');
   }
   if (piece.arrangementPlan.bassRole === 'pedal' && piece.arrangementPlan.textureStrategy !== 'bassDrive') {
     add('texture', 'warning', bodyStart, -1, 'ペダル低音が低音主導以外の編成へ常設されている');
