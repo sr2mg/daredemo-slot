@@ -34,39 +34,54 @@ export const CHORDS: Record<string, ChordDef> = {
   I7: { root: 0, quality: '7', tones: [0, 4, 7, 10] },
   // 短調。大文字/小文字は主音から見た機能を明示し、keyRoot は常に主音として扱う。
   i: { root: 0, quality: 'm', tones: [0, 3, 7] },
+  i7: { root: 0, quality: 'm7', tones: [0, 3, 7, 10] },
   iiDim: { root: 2, quality: 'dim', tones: [2, 5, 8] },
   III: { root: 3, quality: '', tones: [3, 7, 10] },
+  III7m: { root: 3, quality: '7', tones: [3, 7, 10, 1] },
   iv: { root: 5, quality: 'm', tones: [5, 8, 0] },
+  iv7: { root: 5, quality: 'm7', tones: [5, 8, 0, 3] },
   v: { root: 7, quality: 'm', tones: [7, 10, 2] },
   V7m: { root: 7, quality: '7', tones: [7, 11, 2, 5] },
   VI: { root: 8, quality: '', tones: [8, 0, 3] },
+  VImaj7: { root: 8, quality: 'M7', tones: [8, 0, 3, 7] },
   VII: { root: 10, quality: '', tones: [10, 2, 5] },
+  VIIm7: { root: 10, quality: 'm7', tones: [10, 1, 5, 8] },
 };
 
 /** ローマ数字トークンを、フォーム設計で使う大まかな和声機能へ写す。 */
 export function harmonicFunctionForToken(token: string): HarmonicFunction {
-  if (['I', 'vi', 'vi7', 'iii', 'iii7', 'i', 'III'].includes(token)) return 'tonic';
-  if (['IV', 'IVM7', 'ii', 'ii7', 'iv', 'iiDim', 'VI'].includes(token)) return 'predominant';
-  if (['V', 'III7', 'I7', 'V7m', 'v', 'VII'].includes(token)) return 'dominant';
+  if (['I', 'vi', 'vi7', 'iii', 'iii7', 'i', 'i7', 'III'].includes(token)) return 'tonic';
+  if (['IV', 'IVM7', 'ii', 'ii7', 'iv', 'iv7', 'iiDim', 'VI', 'VImaj7', 'VIIm7'].includes(token)) return 'predominant';
+  if (['V', 'III7', 'I7', 'V7m', 'v', 'v7', 'VII', 'III7m'].includes(token)) return 'dominant';
   return 'colour';
 }
 
 /** 1 スロット選択肢 = その小節で鳴らすコード列（2 つなら半小節ずつ） */
 export type SlotOption = readonly string[];
 
-export interface ProgressionDef {
-  id: string;
-  name: string;
-  feel: string;
-  usage: string;
-  /** 選択できる調性。和風五音は major カタログを開放五度化して共有する。 */
-  tonality: 'major' | 'minor';
+export type ProgressionTonality = 'major' | 'minor';
+
+export interface ProgressionRealization {
   /** slots[小節] = 選択肢の配列 */
   slots: readonly (readonly SlotOption[])[];
   /** 定番の選び方（各小節のスロット index） */
   defaultChoice: readonly number[];
   /** ボタン・自動変化で抽選する、音楽的に確認済みの進行レシピ */
   variations: readonly (readonly number[])[];
+}
+
+export type ProgressionRealizationOverride = Pick<ProgressionRealization, 'slots'>
+  & Partial<Pick<ProgressionRealization, 'defaultChoice' | 'variations'>>;
+
+export interface ProgressionDef extends ProgressionRealization {
+  id: string;
+  name: string;
+  feel: string;
+  usage: string;
+  /** 基準となる調性。和風五音は major カタログを開放五度化して共有する。 */
+  tonality: ProgressionTonality;
+  /** 同じ進行原理を別の調性で鳴らすための、ローマ数字による実体。 */
+  realizations?: Partial<Record<ProgressionTonality, ProgressionRealizationOverride>>;
 }
 
 export const PROGRESSIONS: ProgressionDef[] = [
@@ -76,6 +91,12 @@ export const PROGRESSIONS: ProgressionDef[] = [
     feel: '明るく安定',
     usage: 'RB 向き',
     tonality: 'major',
+    // 安定→陰り→助走→帰結という役割を i→VI→iv→V7 へ移す。
+    realizations: {
+      minor: {
+        slots: [[['i']], [['VI'], ['V7m'], ['III']], [['iv'], ['VI'], ['iiDim']], [['V7m'], ['iv', 'V7m'], ['iv']]],
+      },
+    },
     slots: [[['I']], [['vi'], ['V'], ['iii']], [['IV'], ['vi'], ['ii']], [['V'], ['IV', 'V'], ['IV']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -91,6 +112,12 @@ export const PROGRESSIONS: ProgressionDef[] = [
     feel: '祝祭・完結感',
     usage: '単発ジングル向き（末尾 I で着地）',
     tonality: 'major',
+    // 短調でもファンファーレの明確な終止を失わないよう i→iv→V7→i とする。
+    realizations: {
+      minor: {
+        slots: [[['i']], [['iv'], ['iiDim']], [['V7m'], ['iv', 'V7m']], [['i'], ['V7m']]],
+      },
+    },
     slots: [[['I']], [['IV'], ['ii']], [['V'], ['IV', 'V']], [['I'], ['V']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -106,6 +133,17 @@ export const PROGRESSIONS: ProgressionDef[] = [
     feel: 'アニソン的疾走感・切なさ',
     usage: 'BB 向き',
     tonality: 'major',
+    // C長調の IV→V→vi→I は、相対短調Aでは VI→VII→i→III として同じ引力を保つ。
+    realizations: {
+      minor: {
+        slots: [
+          [['VI'], ['iv']],
+          [['VII'], ['v']],
+          [['i']],
+          [['III'], ['v'], ['VII'], ['i']],
+        ],
+      },
+    },
     // 1 小節目 = サブドミナント枠、2 小節目 = ドミナント枠、3 小節目 = Am 固定、4 小節目 = 自由枠
     slots: [
       [['IV'], ['ii']],
@@ -128,6 +166,12 @@ export const PROGRESSIONS: ProgressionDef[] = [
     feel: '疾走感・ドラマチック',
     usage: 'BPM170 と相性◎',
     tonality: 'major',
+    // vi→IV→V→I を短調の i→VI→VII→III として解釈する。
+    realizations: {
+      minor: {
+        slots: [[['i']], [['VI'], ['iv'], ['v']], [['VII'], ['VI', 'VII'], ['VI']], [['III'], ['VII']]],
+      },
+    },
     slots: [[['vi']], [['IV'], ['ii'], ['iii']], [['V'], ['IV', 'V'], ['IV']], [['I'], ['V']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -143,6 +187,21 @@ export const PROGRESSIONS: ProgressionDef[] = [
     feel: '壮大',
     usage: 'BB(8小節) 専用',
     tonality: 'major',
+    // カノンの下降感と8小節の輪郭を、自然短調＋終端の和声的短音階で保つ。
+    realizations: {
+      minor: {
+        slots: [
+          [['i']],
+          [['v']],
+          [['VI']],
+          [['III']],
+          [['iv']],
+          [['i'], ['VI']],
+          [['iv'], ['iiDim']],
+          [['V7m'], ['iv', 'V7m']],
+        ],
+      },
+    },
     slots: [[['I']], [['V']], [['vi']], [['iii']], [['IV']], [['I'], ['vi']], [['IV'], ['ii']], [['V'], ['IV', 'V']]],
     defaultChoice: [0, 0, 0, 0, 0, 0, 0, 0],
     variations: [
@@ -158,6 +217,12 @@ export const PROGRESSIONS: ProgressionDef[] = [
     feel: 'シティポップ・浮遊感',
     usage: 'AT 中/通常時向き',
     tonality: 'major',
+    // 相対短調では VImaj7→V7→i7。末尾の借用ii–VはVImaj7へ戻る色彩として残す。
+    realizations: {
+      minor: {
+        slots: [[['VImaj7'], ['iv7']], [['V7m'], ['v7']], [['i7']], [['VIIm7', 'III7m'], ['III7m']]],
+      },
+    },
     slots: [[['IVM7'], ['ii7']], [['III7'], ['iii7']], [['vi7']], [['v7', 'I7'], ['I7']]],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -211,6 +276,46 @@ export const PROGRESSIONS: ProgressionDef[] = [
     ],
   },
 ];
+
+const progressionRealizationCache = new WeakMap<
+  ProgressionDef,
+  Map<ProgressionTonality, ProgressionDef>
+>();
+
+/** 進行IDを保ったまま、指定調性用のローマ数字実体へ解決する。 */
+export function progressionForTonality(
+  progression: ProgressionDef,
+  tonality: ProgressionTonality,
+): ProgressionDef | null {
+  if (progression.tonality === tonality) return progression;
+  const override = progression.realizations?.[tonality];
+  if (!override) return null;
+
+  let byTonality = progressionRealizationCache.get(progression);
+  if (!byTonality) {
+    byTonality = new Map();
+    progressionRealizationCache.set(progression, byTonality);
+  }
+  const cached = byTonality.get(tonality);
+  if (cached) return cached;
+
+  const realized: ProgressionDef = {
+    ...progression,
+    tonality,
+    slots: override.slots,
+    defaultChoice: override.defaultChoice ?? progression.defaultChoice,
+    variations: override.variations ?? progression.variations,
+  };
+  byTonality.set(tonality, realized);
+  return realized;
+}
+
+export function progressionsForTonality(tonality: ProgressionTonality): ProgressionDef[] {
+  return PROGRESSIONS.flatMap((progression) => {
+    const realized = progressionForTonality(progression, tonality);
+    return realized ? [realized] : [];
+  });
+}
 
 export interface StyleDef {
   id: string;

@@ -12,7 +12,14 @@ import {
   variedChoiceFor,
 } from '../src/core/music/compose.js';
 import type { ComposeOptions } from '../src/core/music/compose.js';
-import { CHORDS, PROGRESSIONS, STYLES, YO_SCALE, chordName } from '../src/core/music/theory.js';
+import {
+  CHORDS,
+  PROGRESSIONS,
+  STYLES,
+  YO_SCALE,
+  chordName,
+  progressionsForTonality,
+} from '../src/core/music/theory.js';
 
 const base: ComposeOptions = {
   progressionId: 'royal-pop',
@@ -300,6 +307,63 @@ describe('compose', () => {
     expect(piece.barChordNames).toEqual(['F', 'G', 'Am', 'C']);
   });
 
+  it('長調由来の全進行は短調でも同じ進行IDのまま選べる', () => {
+    const minorIds = progressionsForTonality('minor').map((progression) => progression.id);
+    expect(minorIds).toEqual(expect.arrayContaining([
+      'royal-pop', 'fanfare', 'tanaka-manabe', 'komuro', 'canon', 'jttou',
+    ]));
+
+    const expectedChords: Record<string, string[]> = {
+      'royal-pop': ['Am', 'F', 'Dm', 'E7'],
+      fanfare: ['Am', 'Dm', 'E7', 'Am'],
+      'tanaka-manabe': ['F', 'G', 'Am', 'C'],
+      komuro: ['Am', 'F', 'G', 'C'],
+      jttou: ['FM7', 'E7', 'Am7', 'Gm7(3拍) C7(1拍)'],
+    };
+    for (const [progressionId, chords] of Object.entries(expectedChords)) {
+      const piece = compose({
+        ...base,
+        progressionId,
+        tonality: 'minor',
+        keyRoot: 9,
+      });
+      expect(piece.barChordNames, progressionId).toEqual(chords);
+      expect(piece.tonality).toBe('minor');
+      expect(validatePiece(piece), progressionId).toEqual([]);
+    }
+
+    const minorCanon = progressionsForTonality('minor').find((progression) => progression.id === 'canon')!;
+    const canon = compose({
+      ...base,
+      progressionId: 'canon',
+      tonality: 'minor',
+      keyRoot: 9,
+      bars: 8,
+      choice: defaultChoiceFor(minorCanon, 8),
+    });
+    expect(canon.barChordNames).toEqual(['Am', 'Em', 'F', 'C', 'Dm', 'Am', 'Dm', 'E7']);
+    expect(validatePiece(canon)).toEqual([]);
+  });
+
+  it('短調リアライゼーションは4/8/16小節へ展開しても生成検証を通る', () => {
+    for (const progressionId of ['royal-pop', 'fanfare', 'tanaka-manabe', 'komuro', 'canon', 'jttou']) {
+      for (const bars of [4, 8, 16] as const) {
+        if (progressionId === 'canon' && bars === 4) continue;
+        for (const seed of [1, 42]) {
+          const piece = compose({
+            ...base,
+            progressionId,
+            tonality: 'minor',
+            keyRoot: 9,
+            bars,
+            seed,
+          });
+          expect(validatePiece(piece), `${progressionId}/${bars}小節/seed=${seed}`).toEqual([]);
+        }
+      }
+    }
+  });
+
   it('短調ペダルはベースだけを保ち、既定和声をiだけへ固定しない', () => {
     const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
     expect(defaultChoiceFor(prog, 4)).toEqual([0, 0, 1, 2]);
@@ -374,7 +438,7 @@ describe('compose', () => {
         }
       }
     }
-  });
+  }, 15_000);
 
   it('8小節のコード変化は登録済みレシピ2つを組み、開始側も固定しない', () => {
     const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;

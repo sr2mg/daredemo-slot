@@ -6,10 +6,12 @@ import type {
 } from './compose.js';
 import type { SongPlan } from './song-plan.js';
 
+type SectionDevice = 'none' | 'echo' | 'counter1' | 'counter2' | 'arp1' | 'arp2';
+
 const section = (
   backingDensity: ArrangementSectionPlan['backingDensity'],
   drum: ArrangementSectionPlan['drum'],
-  device: 'none' | 'echo' | 'counter1' | 'counter2' | 'arp1' | 'arp2' = 'none',
+  device: SectionDevice = 'none',
 ): ArrangementSectionPlan => ({
   backingDensity,
   drum,
@@ -20,6 +22,18 @@ const section = (
   ostinatoDensity: device === 'arp1' ? 1 : device === 'arp2' ? 2 : 0,
   ostinatoPeak: null,
 });
+
+/** 帰還区間の前進感を、曲全体で選ばれたテクスチャ戦略の主役から導く。 */
+function returnDeviceFor(
+  textureStrategy: ArrangementPlan['textureStrategy'],
+  plan: SongPlan,
+): SectionDevice {
+  if (textureStrategy === 'counterDrive') return 'counter2';
+  if (textureStrategy === 'arpDrive') return plan.soundChip === 'opll' ? 'arp2' : 'counter2';
+  if (textureStrategy === 'bassDrive') return 'counter1';
+  if (textureStrategy === 'hybrid') return plan.soundChip === 'opll' ? 'arp2' : 'counter2';
+  return plan.soundChip === 'opll' ? 'echo' : 'counter1';
+}
 
 function withTransitions(
   source: readonly ArrangementSectionPlan[],
@@ -127,7 +141,7 @@ export function arrangementPlanFor(
       energies[a]! - energies[b]! || ((a + seed) % 5) - ((b + seed) % 5)
     ));
     const mainCount = 1 + ((seed >>> 11) & 1);
-    const applyDevice = (index: number, device: 'echo' | 'counter1' | 'counter2' | 'arp1' | 'arp2'): void => {
+    const applyDevice = (index: number, device: Exclude<SectionDevice, 'none'>): void => {
       sections[index] = section(sections[index]!.backingDensity, sections[index]!.drum, device);
     };
     if (textureStrategy === 'counterDrive') {
@@ -147,7 +161,37 @@ export function arrangementPlanFor(
     } else {
       applyDevice(rankedLow[0]!, ((seed >>> 12) & 1) === 0 ? 'counter1' : 'echo');
     }
+    const arrangementPolicy = songPlan?.compositionPolicy.arrangement;
+    const sectionIndexFor = (id: string | null | undefined): number => id && songPlan
+      ? songPlan.form.sections.findIndex((candidate) => candidate.id === id)
+      : -1;
+    const absenceIndex = sectionIndexFor(arrangementPolicy?.absenceSection);
+    const returnIndex = sectionIndexFor(arrangementPolicy?.returnSection);
+    const finaleIndex = sectionIndexFor(arrangementPolicy?.finaleSection);
+    if (songPlan && arrangementPolicy?.emphasizeReturn) {
+      if (absenceIndex >= 0) {
+        const absenceDevice: SectionDevice = songPlan.soundChip === 'opll'
+          && (textureStrategy === 'classic' || textureStrategy === 'arpDrive')
+          ? 'echo'
+          : 'none';
+        sections[absenceIndex] = section('sparse', 'breakdown', absenceDevice);
+      }
+      if (returnIndex >= 0) {
+        sections[returnIndex] = section('full', 'sectionB', returnDeviceFor(textureStrategy, songPlan));
+      }
+      if (finaleIndex >= 0) {
+        sections[finaleIndex] = {
+          ...sections[finaleIndex]!,
+          backingDensity: 'full',
+          drum: 'base',
+        };
+      }
+    }
     const plannedSections = withTransitions(sections, energies, seed);
+    if (arrangementPolicy?.emphasizeReturn) {
+      if (absenceIndex >= 0) plannedSections[absenceIndex]!.exitFill = 'full';
+      if (returnIndex >= 0) plannedSections[returnIndex]!.entrance = 'cymbal';
+    }
     return {
       arc: 'hookFirst', counterRole, textureStrategy, bassRole,
       sectionA: plannedSections[0]!, sectionB: plannedSections[1]!, sections: plannedSections,

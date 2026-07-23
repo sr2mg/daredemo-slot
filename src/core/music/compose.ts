@@ -15,10 +15,11 @@ import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import {
   CHORDS, MAJOR_SCALE, NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
-  harmonicFunctionForToken,
+  harmonicFunctionForToken, progressionForTonality,
 } from './theory.js';
 import type { HarmonicFunction, StyleDef } from './theory.js';
 import { arrangementPlanFor } from './arrangement.js';
+import type { CompositionStrategy } from './composition-strategy.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import { grooveBeat } from './timing.js';
 import {
@@ -32,6 +33,18 @@ import type { MotifTransform, SongPlan } from './song-plan.js';
 export { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
 export { defaultChoiceFor, hasVariedChoiceFor, variedChoiceFor } from './harmony-plan.js';
 export type { ChoiceVariationOptions } from './harmony-plan.js';
+export {
+  COMPOSITION_STRATEGIES,
+  compositionStrategyInfo,
+  resolveCompositionPolicy,
+} from './composition-strategy.js';
+export type {
+  CompositionPolicy,
+  CompositionPremise,
+  CompositionStrategy,
+  CompositionStrategyInfo,
+  StrategySectionId,
+} from './composition-strategy.js';
 export { grooveBeat } from './timing.js';
 export {
   createSongPlan,
@@ -189,6 +202,8 @@ export interface ComposeOptions {
   seed: number;
   /** 全小節ぶんのスロット選択。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
   choice?: readonly number[];
+  /** ブラインド比較用の上位戦略。省略時は既存と同じ current。 */
+  compositionStrategy?: CompositionStrategy;
   /**
    * OPLL 音色の上書き（0=ユーザー音色、1〜15=内蔵音色）。省略時はスタイル既定。
    * compose() 自体は使わない編曲層のパラメータだが、曲の保存単位・BGM キャッシュの
@@ -1025,21 +1040,22 @@ function realizeIntro(
 }
 
 export function compose(opts: ComposeOptions): Piece {
-  const prog = PROGRESSIONS.find((p) => p.id === opts.progressionId);
-  if (!prog) throw new Error(`未知の進行: ${opts.progressionId}`);
+  const progression = PROGRESSIONS.find((p) => p.id === opts.progressionId);
+  if (!progression) throw new Error(`未知の進行: ${opts.progressionId}`);
   const style = STYLES.find((s) => s.id === opts.styleId);
   if (!style) throw new Error(`未知のスタイル: ${opts.styleId}`);
+  const tonality = resolveTonality(opts);
+  const prog = progressionForTonality(progression, tonality);
+  if (!prog) {
+    throw new Error(`${tonality === 'minor' ? '短調' : '長調'}では進行「${progression.name}」を使用できません`);
+  }
   const progBars = prog.slots.length;
   if (progBars > opts.bars) throw new Error(`進行(${progBars}小節)が尺(${opts.bars}小節)より長い`);
 
   const rng = new Xoshiro128(opts.seed >>> 0);
   const keyRoot = ((opts.keyRoot % 12) + 12) % 12;
-  const tonality = resolveTonality(opts);
   const melodicLanguage = resolveMelodicLanguage(opts);
   const melodyMode = legacyMelodyMode(tonality, melodicLanguage);
-  if (prog.tonality !== tonality) {
-    throw new Error(`${tonality === 'minor' ? '短調' : '長調'}では進行「${prog.name}」を使用できません`);
-  }
   const japanesePlan = melodicLanguage === 'japanese'
     ? japanesePlanFor(keyRoot, opts.japaneseScale ?? 'auto', opts.seed)
     : null;
@@ -1060,6 +1076,7 @@ export function compose(opts: ComposeOptions): Piece {
     style,
     choice,
     intro: opts.intro !== false,
+    ...(opts.compositionStrategy ? { compositionStrategy: opts.compositionStrategy } : {}),
   });
   const arrangementPlan = arrangementPlanFor(opts.bars, opts.seed, opts.progressionId, songPlan);
 
@@ -1131,6 +1148,12 @@ export function compose(opts: ComposeOptions): Piece {
 
   // --- 主旋律（PhrasePlanの目標音へ向かうモチーフ展開） ---
   const melody: NoteEvent[] = [];
+  const externalMotifTransformStates = new Map<string, {
+    transpose: number;
+    sourceAnchor: number;
+    targetAnchor: number;
+    transform: MotifTransform;
+  }>();
   let prev = startMidi;
   let prevBeat = 0;
   for (const barPlan of phrasePlan.bars) {
@@ -1143,16 +1166,21 @@ export function compose(opts: ComposeOptions): Piece {
       : baseCenter + barPlan.energy - 2;
     const onsets: number[] = [];
     barPlan.rhythm.forEach((on, step) => on && onsets.push(step));
-    let motifTranspose: number | null = null;
-    let motifSourceAnchor: number | null = null;
-    let motifTargetAnchor: number | null = null;
     const sectionDesign = songPlan.form.sections.find((section) => section.id === barPlan.section)!;
     const phraseGesture = phraseGestures[sectionDesign.index]!;
     const borrowsExternalMotif = barPlan.motifSourceBar < sectionDesign.startBar
       || barPlan.motifSourceBar >= sectionDesign.startBar + sectionDesign.bars;
-    let activeMotifTransform: MotifTransform = borrowsExternalMotif
-      ? sectionDesign.motifTransform
-      : 'transpose';
+    const externalTransformKey = borrowsExternalMotif
+      ? `${sectionDesign.id}:${Math.floor(barInSection / 2)}`
+      : null;
+    const persistedTransform = externalTransformKey
+      ? externalMotifTransformStates.get(externalTransformKey)
+      : undefined;
+    let motifTranspose: number | null = persistedTransform?.transpose ?? null;
+    let motifSourceAnchor: number | null = persistedTransform?.sourceAnchor ?? null;
+    let motifTargetAnchor: number | null = persistedTransform?.targetAnchor ?? null;
+    let activeMotifTransform: MotifTransform = persistedTransform?.transform
+      ?? (borrowsExternalMotif ? sectionDesign.motifTransform : 'transpose');
 
     for (let index = 0; index < onsets.length; index++) {
       const step = onsets[index]!;
@@ -1226,7 +1254,27 @@ export function compose(opts: ComposeOptions): Piece {
             motifTranspose = midi - source.midi;
             motifSourceAnchor = source.midi;
             motifTargetAnchor = midi;
-            if (borrowsExternalMotif && motifTranspose === 0) {
+            const returnRegister = songPlan.compositionPolicy.melody.returnRegister;
+            const appliesReturnRegister = borrowsExternalMotif
+              && returnRegister !== null
+              && sectionDesign.id === returnRegister.to
+              && sectionDesign.motifSourceSection === returnRegister.from;
+            if (appliesReturnRegister) {
+              const lower = returnRegister.offset < 0
+                ? MELODY_LO
+                : Math.min(MELODY_HI, source.midi + 1);
+              const upper = returnRegister.offset < 0
+                ? Math.max(MELODY_LO, source.midi - 1)
+                : MELODY_HI;
+              const displacedAnchor = nearestWithPc(
+                source.midi + returnRegister.offset,
+                structuralPcs,
+                lower,
+                upper,
+              );
+              motifTargetAnchor = displacedAnchor;
+              motifTranspose = displacedAnchor - source.midi;
+            } else if (borrowsExternalMotif && motifTranspose === 0) {
               // 同じ和声上では移調も反転軸も同じ音に留まりやすい。別コードトーンへ核をずらし、
               // それも不可能な移調だけは輪郭反転へ切り替えて、名前だけの変奏を避ける。
               const direction = ((opts.seed >>> ((sectionDesign.index + 3) % 24)) & 1) === 0 ? -1 : 1;
@@ -1237,6 +1285,14 @@ export function compose(opts: ComposeOptions): Piece {
               } else if (activeMotifTransform === 'transpose') {
                 activeMotifTransform = 'invert';
               }
+            }
+            if (externalTransformKey && motifTranspose !== null) {
+              externalMotifTransformStates.set(externalTransformKey, {
+                transpose: motifTranspose,
+                sourceAnchor: motifSourceAnchor,
+                targetAnchor: motifTargetAnchor,
+                transform: activeMotifTransform,
+              });
             }
           }
           const allowedPcs = strong ? structuralPcs : scalePcs;

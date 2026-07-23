@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   compose,
+  COMPOSITION_STRATEGIES,
+  compositionStrategyInfo,
   ARRANGEMENT_ARC_LABELS,
   COUNTER_ROLE_LABELS,
   TEXTURE_STRATEGY_LABELS,
@@ -20,6 +22,7 @@ import {
 import type {
   ComposeBars,
   CompositionRepair,
+  CompositionStrategy,
   ComposeOptions,
   DiagnosticCategory,
   GrooveFeel,
@@ -31,7 +34,30 @@ import type {
   Tonality,
   VoiceOverride,
 } from '../core/music/compose.js';
-import { KEYS, PROGRESSIONS, STYLES, chordName, noteName } from '../core/music/theory.js';
+import {
+  createBlindStudyTrial,
+  summarizeBlindStudyVotes,
+} from '../core/music/blind-study.js';
+import type {
+  BlindCandidateId,
+  BlindStudyTrial,
+  BlindStudyVote,
+} from '../core/music/blind-study.js';
+import {
+  COMPOSITION_EXPERIMENTS,
+  COMPOSITION_EXPERIMENT_STATUS_LABELS,
+  COMPOSITION_HYPOTHESES,
+  COMPOSITION_HYPOTHESIS_STATUS_LABELS,
+} from '../core/music/composition-research.js';
+import {
+  KEYS,
+  PROGRESSIONS,
+  STYLES,
+  chordName,
+  noteName,
+  progressionForTonality,
+  progressionsForTonality,
+} from '../core/music/theory.js';
 import {
   DEFAULT_ASSIGN,
   loadAssign,
@@ -84,6 +110,12 @@ const STRUCTURAL_STATUS_LABELS = {
   error: '要修正',
 } as const;
 
+const COMPOSITION_RESEARCH_COUNTS = {
+  tested: COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'tested').length,
+  partiallyTested: COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'partiallyTested').length,
+  untested: COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'untested').length,
+} as const;
+
 /** 音色を上書きできる旋律パート（リズム5音は OPLL リズムモード固定） */
 const VOICE_PARTS: readonly { part: keyof VoiceOverride; label: string }[] = [
   { part: 'lead', label: 'リード' },
@@ -124,6 +156,23 @@ function songSummary(options: ComposeOptions): string {
 
 /** 作曲フォームの永続化（曲リストとは別に、作業中の設定そのものを覚える） */
 const FORM_KEY = 'daredemo.bgmComposer.form.v1';
+const BLIND_VOTES_KEY = 'daredemo.bgmComposer.blindStudy.v1';
+
+function isBlindStudyVote(value: unknown): value is BlindStudyVote {
+  if (value === null || typeof value !== 'object') return false;
+  const vote = value as Record<string, unknown>;
+  return typeof vote.trialId === 'string'
+    && ['current', 'memoryArc', 'premiseArc'].includes(String(vote.selected))
+    && typeof vote.createdAt === 'number';
+}
+
+function loadBlindStudyVotes(): BlindStudyVote[] {
+  return loadStored<BlindStudyVote[]>(
+    BLIND_VOTES_KEY,
+    [],
+    (value): value is BlindStudyVote[] => Array.isArray(value) && value.every(isBlindStudyVote),
+  );
+}
 
 interface ComposerForm {
   bars: ComposeBars;
@@ -163,11 +212,11 @@ function loadComposerForm(): ComposerForm {
   const melodicLanguage: MelodicLanguage = raw.melodicLanguage === 'japanese'
     ? 'japanese'
     : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
-  const progId =
-    typeof raw.progId === 'string'
-      && PROGRESSIONS.some((p) => p.id === raw.progId && p.slots.length <= bars && p.tonality === tonality)
-      ? raw.progId
-      : tonality === 'minor' ? 'minor-pedal' : 'royal-pop';
+  const availableProgressions = progressionsForTonality(tonality).filter((p) => p.slots.length <= bars);
+  const initialProgression = typeof raw.progId === 'string'
+    ? availableProgressions.find((p) => p.id === raw.progId) ?? availableProgressions[0]!
+    : availableProgressions[0]!;
+  const progId = initialProgression.id;
   const voices: VoiceOverride = {};
   if (raw.voices !== null && typeof raw.voices === 'object') {
     for (const part of ['lead', 'backing', 'bass', 'counter', 'ostinato'] as const) {
@@ -203,9 +252,15 @@ function loadComposerForm(): ComposerForm {
         : 2,
     },
     choice:
-      Array.isArray(raw.choice) && raw.choice.every((c) => Number.isInteger(c) && c >= 0)
+      Array.isArray(raw.choice)
+        && raw.choice.length >= bars
+        && raw.choice.every((c, bar) => (
+          Number.isInteger(c)
+          && c >= 0
+          && c < initialProgression.slots[bar % initialProgression.slots.length]!.length
+        ))
         ? (raw.choice as number[])
-        : defaultChoiceFor(PROGRESSIONS.find((p) => p.id === progId)!, bars),
+        : defaultChoiceFor(initialProgression, bars),
     autoVary: raw.autoVary !== false,
     intro: raw.intro !== false,
     seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
@@ -247,6 +302,13 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [songName, setSongName] = useState('');
   /** OPLL レンダリングの進捗（0..1）。null = レンダリング中でない */
   const [progress, setProgress] = useState<number | null>(null);
+  const [blindTrial, setBlindTrial] = useState<BlindStudyTrial | null>(null);
+  const [blindListened, setBlindListened] = useState<BlindCandidateId[]>([]);
+  const [blindSelection, setBlindSelection] = useState<BlindCandidateId | null>(null);
+  const [blindRevealed, setBlindRevealed] = useState(false);
+  const [blindPlaying, setBlindPlaying] = useState<BlindCandidateId | null>(null);
+  const [blindVotes, setBlindVotes] = useState<BlindStudyVote[]>(loadBlindStudyVotes);
+  const blindVoteSummary = useMemo(() => summarizeBlindStudyVotes(blindVotes), [blindVotes]);
 
   useEffect(() => {
     player.setBgmVolume(volume / 100);
@@ -264,24 +326,24 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
-  // 尺と調性に合う進行だけを選ばせる。旋律語法を変えても進行は保持する。
+  // 尺と調性に合う進行実体を選ばせる。同じ進行IDに短調版があれば名前を消さず保持する。
   const progs = useMemo(
-    () => PROGRESSIONS.filter((p) => p.slots.length <= bars && p.tonality === tonality),
+    () => progressionsForTonality(tonality).filter((p) => p.slots.length <= bars),
     [bars, tonality],
   );
   const prog = progs.find((p) => p.id === progId) ?? progs[0]!;
   const canVaryChords = useMemo(() => hasVariedChoiceFor(prog, bars, choice), [bars, choice, prog]);
 
-  const resetChoice = (nextProgId: string, nextBars: ComposeBars) => {
-    const p = PROGRESSIONS.find((q) => q.id === nextProgId)!;
+  const resetChoice = (nextProgId: string, nextBars: ComposeBars, nextTonality = tonality) => {
+    const source = PROGRESSIONS.find((q) => q.id === nextProgId)!;
+    const p = progressionForTonality(source, nextTonality)!;
     setChoice(defaultChoiceFor(p, nextBars));
     setAutoVary(true);
   };
 
   const selectBars = (next: ComposeBars) => {
-    const nextProgId = PROGRESSIONS.find((p) => p.id === prog.id && p.slots.length <= next && p.tonality === tonality)
-      ? prog.id
-      : PROGRESSIONS.filter((p) => p.slots.length <= next && p.tonality === tonality)[0]!.id;
+    const available = progressionsForTonality(tonality).filter((p) => p.slots.length <= next);
+    const nextProgId = available.some((p) => p.id === prog.id) ? prog.id : available[0]!.id;
     setBars(next);
     setProgId(nextProgId);
     resetChoice(nextProgId, next);
@@ -295,6 +357,40 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const stop = () => {
     player.stopBgm();
     setPlaying(false);
+    setBlindPlaying(null);
+  };
+
+  const optionsFor = (
+    nextSeed: number,
+    targetBars: ComposeBars,
+    targetChoice: readonly number[],
+    compositionStrategy?: CompositionStrategy,
+  ): ComposeOptions => {
+    // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
+    const picked = Object.fromEntries(
+      VOICE_PARTS.filter(({ part }) => voices[part] !== undefined).map(({ part }) => [part, voices[part]]),
+    ) as VoiceOverride;
+    return {
+      progressionId: prog.id,
+      styleId,
+      keyRoot,
+      bpm,
+      bars: targetBars,
+      seed: nextSeed,
+      choice: [...targetChoice],
+      soundChip,
+      ...(intro ? {} : { intro: false }),
+      ...(tonality === 'minor' ? { tonality } : {}),
+      ...(melodicLanguage === 'japanese' ? {
+        melodicLanguage,
+        ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
+      } : {}),
+      ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
+      ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
+      ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
+      ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
+      ...(compositionStrategy ? { compositionStrategy } : {}),
+    };
   };
 
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
@@ -306,6 +402,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       setPiece(p);
       setLastOpts(opts);
       setPlaying(false);
+      setBlindPlaying(null);
       if (!player.enabled) return;
       const def = arrangeComposedBgm(p, opts);
       setProgress(0);
@@ -322,36 +419,78 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   };
 
   const composeAndPlay = (nextSeed: number, forceChordVariation = false) => {
-    // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
-    const picked = Object.fromEntries(
-      VOICE_PARTS.filter(({ part }) => voices[part] !== undefined).map(({ part }) => [part, voices[part]]),
-    ) as VoiceOverride;
     const nextChoice = forceChordVariation
       ? variedChoiceFor(prog, bars, nextSeed, { chancePercent: 100, currentChoice: choice })
       : autoVary
         ? variedChoiceFor(prog, bars, nextSeed)
         : [...choice];
     if (forceChordVariation || autoVary) setChoice(nextChoice);
-    void playOptions({
-      progressionId: prog.id,
-      styleId,
-      keyRoot,
-      bpm,
-      bars,
-      seed: nextSeed,
-      choice: nextChoice,
-      soundChip,
-      ...(intro ? {} : { intro: false }),
-      ...(tonality === 'minor' ? { tonality } : {}),
-      ...(melodicLanguage === 'japanese' ? {
-        melodicLanguage,
-        ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
-      } : {}),
-      ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
-      ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
-      ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
-      ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
-    });
+    void playOptions(optionsFor(nextSeed, bars, nextChoice));
+  };
+
+  const startBlindStudy = () => {
+    try {
+      stop();
+      const nextSeed = newSeed();
+      const nextChoice = variedChoiceFor(prog, 40, nextSeed);
+      const baseOptions = optionsFor(nextSeed, 40, nextChoice);
+      const trial = createBlindStudyTrial(
+        `t${Date.now().toString(36)}${nextSeed.toString(36)}`,
+        baseOptions,
+        nextSeed ^ 0x424c_494e,
+      );
+      // 音声レンダリング前に3条件とも構成可能か検証し、途中で一候補だけ失敗する状態を防ぐ。
+      trial.candidates.forEach((candidate) => compose(candidate.options));
+      setBlindTrial(trial);
+      setBlindListened([]);
+      setBlindSelection(null);
+      setBlindRevealed(false);
+      setBlindPlaying(null);
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const playBlindCandidate = async (candidateId: BlindCandidateId) => {
+    const candidate = blindTrial?.candidates.find((item) => item.id === candidateId);
+    if (!candidate) return;
+    try {
+      setError(player.enabled ? '' : '「音」が OFF のため比較試聴できません（このタブ上部で ON にできます）');
+      if (!player.enabled) return;
+      setPlaying(false);
+      setBlindPlaying(null);
+      const candidatePiece = compose(candidate.options);
+      const def = arrangeComposedBgm(candidatePiece, candidate.options);
+      setProgress(0);
+      const result = await player.playComposedBgm(JSON.stringify(candidate.options), def, 0, {
+        loop: false,
+        onProgress: setProgress,
+      });
+      setProgress(null);
+      if (result === 'played') {
+        setBlindPlaying(candidateId);
+        setBlindListened((listened) => listened.includes(candidateId) ? listened : [...listened, candidateId]);
+      }
+    } catch (e) {
+      setProgress(null);
+      setBlindPlaying(null);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const revealBlindStudy = () => {
+    if (!blindTrial || !blindSelection || blindListened.length < 3 || blindRevealed) return;
+    const selected = blindTrial.candidates.find((candidate) => candidate.id === blindSelection);
+    if (!selected) return;
+    stop();
+    const nextVotes = [
+      ...blindVotes,
+      { trialId: blindTrial.id, selected: selected.strategy, createdAt: Date.now() },
+    ];
+    setBlindVotes(nextVotes);
+    saveStored(BLIND_VOTES_KEY, nextVotes);
+    setBlindRevealed(true);
   };
 
   const saveSong = () => {
@@ -364,10 +503,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   };
 
   const selectTonality = (nextTonality: Tonality) => {
-    const nextProg = PROGRESSIONS.find((p) => p.tonality === nextTonality && p.slots.length <= bars)!;
+    const available = progressionsForTonality(nextTonality).filter((p) => p.slots.length <= bars);
+    const nextProg = available.find((p) => p.id === prog.id) ?? available[0]!;
     setTonality(nextTonality);
     setProgId(nextProg.id);
-    resetChoice(nextProg.id, bars);
+    resetChoice(nextProg.id, bars, nextTonality);
   };
 
   const applyRepair = (repair: CompositionRepair) => {
@@ -884,6 +1024,200 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             {volume}
           </label>
         </div>
+
+        <section className="blind-study" data-testid="blind-study">
+          <div className="blind-study-head">
+            <div>
+              <h3>3条件ブラインド比較</h3>
+              <p>
+                現在の進行・スタイル・キー・BPM・音色から40小節を生成します。
+                3候補はシードと進行語彙を共有し、フォーム・和声・旋律・編成を導く作曲戦略だけが異なります。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={startBlindStudy}
+              disabled={progress !== null}
+              data-testid="blind-start"
+            >
+              {blindTrial ? '↻ 新しい比較を作る' : '⚗ 比較を作る'}
+            </button>
+          </div>
+
+          {blindTrial ? (
+            <>
+              <div className="blind-candidates">
+                {blindTrial.candidates.map((candidate) => {
+                  const listened = blindListened.includes(candidate.id);
+                  const selected = blindSelection === candidate.id;
+                  const strategy = compositionStrategyInfo(candidate.strategy);
+                  return (
+                    <article
+                      key={candidate.id}
+                      className={`blind-candidate${selected ? ' selected' : ''}${blindPlaying === candidate.id ? ' playing' : ''}`}
+                      data-testid={`blind-candidate-${candidate.id}`}
+                    >
+                      <div className="blind-candidate-title">
+                        <span>候補</span>
+                        <strong>{candidate.id}</strong>
+                        <small>{listened ? '試聴済み' : '未試聴'}</small>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void playBlindCandidate(candidate.id)}
+                        disabled={progress !== null}
+                        data-testid={`blind-play-${candidate.id}`}
+                      >
+                        {blindPlaying === candidate.id ? '▶ 再生中' : listened ? '▶ もう一度聴く' : '▶ 試聴する'}
+                      </button>
+                      <label className="blind-pick">
+                        <input
+                          type="radio"
+                          name="blind-favorite"
+                          value={candidate.id}
+                          checked={selected}
+                          disabled={blindRevealed}
+                          onChange={() => setBlindSelection(candidate.id)}
+                          data-testid={`blind-pick-${candidate.id}`}
+                        />
+                        これが一番よい
+                      </label>
+                      {blindRevealed && (
+                        <div className="blind-reveal" data-testid={`blind-reveal-${candidate.id}`}>
+                          <b>条件{strategy.condition}: {strategy.label}</b>
+                          <span>{strategy.description}</span>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="blind-study-actions">
+                <button
+                  type="button"
+                  onClick={revealBlindStudy}
+                  disabled={blindRevealed || blindListened.length < 3 || blindSelection === null || progress !== null}
+                  data-testid="blind-reveal"
+                >
+                  結果を見る
+                </button>
+                <button type="button" onClick={stop} disabled={blindPlaying === null}>
+                  ■ 停止
+                </button>
+                {!blindRevealed && (
+                  <span className="blind-progress-copy">
+                    {blindListened.length}/3 試聴済み
+                    {blindListened.length === 3 && blindSelection === null ? ' — 一番よい候補を選んでください' : ''}
+                  </span>
+                )}
+              </div>
+
+              {blindRevealed && blindSelection && (
+                <div className="blind-result" data-testid="blind-result">
+                  <p>
+                    今回選んだのは <strong>候補{blindSelection}</strong> — {' '}
+                    {(() => {
+                      const selected = blindTrial.candidates.find((candidate) => candidate.id === blindSelection)!;
+                      const strategy = compositionStrategyInfo(selected.strategy);
+                      return `条件${strategy.condition}「${strategy.label}」`;
+                    })()}
+                  </p>
+                  <div className="blind-totals" aria-label={`累計${blindVotes.length}試行`}>
+                    <span className="blind-total-label">累計 {blindVotes.length} 試行</span>
+                    {COMPOSITION_STRATEGIES.map((strategy) => (
+                      <span key={strategy.id}>
+                        条件{strategy.condition} {strategy.label}: <b>{blindVoteSummary[strategy.id]}</b>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="blind-empty">
+              条件名と並び順は結果を見るまで表示されません。3候補をすべて聴くと投票できます。
+            </p>
+          )}
+
+          <details className="composition-research" data-testid="composition-research">
+            <summary>
+              <span>作曲仮説と検証履歴</span>
+              <small>
+                検証済み {COMPOSITION_RESEARCH_COUNTS.tested} ／
+                一部検証 {COMPOSITION_RESEARCH_COUNTS.partiallyTested} ／
+                未検証 {COMPOSITION_RESEARCH_COUNTS.untested}
+              </small>
+            </summary>
+            <div className="composition-research-body">
+              <p className="composition-research-intro">
+                比較で分かったことと、まだ比較できていない仮説を同じ研究ログで管理します。
+                新しい条件は、ここに仮説と比較方法を書いてから追加します。
+              </p>
+
+              <section className="composition-experiment-history" aria-labelledby="composition-experiment-title">
+                <h4 id="composition-experiment-title">今までに検証したことと結果</h4>
+                {COMPOSITION_EXPERIMENTS.map((experiment, index) => (
+                  <article key={experiment.id} className="composition-experiment" data-testid={`composition-experiment-${experiment.id}`}>
+                    <header>
+                      <div>
+                        <small>{index === COMPOSITION_EXPERIMENTS.length - 1 ? '直近の検証' : experiment.id}</small>
+                        <h5>{experiment.title}</h5>
+                      </div>
+                      <span className={`research-status experiment-${experiment.status}`}>
+                        {COMPOSITION_EXPERIMENT_STATUS_LABELS[experiment.status]}
+                      </span>
+                    </header>
+                    <p><b>問い:</b> {experiment.question}</p>
+                    <div className="composition-condition-list" aria-label="比較条件">
+                      {experiment.conditions.map((condition) => <span key={condition}>{condition}</span>)}
+                    </div>
+                    <p className="composition-experiment-result"><b>結果:</b> {experiment.result}</p>
+                    <p><b>暫定結論:</b> {experiment.conclusion}</p>
+                    <details className="composition-limitations">
+                      <summary>この結果でまだ言えないこと</summary>
+                      <ul>
+                        {experiment.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
+                      </ul>
+                    </details>
+                  </article>
+                ))}
+              </section>
+
+              <section className="composition-hypothesis-section" aria-labelledby="composition-hypothesis-title">
+                <h4 id="composition-hypothesis-title">仮説リスト</h4>
+                <p>未検証のものを順次、同じ素材を使ったブラインド比較へ入れていきます。</p>
+                <div className="composition-hypothesis-list">
+                  {COMPOSITION_HYPOTHESES.map((hypothesis) => (
+                    <details
+                      key={hypothesis.id}
+                      className={`composition-hypothesis hypothesis-${hypothesis.status}`}
+                      data-testid={`composition-hypothesis-${hypothesis.id}`}
+                    >
+                      <summary>
+                        <span>
+                          <small>{hypothesis.id}</small>
+                          {hypothesis.title}
+                        </span>
+                        <b className={`research-status hypothesis-${hypothesis.status}`}>
+                          {COMPOSITION_HYPOTHESIS_STATUS_LABELS[hypothesis.status]}
+                        </b>
+                      </summary>
+                      <div className="composition-hypothesis-detail">
+                        <p><b>仮説:</b> {hypothesis.proposition}</p>
+                        <p><b>現在の判断:</b> {hypothesis.assessment}</p>
+                        {hypothesis.experimentIds.length > 0 && (
+                          <p><b>根拠:</b> {hypothesis.experimentIds.join('、')}</p>
+                        )}
+                        <p><b>次の比較:</b> {hypothesis.nextComparison}</p>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </details>
+        </section>
 
         {progress !== null && (
           <p className="panel-note" data-testid="st-progress">
