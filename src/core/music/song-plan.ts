@@ -9,12 +9,20 @@ import type {
   PhraseSection,
   Tonality,
 } from './compose.js';
+import { resolveCompositionPolicy } from './composition-strategy.js';
+import type {
+  CompositionPolicy,
+  CompositionPremise,
+  CompositionStrategy,
+  StrategySectionId,
+} from './composition-strategy.js';
 import { harmonicFunctionForToken } from './theory.js';
 import type { HarmonicFunction, ProgressionDef, StyleDef } from './theory.js';
 
 export type HarmonicGoal = 'establish' | 'continue' | 'depart' | 'resolve' | 'turnaround';
 export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale';
 export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast';
+export type { CompositionPremise } from './composition-strategy.js';
 export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
 export type IntroLeadGesture =
   | 'motifFragment'
@@ -84,6 +92,8 @@ export interface HarmonyBarPlan {
   tokens: readonly string[];
   /** tokens と同じ順。コード変化位置はフレーズ目的とコード機能から決める。 */
   durations: readonly number[];
+  /** 上位戦略がこの小節の和声選択へ与えた意味。 */
+  strategyRole: 'base' | 'absence' | 'return';
   entryFunction: HarmonicFunction;
   exitFunction: HarmonicFunction;
   cadence: CadenceType | null;
@@ -98,6 +108,12 @@ export interface SongFormPlan {
 
 /** 各声部を生成する前に確定する、曲全体の単一の設計図。 */
 export interface SongPlan {
+  /** ブラインド比較用の上位戦略。未指定の保存曲は current として計画する。 */
+  compositionStrategy: CompositionStrategy;
+  /** 戦略名を各層が再解釈しないための、曲全体で共有する実効ポリシー。 */
+  compositionPolicy: CompositionPolicy;
+  /** 条件3で各声部が共有する「前進する表層／帰りたがる内側」という命題。 */
+  premise: CompositionPremise | null;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
   grooveFeel: GrooveFeel;
@@ -153,12 +169,17 @@ function sectionRoleFor(index: number, count: number): SectionRole {
   return (['hook', 'development', 'relief', 'return', 'finale'] as const)[index]!;
 }
 
-function sectionEnergiesFor(count: number, seed: number): readonly number[] {
+function sectionEnergiesFor(
+  count: number,
+  seed: number,
+  policy: CompositionPolicy,
+): readonly number[] {
   if (count === 1) return [3];
   if (count === 2) {
     const contrast = (seed >>> 1) % 3;
     return contrast === 0 ? [2, 4] : contrast === 1 ? [4, 2] : [3, 3];
   }
+  if (policy.surface.sectionEnergies?.length === count) return policy.surface.sectionEnergies;
   const arcs = [
     [4, 3, 2, 4, 5], // 谷を経てフィナーレへ上げる
     [3, 4, 2, 5, 4], // Dの回帰を頂点にする
@@ -168,7 +189,12 @@ function sectionEnergiesFor(count: number, seed: number): readonly number[] {
   return arcs[(seed >>> 2) % arcs.length]!;
 }
 
-function sectionMotifPlanFor(index: number, count: number, seed: number): Pick<
+function sectionMotifPlanFor(
+  index: number,
+  count: number,
+  seed: number,
+  policy: CompositionPolicy,
+): Pick<
   SongSectionPlan,
   | 'rhythmVariant'
   | 'phraseRhythmVariants'
@@ -206,6 +232,64 @@ function sectionMotifPlanFor(index: number, count: number, seed: number): Pick<
   const bVariant = (1 + ((seed >>> 3) % 2)) as 1 | 2;
   const dVariant = ((seed >>> 4) & 1) === 0 ? 0 : 1;
   const eVariant = (3 + ((seed >>> 5) & 1)) as 3 | 4;
+  if (policy.motif.returnEvent) {
+    const a = phrasePlan(0, 3);
+    const b = phrasePlan(bVariant, 7);
+    const c = phrasePlan(3, 11);
+    const dBase = phrasePlan(0, 15);
+    const d = {
+      ...dBase,
+      // Aの最初の4小節と同じリズム族を受け継ぎ、音程だけを変奏して帰還を知覚可能にする。
+      phraseRhythmVariants: [
+        a.phraseRhythmVariants[0],
+        a.phraseRhythmVariants[1],
+        dBase.phraseRhythmVariants[2],
+        dBase.phraseRhythmVariants[3],
+      ] as const,
+      motifSourcePhrases: [0, 1, 2, 0] as const,
+    };
+    const e = phrasePlan(eVariant, 19);
+    const sectionIds = ['A', 'B', 'C', 'D', 'E'] as const;
+    const memoryPlans: Array<Pick<
+      SongSectionPlan,
+      | 'rhythmVariant'
+      | 'phraseRhythmVariants'
+      | 'motifSourcePhrases'
+      | 'externalMotifPhrases'
+      | 'motifSourceSection'
+      | 'motifTransform'
+    >> = [
+      { ...a, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original' },
+      { ...b, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
+      { ...c, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
+      { ...d, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'transpose' },
+      { ...e, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
+    ];
+    // ポリシーの意味イベントをセクションIDへ解決する。下流は戦略名を知らない。
+    const returnEvent = policy.motif.returnEvent;
+    const returnIndex = sectionIds.indexOf(returnEvent.to);
+    if (returnIndex >= 0) {
+      memoryPlans[returnIndex] = {
+        ...memoryPlans[returnIndex]!,
+        externalMotifPhrases: [...returnEvent.phrases],
+        motifSourceSection: returnEvent.from,
+        motifTransform: returnEvent.transform,
+      };
+    }
+    const continuationEvent = policy.motif.continuationEvent;
+    if (continuationEvent) {
+      const continuationIndex = sectionIds.indexOf(continuationEvent.to);
+      if (continuationIndex >= 0) {
+        memoryPlans[continuationIndex] = {
+          ...memoryPlans[continuationIndex]!,
+          externalMotifPhrases: [...continuationEvent.phrases],
+          motifSourceSection: continuationEvent.from,
+          motifTransform: continuationEvent.transform,
+        };
+      }
+    }
+    return memoryPlans[index]!;
+  }
   const plans = [
     {
       ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
@@ -269,14 +353,55 @@ function harmonicGoalFor(
  * 2コード小節の変化位置を機能で決める。
  * 終止は後半ドミナントを最後の1拍へ集め、展開は新機能へ早めに入る。
  */
-function durationsFor(tokens: readonly string[], goal: HarmonicGoal): number[] {
+function durationsFor(
+  tokens: readonly string[],
+  goal: HarmonicGoal,
+  policy: CompositionPolicy,
+): number[] {
   if (tokens.length !== 2) return tokens.map(() => 4 / tokens.length);
   const first = harmonicFunctionForToken(tokens[0]!);
   const second = harmonicFunctionForToken(tokens[1]!);
+  if (policy.harmony.delayResolution && goal === 'resolve' && second === 'tonic' && first !== 'tonic') {
+    return [3, 1];
+  }
   if ((goal === 'turnaround' || goal === 'resolve') && second === 'dominant') return [3, 1];
   if (goal === 'depart' && second !== first) return [1, 3];
   if (goal === 'resolve' && second === 'tonic' && first !== 'tonic') return [1, 3];
   return [2, 2];
+}
+
+type ProgressionSlot = ProgressionDef['slots'][number];
+
+function clampedChoiceIndex(slot: ProgressionSlot, requested: number | undefined): number {
+  return Math.max(0, Math.min(slot.length - 1, requested ?? 0));
+}
+
+/** 同じ進行スロット内で、トニックを避け未解決の引力が強い候補を選ぶ。 */
+function absenceChoiceIndex(
+  slot: ProgressionSlot,
+  baseIndex: number,
+  seed: number,
+  bar: number,
+): number {
+  if (slot.length <= 1) return baseIndex;
+  const score = (option: readonly string[]): number => {
+    const functions = option.map(harmonicFunctionForToken);
+    const body = functions.reduce((total, harmonicFunction) => total + (
+      harmonicFunction === 'tonic' ? -4
+        : harmonicFunction === 'dominant' ? 3
+          : harmonicFunction === 'predominant' ? 2 : 1
+    ), 0);
+    return body + (functions.at(-1) === 'dominant' ? 2 : 0);
+  };
+  const scores = slot.map(score);
+  const best = Math.max(...scores);
+  const candidates = scores
+    .map((candidateScore, index) => ({ candidateScore, index }))
+    .filter(({ candidateScore }) => candidateScore === best)
+    .map(({ index }) => index);
+  const alternatives = candidates.filter((index) => index !== baseIndex);
+  const pool = alternatives.length > 0 ? alternatives : candidates;
+  return pool[((seed ^ (bar * 0x45d9_f3b)) >>> 0) % pool.length]!;
 }
 
 export interface CreateSongPlanOptions {
@@ -291,6 +416,7 @@ export interface CreateSongPlanOptions {
   choice: readonly number[];
   /** 16/40小節フォームで初回専用イントロを使うか。省略時は有効。 */
   intro?: boolean;
+  compositionStrategy?: CompositionStrategy;
 }
 
 function uniqueIntroRoles(roles: readonly IntroRole[]): IntroRole[] {
@@ -406,9 +532,11 @@ function introPlanFor(
 
 export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
   const { bars, seed, progression, style } = options;
+  const compositionStrategy = options.compositionStrategy ?? 'current';
+  const compositionPolicy = resolveCompositionPolicy(compositionStrategy, bars, seed);
   const count = sectionCountFor(bars);
   const sectionBars = bars / count;
-  const sectionEnergies = sectionEnergiesFor(count, seed);
+  const sectionEnergies = sectionEnergiesFor(count, seed, compositionPolicy);
   const sections: SongSectionPlan[] = Array.from({ length: count }, (_, index) => ({
     index,
     id: (['A', 'B', 'C', 'D', 'E'] as const)[index]!,
@@ -416,7 +544,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
     bars: sectionBars,
     role: sectionRoleFor(index, count),
     energy: sectionEnergies[index]!,
-    ...sectionMotifPlanFor(index, count, seed),
+    ...sectionMotifPlanFor(index, count, seed, compositionPolicy),
   }));
   const lateClimax = (seed & 1) === 1;
   const climaxBar = bars === 40
@@ -438,12 +566,34 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
         ? (lateClimax ? 6 : 4)
         : lateClimax ? 3 : 2;
 
+  const baseChoices = Array.from({ length: bars }, (_, bar) => {
+    const slot = progression.slots[bar % progression.slots.length]!;
+    return clampedChoiceIndex(slot, options.choice[bar]);
+  });
+  const sectionById = new Map(sections.map((section) => [section.id as StrategySectionId, section]));
   const harmony: HarmonyBarPlan[] = [];
   for (let bar = 0; bar < bars; bar++) {
     const sectionIndex = Math.min(count - 1, Math.floor(bar / sectionBars));
     const section = sections[sectionIndex]!;
     const slot = progression.slots[bar % progression.slots.length]!;
-    const selected = Math.max(0, Math.min(slot.length - 1, options.choice[bar] ?? 0));
+    let selected = baseChoices[bar]!;
+    let strategyRole: HarmonyBarPlan['strategyRole'] = 'base';
+    if (
+      compositionPolicy.harmony.avoidTonicDuringAbsence
+      && section.id === compositionPolicy.harmony.absenceSection
+    ) {
+      selected = absenceChoiceIndex(slot, selected, seed, bar);
+      strategyRole = 'absence';
+    }
+    const harmonicReturn = compositionPolicy.harmony.returnEvent;
+    if (harmonicReturn && section.id === harmonicReturn.to) {
+      const sourceSection = sectionById.get(harmonicReturn.from);
+      if (sourceSection) {
+        const sourceBar = sourceSection.startBar + ((bar - section.startBar) % sourceSection.bars);
+        selected = clampedChoiceIndex(slot, baseChoices[sourceBar]);
+        strategyRole = 'return';
+      }
+    }
     const tokens = [...slot[selected]!];
     const phraseFunction = phraseFunctionFor(bar, bars);
     const harmonicGoal = harmonicGoalFor(bar, bars, phraseFunction);
@@ -457,7 +607,8 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       phraseFunction,
       harmonicGoal,
       tokens,
-      durations: durationsFor(tokens, harmonicGoal),
+      durations: durationsFor(tokens, harmonicGoal, compositionPolicy),
+      strategyRole,
       entryFunction,
       exitFunction,
       cadence: cadenceFor(bar, bars, phraseFunction, exitFunction),
@@ -467,6 +618,9 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
 
   const harmonicActivity = harmony.filter((bar) => bar.tokens.length > 1).length / bars;
   return {
+    compositionStrategy,
+    compositionPolicy,
+    premise: compositionPolicy.premise,
     tonality: options.tonality,
     melodicLanguage: options.melodicLanguage,
     grooveFeel: options.grooveFeel,
