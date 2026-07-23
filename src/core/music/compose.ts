@@ -291,10 +291,20 @@ export interface PhraseBarPlan {
   energy: number;
   /** 0..1。小節内の基準ダイナミクス。 */
   dynamic: number;
+  /** 主旋律の1拍目を意図して空ける小節（呼吸・弱起）。伴奏とベースは拍頭を保つ。 */
+  restStart: boolean;
+  /** 前小節のロングトーンが1拍目を覆うため、主旋律の頭打ちを省いた小節。 */
+  sustainedEntry: boolean;
+  /** このstepの音を次小節の最初の発音まで保続する（2拍以上のロングトーン）。 */
+  longToneStep: number | null;
+  /** セクション別テッシトゥーラ変位（半音）。旋律の目標高さへ加算する。 */
+  registerOffset: number;
 }
 
 export interface PhrasePlan {
   climaxBar: number;
+  /** 一度だけ許す9半音超の署名跳躍を置く小節（頭拍）。null なら無し。 */
+  signatureLeapBar: number | null;
   bars: PhraseBarPlan[];
 }
 
@@ -603,6 +613,21 @@ function withMelodyEdits(notes: readonly NoteEvent[], edits: readonly MelodyEdit
   return result;
 }
 
+/**
+ * 標準語法向けの控えめな装飾計画。16小節に0〜1個、終止付近の応答小節へ
+ * grace/turn だけを置く（shake は和風の語彙として残す）。
+ */
+function sparseOrnamentPlanFor(bars: ComposeBars, seed: number): Map<number, OrnamentType> {
+  const rng = new Xoshiro128((seed ^ 0x4752_4143) >>> 0);
+  const plan = new Map<number, OrnamentType>();
+  for (let phrase = 0; phrase < bars; phrase += 16) {
+    const candidates = [phrase + 3, phrase + 7, phrase + 11, phrase + 15].filter((bar) => bar < bars);
+    if (candidates.length === 0 || rng.nextInt(100) >= 70) continue;
+    plan.set(candidates[rng.nextInt(candidates.length)]!, rng.nextInt(2) === 0 ? 'grace' : 'turn');
+  }
+  return plan;
+}
+
 /** 4小節ごとに一度だけ装飾し、同じ応答処理が2小節おきに続くのを避ける。 */
 function ornamentPlanFor(bars: ComposeBars, seed: number): Map<number, OrnamentType> {
   const rng = new Xoshiro128((seed ^ 0x4f52_4e4d) >>> 0);
@@ -652,9 +677,45 @@ function makePhrasePlan(
     [promptD, answerD],
     [promptE, answerE],
   ] as const;
-  const ornaments = melodicLanguage === 'japanese' ? ornamentPlanFor(opts.bars, opts.seed) : new Map();
+  const ornaments = melodicLanguage === 'japanese'
+    ? ornamentPlanFor(opts.bars, opts.seed)
+    : sparseOrnamentPlanFor(opts.bars, opts.seed);
   const climaxBar = songPlan.form.climaxBar;
   const bars: PhraseBarPlan[] = [];
+
+  // 新しい表現デバイスは主系列の rng を消費せず、既存の抽選列を乱さない独立ストリームで決める。
+  // 進行IDも混ぜ、同じシードでも進行が違えば別の表情の抽選になるようにする。
+  let progressionHash = 0;
+  for (let index = 0; index < opts.progressionId.length; index++) {
+    progressionHash = (Math.imul(progressionHash, 31) + opts.progressionId.charCodeAt(index)) >>> 0;
+  }
+  const featureSeed = (opts.seed ^ progressionHash) >>> 0;
+  const longToneRng = new Xoshiro128((featureSeed ^ 0x4c4f_4e47) >>> 0);
+  const restRng = new Xoshiro128((featureSeed ^ 0x5245_5354) >>> 0);
+  const registerRng = new Xoshiro128((featureSeed ^ 0x5245_4749) >>> 0);
+  const leapRng = new Xoshiro128((featureSeed ^ 0x4c45_4150) >>> 0);
+
+  // セクション別テッシトゥーラ: Aは主題の基準。以降の区間は±4半音まで変位し、対比を作る。
+  const sectionCount = opts.bars === 40 ? 5 : opts.bars === 16 ? 2 : 1;
+  const registerOffsets: number[] = Array.from({ length: sectionCount }, (_, index) => {
+    if (index === 0) return 0;
+    const choices = [-4, -2, 0, 2, 4] as const;
+    return choices[registerRng.nextInt(choices.length)]!;
+  });
+  if (sectionCount > 1 && !registerOffsets.some((offset) => offset !== 0)) {
+    registerOffsets[Math.max(1, sectionCount - 2)] = 3;
+  }
+
+  // 署名跳躍: 低音域の区間（40小節は谷のC）の展開頭で一度だけ許す9半音超の跳躍。
+  // 高音域からは音域の天井とクライマックスの一意性を壊さずに跳べないため、谷から跳ぶ。
+  let signatureLeapBar: number | null = null;
+  if (opts.bars >= 16 && leapRng.nextInt(100) < 60) {
+    const candidateBar = opts.bars === 40 ? 20 : 12;
+    if (candidateBar !== climaxBar && candidateBar < opts.bars) signatureLeapBar = candidateBar;
+  }
+
+  let pendingSustainEntry = false;
+  let lastLongToneBar = -8;
 
   for (let bar = 0; bar < opts.bars; bar++) {
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
@@ -796,8 +857,45 @@ function makePhrasePlan(
       }
     }
 
+    // 前小節のロングトーンが頭拍を覆う小節は、主旋律の頭打ちを省いて保続を受け入れる。
+    let sustainedEntry = false;
+    if (pendingSustainEntry) {
+      rhythm[0] = false;
+      sustainedEntry = true;
+      pendingSustainEntry = false;
+    }
+
+    // 休符始まり: 展開部の提示側かループ頭で、1拍目を意図した空白にする（伴奏は拍頭を保つ）。
+    let restStart = false;
+    if (!sustainedEntry && bar !== climaxBar && bar !== signatureLeapBar) {
+      const departurePrompt = phraseFunction === 'departure' && !isAnswer;
+      if (departurePrompt && restRng.nextInt(100) < 30) restStart = true;
+      else if (bar === 0 && restRng.nextInt(100) < 20) restStart = true;
+      if (restStart) rhythm[0] = false;
+    }
+
+    // ロングトーン: 終止の到達音を次小節の最初の発音まで保続し、下の和声変化をまたがせる。
+    let longToneStep: number | null = null;
+    if (
+      isAnswer
+      && (targetStep === 4 || targetStep === 6)
+      && counterSteps.every((counterStep) => counterStep <= targetStep!)
+      && bar + 1 < opts.bars
+      && bar + 1 !== climaxBar
+      && bar - lastLongToneBar >= 4
+      && longToneRng.nextInt(100) < 30
+    ) {
+      // 保続の間、主旋律の残りは鳴らさない（副旋律の応答は残す）。
+      for (let step = targetStep + 1; step < 8; step++) rhythm[step] = false;
+      longToneStep = targetStep;
+      pendingSustainEntry = true;
+      lastLongToneBar = bar;
+    }
+
     const energy = harmonyBar.energy;
-    const dynamic = Math.min(1, 0.58 + energy * 0.07 + (sectionPlan.backingDensity === 'full' ? 0.04 : 0));
+    // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
+    const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
+    const dynamic = Math.min(1, dynamicFloor + energy * 0.07 + (sectionPlan.backingDensity === 'full' ? 0.04 : 0));
     const role: PhraseBarPlan['role'] = cadence && cadence !== 'open'
       ? 'cadence'
       : isAnswer
@@ -808,9 +906,11 @@ function makePhrasePlan(
     bars.push({
       bar, section, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
       phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
+      restStart, sustainedEntry, longToneStep,
+      registerOffset: registerOffsets[sectionIndex] ?? 0,
     });
   }
-  return { climaxBar, bars };
+  return { climaxBar, signatureLeapBar, bars };
 }
 
 interface RealizedIntro {
@@ -1156,6 +1256,8 @@ export function compose(opts: ComposeOptions): Piece {
   }>();
   let prev = startMidi;
   let prevBeat = 0;
+  let signatureLeapPending = false;
+  let signatureStepBack: 1 | -1 | null = null;
   for (const barPlan of phrasePlan.bars) {
     const { bar } = barPlan;
     const barInSection = opts.bars >= 16 ? bar % 8 : bar;
@@ -1163,7 +1265,7 @@ export function compose(opts: ComposeOptions): Piece {
     const isAnswerVariation = Math.floor(barInSection / 2) % 2 === 1;
     const center = bar === phrasePlan.climaxBar
       ? MELODY_HI - 2
-      : baseCenter + barPlan.energy - 2;
+      : baseCenter + barPlan.energy - 2 + barPlan.registerOffset;
     const onsets: number[] = [];
     barPlan.rhythm.forEach((on, step) => on && onsets.push(step));
     const sectionDesign = songPlan.form.sections.find((section) => section.id === barPlan.section)!;
@@ -1302,9 +1404,36 @@ export function compose(opts: ComposeOptions): Piece {
           midi = nearestWithPc(transformed, allowedPcs);
         }
       }
+      // 署名跳躍: 旋律の常用域(中心±数半音)からは9半音超を音域内に収められないため、
+      // 展開小節の頭を低い和声音の「踏み切り」にし、2音目で一度だけ上へ跳ぶ。直後は反行順次。
+      let isSignatureLeapNote = false;
+      if (bar === phrasePlan.signatureLeapBar && step === 0 && onsets.length >= 3) {
+        // 踏み切りは音域最下部の和声音。ここからでないと9半音超をクライマックス未満に収められない。
+        midi = nearestWithPc(MELODY_LO + 1, structuralPcs, MELODY_LO, MELODY_LO + 4);
+        if (midi >= MELODY_LO) signatureLeapPending = true;
+        else midi = nearestWithPc(center, structuralPcs);
+      } else if (signatureLeapPending) {
+        signatureLeapPending = false;
+        const lo = prev + 10;
+        const hi = Math.min(climaxMidi - 1, prev + 14);
+        const leapMidi = hi >= lo ? nearestWithPc(hi, structuralPcs, lo, hi) : -1;
+        const followUp = onsets[index + 1];
+        // 直後を弱拍の順次で受け止められるときだけ跳ぶ（均衡跳躍をデバイス側で保証する）。
+        const canBalance = followUp !== undefined && followUp !== 4;
+        if (leapMidi >= lo && leapMidi <= hi && canBalance) {
+          midi = leapMidi;
+          isSignatureLeapNote = true;
+          signatureStepBack = -1;
+        }
+      } else if (signatureStepBack !== null) {
+        // 受け音が強拍に当たる場合は和声音で受ける（順次幅は広がるが強拍規則を守る）。
+        midi = stepOnScale(prev, signatureStepBack, strong ? structuralPcs : scalePcs);
+        signatureStepBack = null;
+      }
       if (
         !(bar === phrasePlan.climaxBar && step === 0)
         && !(barPlan.cadence === 'turnaround' && step === barPlan.targetStep)
+        && !isSignatureLeapNote
         && Math.abs(midi - prev) > 9
       ) {
         // 音級は保ちつつ近いオクターブを選び、偶発的な大跳躍を避ける。
@@ -1318,6 +1447,28 @@ export function compose(opts: ComposeOptions): Piece {
             : scalePcs;
         midi = nearestWithPc(climaxMidi - 1, allowedPcs, MELODY_LO, climaxMidi - 1);
       }
+      const intervalFromPrev = Math.abs(midi - prev);
+      const stepwiseFromPrev = (intervalFromPrev >= 1 && intervalFromPrev <= 2)
+        || (melodicLanguage === 'japanese'
+          && intervalFromPrev >= 1 && intervalFromPrev <= 4
+          && scalePcs.includes(((prev % 12) + 12) % 12)
+          && scalePcs.includes(midi % 12));
+      if (
+        !strong
+        && melody.length > 0
+        && barPlan.targetStep !== step
+        && !stepwiseFromPrev
+        && !chordAt(prevBeat).pcs.includes(prev % 12)
+        && !chord.pcs.includes(midi % 12)
+      ) {
+        // 直前の弱拍非和声音を宙に浮かせない。同音連打は順次進行で、跳躍は和声音で受けて解決する。
+        if (intervalFromPrev === 0) {
+          midi = stepOnScale(prev, center >= prev ? 1 : -1, scalePcs);
+        } else {
+          midi = nearestWithPc(midi, structuralPcs);
+          if (Math.abs(midi - prev) > 9) midi = nearestWithPc(prev, [midi % 12]);
+        }
+      }
       const nextLeadStep = index + 1 < onsets.length ? onsets[index + 1]! : 8;
       const nextCounterStep = barPlan.counterSteps.find((counterStep) => counterStep > step) ?? 8;
       const nextOrnamentStep = barPlan.ornamentSteps
@@ -1325,6 +1476,19 @@ export function compose(opts: ComposeOptions): Piece {
         .find((ornamentStep) => ornamentStep > step) ?? 8;
       const boundaryStep = Math.min(nextLeadStep, nextCounterStep, nextOrnamentStep);
       const boundaryBeat = grooveBeat(bar * 4 + boundaryStep * 0.5, grooveFeel);
+      // ロングトーン: 到達音を次小節の最初の発音（主旋律・副旋律・装飾のどれか）まで保続する。
+      const nextBarPlan = phrasePlan.bars[bar + 1];
+      const longToneBoundary = barPlan.longToneStep === step && nextBarPlan !== undefined
+        ? (() => {
+            const nextMelodyOnset = nextBarPlan.rhythm.findIndex((on) => on);
+            const boundary = Math.min(
+              nextMelodyOnset < 0 ? 8 : nextMelodyOnset,
+              nextBarPlan.counterSteps[0] ?? 8,
+              (nextBarPlan.ornamentSteps[0] ?? 16) * 0.5,
+            );
+            return grooveBeat((bar + 1) * 4 + boundary * 0.5, grooveFeel);
+          })()
+        : null;
       const articulation: NoteArticulation = barPlan.targetStep === step
         ? barPlan.ornamentType === 'shake' ? 'ornament' : 'tenuto'
         : bar === phrasePlan.climaxBar && step === 0
@@ -1344,7 +1508,9 @@ export function compose(opts: ComposeOptions): Piece {
       const velocity = Math.min(1, barPlan.dynamic + (strong ? 0.08 : 0) + (articulation === 'accent' ? 0.08 : 0));
       melody.push({
         beat,
-        dur: Math.max(0.1, (boundaryBeat - beat) * gate),
+        dur: longToneBoundary !== null
+          ? Math.max(0.1, longToneBoundary - beat)
+          : Math.max(0.1, (boundaryBeat - beat) * gate),
         midi,
         velocity,
         articulation,
@@ -1467,8 +1633,13 @@ export function compose(opts: ComposeOptions): Piece {
       ? nearestWithPc(40, [rootPc], 36, 47) // BIGはC2前後まで下げ、低音の土台を明確にする。
       : 40 + ((rootPc - 4 + 12) % 12); // 通常フォームは従来のE2..D#3帯。
     if (style.bass === 'rootFifth') {
+      // 五度は和音の品質に追従する（dimは減5度、augは増5度）。機械的な+7で和声外に落とさない。
+      const fifthPc = ([7, 6, 8] as const)
+        .map((interval) => (rootPc + interval) % 12)
+        .find((pc) => c.pcs.includes(pc));
+      const fifthOffset = fifthPc === undefined ? 7 : (fifthPc - rootPc + 12) % 12;
       for (let b = 0; b < c.dur; b++) {
-        bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + 7 });
+        bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
       }
     } else {
       for (let e = 0; e < c.dur * 2; e++) {

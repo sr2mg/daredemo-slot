@@ -134,7 +134,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('rhythm', 'error', note.beat, note.midi, '主旋律の音価が曲の範囲外');
     }
     const inBar = note.beat % 4;
-    if (inBar === 0 || inBar === 2) {
+    // 装飾（前打音・回し）は強拍に食い込んでも直後の到達音へ解決するため、強拍和声の対象にしない。
+    if ((inBar === 0 || inBar === 2) && note.role !== 'ornament') {
       const chord = chordAt(note.beat);
       if (!chord.pcs.includes(note.midi % 12)) {
         add('harmony', 'error', note.beat, note.midi, `強拍が ${chord.name} のコードトーン外`);
@@ -188,9 +189,23 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const before = bodyMelody[position - 1]?.note;
     const after = bodyMelody[position + 1]?.note;
     if (before && Math.abs(note.midi - before.midi) > 9) {
-      add('melody', 'warning', note.beat, note.midi, '主旋律の跳躍が9半音を超える', {
-        code: 'melody-large-leap', target: { part: 'melody', noteIndex },
-      });
+      // 直後に反対方向の順次進行で受け止められた跳躍は、古典的な均衡跳躍として許容する。
+      const balanced = after
+        && isMelodicStep(piece, note.midi, after.midi)
+        && melodicDirection(before.midi, note.midi) !== 0
+        && melodicDirection(note.midi, after.midi) === -melodicDirection(before.midi, note.midi);
+      if (balanced) {
+        observations.push({
+          beat: note.beat,
+          kind: 'embellishment',
+          description: '大跳躍だが反行順次で均衡',
+          relatedBeats: [],
+        });
+      } else {
+        add('melody', 'warning', note.beat, note.midi, '主旋律の跳躍が9半音を超える', {
+          code: 'melody-large-leap', target: { part: 'melody', noteIndex },
+        });
+      }
     }
     const chord = chordAt(note.beat);
     if (!after || chord.pcs.includes(note.midi % 12)) continue;
@@ -547,7 +562,17 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (expectedSteps.join(',') !== actualSteps.join(',')) {
       add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目がPhrasePlanのリズムと不一致`);
     }
-    if (!actualSteps.includes(0) || !actualSteps.includes(4)) {
+    if (!actualSteps.includes(0)) {
+      // 意図した休符始まり、または前小節のロングトーンが頭拍を覆う小節は頭打ちを要求しない。
+      const barStartBeat = bodyStart + barPlan.bar * 4;
+      const coveredBySustain = barPlan.sustainedEntry && piece.melody.some((note) => (
+        note.role !== 'ornament' && note.beat < barStartBeat && note.beat + note.dur >= barStartBeat + 0.25
+      ));
+      if (!barPlan.restStart && !coveredBySustain) {
+        add('rhythm', 'error', barStartBeat, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
+      }
+    }
+    if (!actualSteps.includes(4)) {
       add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
     }
     if (barPlan.targetStep === null || barPlan.targetPc === null) continue;
@@ -568,11 +593,16 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
+  const pedalPcs = piece.arrangementPlan.bassRole === 'pedal'
+    ? [piece.keyRoot % 12, (piece.keyRoot + 7) % 12]
+    : [];
   for (let index = 0; index < piece.bass.length; index++) {
     const note = piece.bass[index]!;
     if (note.beat < bodyStart) continue;
     const chord = chordAt(note.beat);
     if (chord.pcs.includes(note.midi % 12)) continue;
+    // 曲全体で低音主導を選んだ場合のペダル低音（主音とその5度）は、意図した保続音であり経過音ではない。
+    if (pedalPcs.includes(note.midi % 12)) continue;
     const inBar = note.beat % 1;
     const next = piece.bass[index + 1] ?? piece.bass.find((candidate) => candidate.beat >= bodyStart);
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : bodyStart;

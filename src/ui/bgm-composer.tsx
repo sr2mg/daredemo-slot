@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import {
   compose,
   COMPOSITION_STRATEGIES,
@@ -36,6 +37,11 @@ import type {
 } from '../core/music/compose.js';
 import {
   createBlindStudyTrial,
+  createBlindStudyVote,
+  isBlindStudyVote,
+  mergeBlindStudyVotes,
+  parseBlindStudyVotes,
+  serializeBlindStudyVotes,
   summarizeBlindStudyVotes,
 } from '../core/music/blind-study.js';
 import type {
@@ -43,6 +49,12 @@ import type {
   BlindStudyTrial,
   BlindStudyVote,
 } from '../core/music/blind-study.js';
+import {
+  diffPieceSections,
+  PIECE_PART_LABELS,
+  pieceSectionLabel,
+} from '../core/music/piece-diff.js';
+import type { PiecePartId } from '../core/music/piece-diff.js';
 import {
   COMPOSITION_EXPERIMENTS,
   COMPOSITION_EXPERIMENT_STATUS_LABELS,
@@ -157,14 +169,6 @@ function songSummary(options: ComposeOptions): string {
 /** 作曲フォームの永続化（曲リストとは別に、作業中の設定そのものを覚える） */
 const FORM_KEY = 'daredemo.bgmComposer.form.v1';
 const BLIND_VOTES_KEY = 'daredemo.bgmComposer.blindStudy.v1';
-
-function isBlindStudyVote(value: unknown): value is BlindStudyVote {
-  if (value === null || typeof value !== 'object') return false;
-  const vote = value as Record<string, unknown>;
-  return typeof vote.trialId === 'string'
-    && ['current', 'memoryArc', 'premiseArc'].includes(String(vote.selected))
-    && typeof vote.createdAt === 'number';
-}
 
 function loadBlindStudyVotes(): BlindStudyVote[] {
   return loadStored<BlindStudyVote[]>(
@@ -309,6 +313,28 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [blindPlaying, setBlindPlaying] = useState<BlindCandidateId | null>(null);
   const [blindVotes, setBlindVotes] = useState<BlindStudyVote[]>(loadBlindStudyVotes);
   const blindVoteSummary = useMemo(() => summarizeBlindStudyVotes(blindVotes), [blindVotes]);
+  const blindVotesFileRef = useRef<HTMLInputElement | null>(null);
+
+  /** 候補間で音イベントが異なる区間。曲頭から全部聴かなくても差分だけ確認できるようにする。 */
+  const blindDiff = useMemo(() => {
+    if (!blindTrial) return null;
+    try {
+      const pieces = blindTrial.candidates.map((candidate) => compose(candidate.options));
+      const sections = diffPieceSections(pieces);
+      const differing = sections.filter((section) => section.differingParts.length > 0);
+      const parts = [...new Set(differing.flatMap((section) => section.differingParts))] as PiecePartId[];
+      return {
+        bpm: pieces[0]!.bpm,
+        differing,
+        parts,
+        range: differing.length === 0
+          ? null
+          : { startBeat: differing[0]!.startBeat, endBeat: differing[differing.length - 1]!.endBeat },
+      };
+    } catch {
+      return null;
+    }
+  }, [blindTrial]);
 
   useEffect(() => {
     player.setBgmVolume(volume / 100);
@@ -452,7 +478,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     }
   };
 
-  const playBlindCandidate = async (candidateId: BlindCandidateId) => {
+  const playBlindCandidate = async (
+    candidateId: BlindCandidateId,
+    segment?: { startAtSec: number; stopAfterSec: number },
+  ) => {
     const candidate = blindTrial?.candidates.find((item) => item.id === candidateId);
     if (!candidate) return;
     try {
@@ -466,17 +495,31 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       const result = await player.playComposedBgm(JSON.stringify(candidate.options), def, 0, {
         loop: false,
         onProgress: setProgress,
+        ...(segment ?? {}),
       });
       setProgress(null);
       if (result === 'played') {
         setBlindPlaying(candidateId);
-        setBlindListened((listened) => listened.includes(candidateId) ? listened : [...listened, candidateId]);
+        // 差分区間だけの試聴は「3候補を聴いた」に数えない。投票は必ず全体を聴いてから。
+        if (!segment) {
+          setBlindListened((listened) => listened.includes(candidateId) ? listened : [...listened, candidateId]);
+        }
       }
     } catch (e) {
       setProgress(null);
       setBlindPlaying(null);
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const playBlindDiff = (candidateId: BlindCandidateId) => {
+    if (!blindDiff?.range) return;
+    const secPerBeat = 60 / blindDiff.bpm;
+    void playBlindCandidate(candidateId, {
+      startAtSec: blindDiff.range.startBeat * secPerBeat,
+      // 差分の最終区間の直後で止める。+1秒は最後の音の余韻ぶん。
+      stopAfterSec: (blindDiff.range.endBeat - blindDiff.range.startBeat) * secPerBeat + 1,
+    });
   };
 
   const revealBlindStudy = () => {
@@ -486,11 +529,38 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     stop();
     const nextVotes = [
       ...blindVotes,
-      { trialId: blindTrial.id, selected: selected.strategy, createdAt: Date.now() },
+      createBlindStudyVote(blindTrial, selected.strategy, Date.now()),
     ];
     setBlindVotes(nextVotes);
     saveStored(BLIND_VOTES_KEY, nextVotes);
     setBlindRevealed(true);
+  };
+
+  /** 票はブラウザのlocalStorageにしか無いため、ファイルへ書き出して恒久保存する。 */
+  const exportBlindVotes = () => {
+    const blob = new Blob([serializeBlindStudyVotes(blindVotes, Date.now())], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `blind-votes-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBlindVotes = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const merged = mergeBlindStudyVotes(blindVotes, parseBlindStudyVotes(await file.text()));
+      setBlindVotes(merged);
+      saveStored(BLIND_VOTES_KEY, merged);
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const saveSong = () => {
@@ -1070,6 +1140,15 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                       >
                         {blindPlaying === candidate.id ? '▶ 再生中' : listened ? '▶ もう一度聴く' : '▶ 試聴する'}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => playBlindDiff(candidate.id)}
+                        disabled={progress !== null || !blindDiff?.range}
+                        data-testid={`blind-play-diff-${candidate.id}`}
+                        title="候補間で音が異なる区間だけを聴きます（「試聴済み」には数えません）"
+                      >
+                        ▶ 差分だけ
+                      </button>
                       <label className="blind-pick">
                         <input
                           type="radio"
@@ -1092,6 +1171,15 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
                   );
                 })}
               </div>
+
+              {blindDiff && (
+                <p className="blind-diff-note" data-testid="blind-diff-note">
+                  {blindDiff.range
+                    ? `候補間の差分区間: ${blindDiff.differing.map((section) => pieceSectionLabel(section.section)).join('・')}`
+                      + `（${blindDiff.parts.map((part) => PIECE_PART_LABELS[part]).join('・')}が異なる）`
+                    : '3候補の音イベントは完全に同一です（好みの差は出ません）'}
+                </p>
+              )}
 
               <div className="blind-study-actions">
                 <button
@@ -1139,6 +1227,34 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               条件名と並び順は結果を見るまで表示されません。3候補をすべて聴くと投票できます。
             </p>
           )}
+
+          <div className="blind-votes-tools" data-testid="blind-votes-tools">
+            <button
+              type="button"
+              onClick={exportBlindVotes}
+              disabled={blindVotes.length === 0}
+              data-testid="blind-votes-export"
+            >
+              ⬇ 票をエクスポート（{blindVotes.length}）
+            </button>
+            <button
+              type="button"
+              onClick={() => blindVotesFileRef.current?.click()}
+              data-testid="blind-votes-import"
+            >
+              ⬆ 票をインポート
+            </button>
+            <input
+              ref={blindVotesFileRef}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={(event) => void importBlindVotes(event)}
+            />
+            <small>
+              票はこのブラウザにしか保存されません。定期的にエクスポートして保全してください（重複は統合時に除かれます）。
+            </small>
+          </div>
 
           <details className="composition-research" data-testid="composition-research">
             <summary>

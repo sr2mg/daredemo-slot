@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`作曲エンジンの一括ファズ監査 > 表現レンジのプロファイルは意図なく変わらない 1`] = `
+{
+  "durMax": 3.5,
+  "longNotes": 142,
+  "melodyNotes": 34534,
+  "offbeat16thRatio": 0,
+  "ornamentNotes": 462,
+  "pieces": 168,
+  "pitchHi": 88,
+  "pitchLo": 72,
+  "restStartPieces": 30,
+  "stepRatio": 0.771,
+  "velocityMax": 1,
+  "velocityMin": 0.53,
+  "wideLeapRatio": 0.012,
+}
+`;

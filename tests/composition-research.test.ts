@@ -39,7 +39,7 @@ describe('作曲仮説と検証履歴', () => {
 
   it('未検証仮説には次の比較方法がある', () => {
     const untested = COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'untested');
-    expect(untested).toHaveLength(6);
+    expect(untested).toHaveLength(7);
     expect(untested.every((hypothesis) => hypothesis.nextComparison.length > 0)).toBe(true);
   });
 });

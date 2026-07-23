@@ -265,7 +265,14 @@ export class SfxPlayer {
     key: string,
     def: ComposedBgmDef,
     delaySec = 0,
-    opts: { loop?: boolean; onProgress?: (ratio: number) => void } = {},
+    opts: {
+      loop?: boolean;
+      onProgress?: (ratio: number) => void;
+      /** 曲頭ではなくこの秒位置から再生する（ブラインド比較の差分区間試聴用）。 */
+      startAtSec?: number;
+      /** 再生開始からこの秒数で自動停止する。省略時は最後まで。 */
+      stopAfterSec?: number;
+    } = {},
   ): Promise<'played' | 'failed' | 'superseded'> {
     if (!this.enabled) return 'failed';
     this.stopBgm();
@@ -293,7 +300,10 @@ export class SfxPlayer {
       }
       source.connect(this.bgmGain!);
       const remaining = Math.max(0, delaySec - (performance.now() - requestedAt) / 1000);
-      source.start(ctx.currentTime + remaining);
+      const startAt = ctx.currentTime + remaining;
+      const offset = Math.max(0, Math.min(opts.startAtSec ?? 0, buffer.duration));
+      source.start(startAt, offset);
+      if (opts.stopAfterSec !== undefined) source.stop(startAt + Math.max(0, opts.stopAfterSec));
       this.bgmSource = source;
       return 'played';
     } catch {
