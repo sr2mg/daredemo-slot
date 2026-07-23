@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { createBlindStudyTrial, summarizeBlindStudyVotes } from '../src/core/music/blind-study.js';
+import {
+  createBlindStudyTrial,
+  createBlindStudyVote,
+  mergeBlindStudyVotes,
+  parseBlindStudyVotes,
+  serializeBlindStudyVotes,
+  summarizeBlindStudyVotes,
+} from '../src/core/music/blind-study.js';
+import type { BlindStudyVote } from '../src/core/music/blind-study.js';
 import { compose, validatePiece, variedChoiceFor } from '../src/core/music/compose.js';
 import type { ComposeOptions } from '../src/core/music/compose.js';
 import { PROGRESSIONS, STYLES } from '../src/core/music/theory.js';
@@ -143,6 +151,33 @@ describe('作曲戦略ブラインド比較', () => {
 
   it('通常条件はstrategy省略時の既存生成と同じ', () => {
     expect(compose({ ...base, compositionStrategy: 'current' })).toEqual(compose(base));
+  });
+
+  it('票は共通オプションと匿名化順を再現素材として持つ', () => {
+    const trial = createBlindStudyTrial('trial-vote', base, 7);
+    const vote = createBlindStudyVote(trial, 'memoryArc', 123);
+    expect(vote).toMatchObject({ trialId: 'trial-vote', selected: 'memoryArc', createdAt: 123 });
+    expect(vote.baseOptions).toEqual(base);
+    expect(vote.candidateOrder).toEqual(trial.candidates.map((candidate) => candidate.strategy));
+  });
+
+  it('票のエクスポートは往復し、v1の素の票配列も読める', () => {
+    const trial = createBlindStudyTrial('trial-io', base, 9);
+    const vote = createBlindStudyVote(trial, 'premiseArc', 456);
+    expect(parseBlindStudyVotes(serializeBlindStudyVotes([vote], 789))).toEqual([vote]);
+    const v1 = [{ trialId: 'a', selected: 'current', createdAt: 1 }];
+    expect(parseBlindStudyVotes(JSON.stringify(v1))).toEqual(v1);
+    expect(() => parseBlindStudyVotes('{"format":"other","votes":[]}')).toThrow();
+    expect(() => parseBlindStudyVotes('票')).toThrow();
+    expect(() => parseBlindStudyVotes(JSON.stringify([{ trialId: 1 }]))).toThrow();
+  });
+
+  it('統合は同一票を除き、再現素材つきの票を優先して時刻順に並べる', () => {
+    const bare: BlindStudyVote = { trialId: 't', selected: 'current', createdAt: 5 };
+    const rich = createBlindStudyVote(createBlindStudyTrial('t', base, 3), 'current', 5);
+    const other: BlindStudyVote = { trialId: 'u', selected: 'memoryArc', createdAt: 9 };
+    expect(mergeBlindStudyVotes([bare], [rich, other])).toEqual([rich, other]);
+    expect(mergeBlindStudyVotes([rich], [bare])).toEqual([rich]);
   });
 
   it('投票集計は戦略ごとに数える', () => {

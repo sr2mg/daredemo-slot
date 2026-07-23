@@ -1,0 +1,360 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > BB風8小節 / 短調 / rock 1`] = `
+{
+  "beats": 32,
+  "bpm": 150,
+  "loopStartBeat": 0,
+  "sections": [
+    {
+      "endBeat": 32,
+      "parts": {
+        "bass": "f0791f1d",
+        "chords": "d318484c",
+        "counter": "811c9dc5",
+        "drums": "3073e2e3",
+        "melody": "f46eb4ec",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 0,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > BIG風40小節 / current 1`] = `
+{
+  "beats": 168,
+  "bpm": 150,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "2e3e7aea",
+        "chords": "c74e23da",
+        "counter": "811c9dc5",
+        "drums": "f1cd0a84",
+        "melody": "0bd21120",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "f889186e",
+        "chords": "67925fb8",
+        "counter": "811c9dc5",
+        "drums": "0b7f53af",
+        "melody": "9a728923",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "e164e0b6",
+        "chords": "15fb5dbd",
+        "counter": "811c9dc5",
+        "drums": "401e3858",
+        "melody": "f223f4eb",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+    {
+      "endBeat": 104,
+      "parts": {
+        "bass": "afc1f65b",
+        "chords": "2abb089d",
+        "counter": "811c9dc5",
+        "drums": "a4dd73e7",
+        "melody": "59000255",
+        "ostinato": "811c9dc5",
+      },
+      "section": "C",
+      "startBeat": 72,
+    },
+    {
+      "endBeat": 136,
+      "parts": {
+        "bass": "4b86a827",
+        "chords": "b642ca26",
+        "counter": "811c9dc5",
+        "drums": "8595b1da",
+        "melody": "3e22ff92",
+        "ostinato": "811c9dc5",
+      },
+      "section": "D",
+      "startBeat": 104,
+    },
+    {
+      "endBeat": 168,
+      "parts": {
+        "bass": "5866e87b",
+        "chords": "ba47f0ae",
+        "counter": "811c9dc5",
+        "drums": "a324da29",
+        "melody": "5d2301bc",
+        "ostinato": "616d8a6d",
+      },
+      "section": "E",
+      "startBeat": 136,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > BIG風40小節 / memoryArc 1`] = `
+{
+  "beats": 168,
+  "bpm": 150,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "2e3e7aea",
+        "chords": "c74e23da",
+        "counter": "811c9dc5",
+        "drums": "f1cd0a84",
+        "melody": "0bd21120",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "f889186e",
+        "chords": "67925fb8",
+        "counter": "811c9dc5",
+        "drums": "0b7f53af",
+        "melody": "9a728923",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "e164e0b6",
+        "chords": "15fb5dbd",
+        "counter": "811c9dc5",
+        "drums": "401e3858",
+        "melody": "7420a0e6",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+    {
+      "endBeat": 104,
+      "parts": {
+        "bass": "afc1f65b",
+        "chords": "2abb089d",
+        "counter": "811c9dc5",
+        "drums": "a4dd73e7",
+        "melody": "59000255",
+        "ostinato": "811c9dc5",
+      },
+      "section": "C",
+      "startBeat": 72,
+    },
+    {
+      "endBeat": 136,
+      "parts": {
+        "bass": "4b86a827",
+        "chords": "b642ca26",
+        "counter": "811c9dc5",
+        "drums": "8595b1da",
+        "melody": "5dce7981",
+        "ostinato": "811c9dc5",
+      },
+      "section": "D",
+      "startBeat": 104,
+    },
+    {
+      "endBeat": 168,
+      "parts": {
+        "bass": "5866e87b",
+        "chords": "ba47f0ae",
+        "counter": "811c9dc5",
+        "drums": "a324da29",
+        "melody": "be6d1812",
+        "ostinato": "616d8a6d",
+      },
+      "section": "E",
+      "startBeat": 136,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > BIG風40小節 / premiseArc 1`] = `
+{
+  "beats": 168,
+  "bpm": 150,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "2e3e7aea",
+        "chords": "c74e23da",
+        "counter": "811c9dc5",
+        "drums": "f1cd0a84",
+        "melody": "0bd21120",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "f889186e",
+        "chords": "67925fb8",
+        "counter": "811c9dc5",
+        "drums": "3d18ec73",
+        "melody": "9a728923",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "d794e790",
+        "chords": "15fb5dbd",
+        "counter": "811c9dc5",
+        "drums": "90cc283d",
+        "melody": "2008933a",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+    {
+      "endBeat": 104,
+      "parts": {
+        "bass": "9ae2235b",
+        "chords": "62c5e776",
+        "counter": "811c9dc5",
+        "drums": "401e3858",
+        "melody": "9c3c6c79",
+        "ostinato": "811c9dc5",
+      },
+      "section": "C",
+      "startBeat": 72,
+    },
+    {
+      "endBeat": 136,
+      "parts": {
+        "bass": "b57d245b",
+        "chords": "67925fb8",
+        "counter": "811c9dc5",
+        "drums": "3d18ec73",
+        "melody": "c713b8a3",
+        "ostinato": "5beebb42",
+      },
+      "section": "D",
+      "startBeat": 104,
+    },
+    {
+      "endBeat": 168,
+      "parts": {
+        "bass": "08567823",
+        "chords": "ba47f0ae",
+        "counter": "811c9dc5",
+        "drums": "26de9e0a",
+        "melody": "be7d5534",
+        "ostinato": "811c9dc5",
+      },
+      "section": "E",
+      "startBeat": 136,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > RB風4小節 / royal-pop / eurobeat 1`] = `
+{
+  "beats": 16,
+  "bpm": 170,
+  "loopStartBeat": 0,
+  "sections": [
+    {
+      "endBeat": 16,
+      "parts": {
+        "bass": "0a5de706",
+        "chords": "054a3c99",
+        "counter": "da31bf7e",
+        "drums": "5f4925cb",
+        "melody": "5467297b",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 0,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > ゲームBGM風16小節 / 和風五音 / バウンス 1`] = `
+{
+  "beats": 72,
+  "bpm": 160,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "4e7b4787",
+        "chords": "050ce258",
+        "counter": "811c9dc5",
+        "drums": "f1cd0a84",
+        "melody": "2c6bac57",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "c587a6ea",
+        "chords": "427977cd",
+        "counter": "811c9dc5",
+        "drums": "bea240a1",
+        "melody": "796881ad",
+        "ostinato": "5cc812be",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "3fd3dc72",
+        "chords": "323eb6a2",
+        "counter": "811c9dc5",
+        "drums": "8bddbc4a",
+        "melody": "e0bf89c9",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+  ],
+}
+`;

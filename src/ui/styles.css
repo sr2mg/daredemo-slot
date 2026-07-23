@@ -1059,6 +1059,27 @@ button:disabled {
   font-weight: bold;
 }
 
+.blind-diff-note {
+  margin: 10px 0 0;
+  color: #9da0b4;
+  font-size: 12px;
+}
+
+.blind-votes-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px dashed #3e415b;
+}
+
+.blind-votes-tools small {
+  color: #9194a8;
+  font-size: 11px;
+}
+
 .composition-research {
   margin-top: 16px;
   border: 1px solid #3e415b;
