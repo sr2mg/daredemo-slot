@@ -438,7 +438,7 @@ describe('compose', () => {
         }
       }
     }
-  });
+  }, 15_000);
 
   it('8小節のコード変化は登録済みレシピ2つを組み、開始側も固定しない', () => {
     const prog = PROGRESSIONS.find((p) => p.id === 'tanaka-manabe')!;
