@@ -306,7 +306,12 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         add('counterpoint', 'warning', note.beat, note.midi, `副旋律の非和声音が ${chord.name} へ解決していない`);
       }
     }
-    if (piece.melody.some((lead) => lead.beat < note.beat + note.dur && note.beat < lead.beat + lead.dur)) {
+    // 保続ガイドラインは主旋律の下へ敷くロングトーンなので、時間的な重なり自体が意図。
+    // 短い応答・独立対旋律では従来どおり同時発音を衝突として扱う。
+    if (
+      piece.arrangementPlan.counterRole !== 'guideline'
+      && piece.melody.some((lead) => lead.beat < note.beat + note.dur && note.beat < lead.beat + lead.dur)
+    ) {
       add('counterpoint', 'error', note.beat, note.midi, '主旋律と副旋律の発音が衝突');
     }
   }
