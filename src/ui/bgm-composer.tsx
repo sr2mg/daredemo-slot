@@ -81,12 +81,15 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
-import { arrangeComposedBgm } from './bgm-audio.js';
+import { arrangeComposedBgm, isPcmBgm } from './bgm-audio.js';
+import type { PcmBgmDef } from './bgm-audio.js';
 import { NES_DUTIES } from './nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
-import { OPLL_VOICES } from './opll-core.js';
-import { loadStored, saveStored } from './persist.js';
+import { OPLL_RATE, OPLL_VOICES } from './opll-core.js';
+import { loadStored, saveStored, usePersistentState } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
+import { mixVocalIntoWave, renderVocalWaveCached } from './vocal-audio.js';
+import type { VocalEnsembleOptions } from '../core/music/vocal-score.js';
 
 /**
  * BGM 作成（作曲）パネル。既製曲を試聴する SoundTestPanel（sound-test.tsx）とは別物で、
@@ -272,7 +275,44 @@ function loadComposerForm(): ComposerForm {
   };
 }
 
-export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
+/** BGMスタジオ（bgm.html）だけで使う、ハミング声部のミックス設定。 */
+interface VocalForm {
+  on: boolean;
+  vowel: 'auto' | 'hum' | 'oo' | 'ah';
+  chorus: boolean;
+  /** 'low' = 主旋律の1オクターブ下（自然なハミング域）/ 'high' = 原音域。 */
+  register: 'low' | 'high';
+  /** 'deep' = フォルマント等倍 / 'light' = 1.15倍（軽く高い声質）。 */
+  timbre: 'deep' | 'light';
+  volume: number;
+}
+
+const VOCAL_FORM_KEY = 'daredemo.bgmVocal.v1';
+const DEFAULT_VOCAL_FORM: VocalForm = {
+  on: true, vowel: 'auto', chorus: false, register: 'low', timbre: 'deep', volume: 60,
+};
+
+function isVocalForm(v: unknown): v is VocalForm {
+  if (v === null || typeof v !== 'object') return false;
+  const raw = v as Record<string, unknown>;
+  return typeof raw.on === 'boolean'
+    && ['auto', 'hum', 'oo', 'ah'].includes(String(raw.vowel))
+    && typeof raw.chorus === 'boolean'
+    && ['low', 'high'].includes(String(raw.register))
+    && ['deep', 'light'].includes(String(raw.timbre))
+    && typeof raw.volume === 'number' && raw.volume >= 0 && raw.volume <= 100;
+}
+
+function vocalEnsembleOptionsFor(form: VocalForm): VocalEnsembleOptions {
+  return {
+    vowel: form.vowel,
+    octaveShift: form.register === 'high' ? 0 : -12,
+    formantScale: form.timbre === 'light' ? 1.15 : 1,
+    chorus: form.chorus,
+  };
+}
+
+export function BgmComposerPanel({ player, vocal = false }: { player: SfxPlayer; vocal?: boolean }) {
   const [initial] = useState(loadComposerForm);
   const [bars, setBars] = useState<ComposeBars>(initial.bars);
   const [progId, setProgId] = useState(initial.progId);
@@ -312,6 +352,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [blindRevealed, setBlindRevealed] = useState(false);
   const [blindPlaying, setBlindPlaying] = useState<BlindCandidateId | null>(null);
   const [blindVotes, setBlindVotes] = useState<BlindStudyVote[]>(loadBlindStudyVotes);
+  const [vocalForm, setVocalForm] = usePersistentState<VocalForm>(
+    VOCAL_FORM_KEY, DEFAULT_VOCAL_FORM, isVocalForm,
+  );
   const blindVoteSummary = useMemo(() => summarizeBlindStudyVotes(blindVotes), [blindVotes]);
   const blindVotesFileRef = useRef<HTMLInputElement | null>(null);
 
@@ -432,10 +475,26 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       if (!player.enabled) return;
       const def = arrangeComposedBgm(p, opts);
       setProgress(0);
-      const result = await player.playComposedBgm(JSON.stringify(opts), def, 0, {
-        loop,
-        onProgress: setProgress,
-      });
+      const key = JSON.stringify(opts);
+      let result: 'played' | 'failed' | 'superseded';
+      if (vocal && vocalForm.on) {
+        // 楽器のみを従来キーでレンダリング（キャッシュ共有）し、
+        // ハミングを加算したPCMを設定込みのキーで別途鳴らす。
+        const sampleRate = isPcmBgm(def) ? def.sampleRate : OPLL_RATE;
+        const instrumental = await player.ensureComposedBgm(key, def, setProgress);
+        const settings = vocalEnsembleOptionsFor(vocalForm);
+        const settingsKey = JSON.stringify(settings);
+        const vocalWave = renderVocalWaveCached(`${key}|${settingsKey}`, p, settings, sampleRate);
+        const mixed = mixVocalIntoWave(instrumental, vocalWave, vocalForm.volume / 100);
+        const vocalDef: PcmBgmDef = {
+          kind: 'pcm', wave: mixed, sampleRate, loopStart: def.loopStart, loopEnd: def.loopEnd,
+        };
+        result = await player.playComposedBgm(
+          `${key}+vocal${vocalForm.volume}|${settingsKey}`, vocalDef, 0, { loop },
+        );
+      } else {
+        result = await player.playComposedBgm(key, def, 0, { loop, onProgress: setProgress });
+      }
       setProgress(null);
       setPlaying(result === 'played');
     } catch (e) {
@@ -1094,6 +1153,77 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             {volume}
           </label>
         </div>
+
+        {vocal && (
+          <div className="panel-controls" data-testid="vocal-controls">
+            <label>
+              <input
+                type="checkbox"
+                checked={vocalForm.on}
+                onChange={(e) => setVocalForm({ ...vocalForm, on: e.target.checked })}
+              />
+              🎤 ハミングを重ねる
+            </label>
+            <label>
+              母音
+              <select
+                value={vocalForm.vowel}
+                onChange={(e) => setVocalForm({ ...vocalForm, vowel: e.target.value as VocalForm['vowel'] })}
+                disabled={!vocalForm.on}
+              >
+                <option value="auto">自動（高音で開く）</option>
+                <option value="hum">ん（ハム）</option>
+                <option value="oo">う</option>
+                <option value="ah">あ</option>
+              </select>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={vocalForm.chorus}
+                onChange={(e) => setVocalForm({ ...vocalForm, chorus: e.target.checked })}
+                disabled={!vocalForm.on}
+              />
+              コーラス（副旋律があればハモり、なければデチューン）
+            </label>
+            <label>
+              声質
+              <select
+                value={vocalForm.timbre}
+                onChange={(e) => setVocalForm({ ...vocalForm, timbre: e.target.value as VocalForm['timbre'] })}
+                disabled={!vocalForm.on}
+              >
+                <option value="deep">低め</option>
+                <option value="light">高め</option>
+              </select>
+            </label>
+            <label>
+              音域
+              <select
+                value={vocalForm.register}
+                onChange={(e) => setVocalForm({ ...vocalForm, register: e.target.value as VocalForm['register'] })}
+                disabled={!vocalForm.on}
+              >
+                <option value="low">主旋律の1オクターブ下</option>
+                <option value="high">主旋律と同じ高さ</option>
+              </select>
+            </label>
+            <label className="st-volume">
+              🎤
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={vocalForm.volume}
+                onChange={(e) => setVocalForm({ ...vocalForm, volume: Number(e.target.value) })}
+                disabled={!vocalForm.on}
+                data-testid="vocal-volume"
+              />
+              {vocalForm.volume}
+            </label>
+            <span className="hint">設定を変えたら「▶ 同じメロディで再生」でかかり直せます</span>
+          </div>
+        )}
 
         <section className="blind-study" data-testid="blind-study">
           <div className="blind-study-head">

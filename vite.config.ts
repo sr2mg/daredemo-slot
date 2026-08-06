@@ -11,6 +11,15 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   base: '/daredemo-slot/',
+  build: {
+    rollupOptions: {
+      // bgm.html = BGM作成を切り出した独立ページ（ハミング声部つき）。
+      input: {
+        main: 'index.html',
+        bgm: 'bgm.html',
+      },
+    },
+  },
   server: {
     port: Number(process.env['PORT']) || 5173,
     // モバイル実機確認用: ngrok 等のトンネル越しアクセスを許可（それ以外のホストは既定どおり拒否）
