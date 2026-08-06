@@ -40,6 +40,8 @@ export const CHORDS: Record<string, ChordDef> = {
   III7m: { root: 3, quality: '7', tones: [3, 7, 10, 1] },
   iv: { root: 5, quality: 'm', tones: [5, 8, 0] },
   iv7: { root: 5, quality: 'm7', tones: [5, 8, 0, 3] },
+  /** ドリアンの♮6を3度に持つIV7（短調のF7）。iv系と選択制で使う。 */
+  IV7m: { root: 5, quality: '7', tones: [5, 9, 0, 3] },
   v: { root: 7, quality: 'm', tones: [7, 10, 2] },
   V7m: { root: 7, quality: '7', tones: [7, 11, 2, 5] },
   VI: { root: 8, quality: '', tones: [8, 0, 3] },
@@ -51,7 +53,7 @@ export const CHORDS: Record<string, ChordDef> = {
 /** ローマ数字トークンを、フォーム設計で使う大まかな和声機能へ写す。 */
 export function harmonicFunctionForToken(token: string): HarmonicFunction {
   if (['I', 'vi', 'vi7', 'iii', 'iii7', 'i', 'i7', 'III'].includes(token)) return 'tonic';
-  if (['IV', 'IVM7', 'ii', 'ii7', 'iv', 'iv7', 'iiDim', 'VI', 'VImaj7', 'VIIm7'].includes(token)) return 'predominant';
+  if (['IV', 'IVM7', 'ii', 'ii7', 'iv', 'iv7', 'IV7m', 'iiDim', 'VI', 'VImaj7', 'VIIm7'].includes(token)) return 'predominant';
   if (['V', 'III7', 'I7', 'V7m', 'v', 'v7', 'VII', 'III7m'].includes(token)) return 'dominant';
   return 'colour';
 }
@@ -255,6 +257,29 @@ export const PROGRESSIONS: ProgressionDef[] = [
     ],
   },
   {
+    id: 'minor-incantation',
+    name: '呪文ループ',
+    feel: '妖しい浮遊感・半音下行',
+    usage: 'AT前兆・ミステリアス演出向き',
+    tonality: 'minor',
+    // i7–V7–♭VII–IV7。上声部の最短連結が主音→導音→♭7→♮6の半音下行クリシェを描く。
+    // 5度(V7/v7)と4度(IV7/iv7)を選択制にし、和声的短音階⇔自然短音階⇔ドリアンの
+    // 陰影をスロットで切り替える。終端は意図してドミナントを持たずIVから頭のiへ回帰する。
+    slots: [
+      [['i7'], ['i']],
+      [['V7m'], ['v7']],
+      [['VII']],
+      [['IV7m'], ['iv7']],
+    ],
+    defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 1, 0, 0], // 5度を自然短音階のv7へ（導音を外して陰らせる）
+      [0, 0, 0, 1], // IVをiv7へ（ドリアンを解いて回帰を柔らげる）
+      [1, 0, 0, 0], // 頭を三和音のiへ（リフ寄りの提示）
+      [0, 1, 0, 1], // 全面的に自然短音階へ寄せる
+    ],
+  },
+  {
     id: 'minor-drive',
     name: '短調ドライブ',
     feel: '暗い疾走・回帰感',
@@ -315,6 +340,41 @@ export function progressionsForTonality(tonality: ProgressionTonality): Progress
     const realized = progressionForTonality(progression, tonality);
     return realized ? [realized] : [];
   });
+}
+
+/**
+ * コードスケール（一般法則）: キーの音階を、鳴っているコードの変位音で局所的に
+ * 上書きした音組織。変位音が押しのけた音階音（コード構成上の同じ度数に当たる隣接音）を
+ * 特定して置換する。例: 短調のV7の導音は♭7を、IV7のドリアン♮6は♭6を置き換える。
+ * これにより弱拍の経過音がその小節のコードトーンと短9度でぶつからない。
+ */
+export function chordScalePcs(
+  scalePcs: readonly number[],
+  chordPcs: readonly number[],
+  chordRootPc: number,
+): number[] {
+  // コード構成音としての度数ファミリー。変位音は同じファミリーの音階音を置換する。
+  const memberFamily = (interval: number): number => {
+    if (interval === 0) return 0;
+    if (interval <= 2) return 1; // 2度・9度
+    if (interval <= 4) return 2; // 3度
+    if (interval === 5) return 3; // 4度・11度
+    if (interval <= 8) return 4; // 減5度・完全5度・増5度
+    return 5; // 6度・7度
+  };
+  const intervalFromRoot = (pc: number): number => ((pc - chordRootPc) % 12 + 12) % 12;
+  const result = new Set(scalePcs);
+  for (const tone of chordPcs) {
+    if (result.has(tone)) continue;
+    const family = memberFamily(intervalFromRoot(tone));
+    const candidates = [(tone + 1) % 12, (tone + 11) % 12]
+      .filter((pc) => scalePcs.includes(pc) && !chordPcs.includes(pc));
+    const displaced = candidates.find((pc) => memberFamily(intervalFromRoot(pc)) === family)
+      ?? candidates[0];
+    if (displaced !== undefined) result.delete(displaced);
+    result.add(tone);
+  }
+  return [...result].sort((a, b) => a - b);
 }
 
 export interface StyleDef {

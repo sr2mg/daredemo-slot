@@ -15,8 +15,9 @@ import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import {
   CHORDS, MAJOR_SCALE, NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
-  harmonicFunctionForToken, progressionForTonality,
+  chordScalePcs, harmonicFunctionForToken, progressionForTonality,
 } from './theory.js';
+import { featuredGuideStrand } from './voice-leading.js';
 import type { HarmonicFunction, StyleDef } from './theory.js';
 import { arrangementPlanFor } from './arrangement.js';
 import type { CompositionStrategy } from './composition-strategy.js';
@@ -99,7 +100,7 @@ export type PhraseFunction = 'statement' | 'restatement' | 'departure' | 'conclu
 export type IntroRole = 'motif' | 'groove' | 'fanfare' | 'runup';
 export type CadenceType = 'open' | 'half' | 'closed' | 'turnaround';
 export type ArrangementArc = 'build' | 'contrast' | 'terrace' | 'compact' | 'hookFirst';
-export type CounterRole = 'response' | 'counterline';
+export type CounterRole = 'response' | 'counterline' | 'guideline';
 export type TextureStrategy = 'classic' | 'arpDrive' | 'counterDrive' | 'bassDrive' | 'hybrid';
 export type BassRole = 'rootMotion' | 'pedal';
 export type PhraseSection = 'A' | 'B' | 'C' | 'D' | 'E';
@@ -124,6 +125,7 @@ export const ARRANGEMENT_ARC_LABELS: Record<ArrangementArc, string> = {
 export const COUNTER_ROLE_LABELS: Record<CounterRole, string> = {
   response: '短い応答',
   counterline: '独立対旋律',
+  guideline: '保続ガイドライン',
 };
 
 export const TEXTURE_STRATEGY_LABELS: Record<TextureStrategy, string> = {
@@ -981,6 +983,17 @@ function realizeIntro(
     const modal = chord.pcs.filter((pc) => scalePcs.includes(pc));
     return melodicLanguage === 'japanese' && modal.length > 0 ? modal : chord.pcs;
   };
+  // 本編と同じコードスケール法則をイントロの弱拍にも適用する（V7mの導音等）。
+  const introChordScaleCache = new Map<string, readonly number[]>();
+  const scaleAt = (chord: ChordEvent): readonly number[] => {
+    if (melodicLanguage === 'japanese') return scalePcs;
+    let cached = introChordScaleCache.get(chord.token);
+    if (!cached) {
+      cached = chordScalePcs(scalePcs, chord.pcs, (CHORDS[chord.token]!.root + keyRoot) % 12);
+      introChordScaleCache.set(chord.token, cached);
+    }
+    return cached;
+  };
 
   const melody: NoteEvent[] = [];
   const pushLead = (
@@ -998,7 +1011,7 @@ function realizeIntro(
     const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
     const midi = strong
       ? nearestWithPc(targetMidi, melodicPcs(chord))
-      : nearestWithPc(targetMidi, scalePcs);
+      : nearestWithPc(targetMidi, scaleAt(chord));
     melody.push({
       beat,
       dur: Math.min(dur, available),
@@ -1161,6 +1174,18 @@ export function compose(opts: ComposeOptions): Piece {
     : null;
   const scalePcs = japanesePlan?.scalePcs
     ?? (tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE).map((t) => (t + keyRoot) % 12);
+  // 弱拍・経過音の音組織は小節のコードスケール（変位音でキーの音階を上書きした音組織）。
+  // 和風五音は核音・間の独自語彙を持つため対象外とし、従来の音組織を保つ。
+  const chordScaleCache = new Map<string, readonly number[]>();
+  const scaleAt = (chord: ChordEvent): readonly number[] => {
+    if (japanesePlan) return scalePcs;
+    let cached = chordScaleCache.get(chord.token);
+    if (!cached) {
+      cached = chordScalePcs(scalePcs, chord.pcs, (CHORDS[chord.token]!.root + keyRoot) % 12);
+      chordScaleCache.set(chord.token, cached);
+    }
+    return cached;
+  };
   const grooveFeel = opts.grooveFeel ?? 'straight';
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
@@ -1305,7 +1330,7 @@ export function compose(opts: ComposeOptions): Piece {
         }
       } else if (!strong && melody.length > 0 && !chordAt(prevBeat).pcs.includes(prev % 12)) {
         // 弱拍の非和声音は、次の音で順次解決して方向を明確にする。
-        midi = stepOnScale(prev, center >= prev ? 1 : -1, scalePcs);
+        midi = stepOnScale(prev, center >= prev ? 1 : -1, scaleAt(chord));
       } else if (step === 0 && barInSection % 2 === 0) {
         midi = nearestWithPc(center, structuralPcs);
       } else if (strong) {
@@ -1319,7 +1344,8 @@ export function compose(opts: ComposeOptions): Piece {
         if (melodicLanguage === 'japanese' && phraseStep % 4 === 3 && scalePcs.includes(prev % 12)) {
           midi = prev;
         } else if (move.stepwise) {
-          const motionPcs = melodicLanguage === 'japanese' || scalePcs.includes(prev % 12) ? scalePcs : chord.pcs;
+          const chordScale = scaleAt(chord);
+          const motionPcs = melodicLanguage === 'japanese' || chordScale.includes(prev % 12) ? chordScale : chord.pcs;
           midi = stepOnScale(prev, dir, motionPcs);
         } else {
           const leap = melodicLanguage === 'japanese' ? (move.leap % 2 === 0 ? 7 : 5) : move.leap;
@@ -1334,7 +1360,7 @@ export function compose(opts: ComposeOptions): Piece {
       );
       if (bridgesToCadence) {
         const loopTarget = nearestWithPc(startMidi, [barPlan.targetPc!]);
-        midi = bridgeWithPc(prev, loopTarget, strong ? chord.pcs : scalePcs);
+        midi = bridgeWithPc(prev, loopTarget, strong ? chord.pcs : scaleAt(chord));
       }
       const repeatsMotif = barPlan.motifSourceBar !== bar && (
         borrowsExternalMotif
@@ -1397,7 +1423,7 @@ export function compose(opts: ComposeOptions): Piece {
               });
             }
           }
-          const allowedPcs = strong ? structuralPcs : scalePcs;
+          const allowedPcs = strong ? structuralPcs : scaleAt(chord);
           const transformed = activeMotifTransform === 'invert'
             ? motifTargetAnchor! - (source.midi - motifSourceAnchor!)
             : source.midi + motifTranspose;
@@ -1427,7 +1453,7 @@ export function compose(opts: ComposeOptions): Piece {
         }
       } else if (signatureStepBack !== null) {
         // 受け音が強拍に当たる場合は和声音で受ける（順次幅は広がるが強拍規則を守る）。
-        midi = stepOnScale(prev, signatureStepBack, strong ? structuralPcs : scalePcs);
+        midi = stepOnScale(prev, signatureStepBack, strong ? structuralPcs : scaleAt(chord));
         signatureStepBack = null;
       }
       if (
@@ -1444,7 +1470,7 @@ export function compose(opts: ComposeOptions): Piece {
           ? [barPlan.targetPc]
           : strong
             ? structuralPcs
-            : scalePcs;
+            : scaleAt(chord);
         midi = nearestWithPc(climaxMidi - 1, allowedPcs, MELODY_LO, climaxMidi - 1);
       }
       const intervalFromPrev = Math.abs(midi - prev);
@@ -1463,7 +1489,7 @@ export function compose(opts: ComposeOptions): Piece {
       ) {
         // 直前の弱拍非和声音を宙に浮かせない。同音連打は順次進行で、跳躍は和声音で受けて解決する。
         if (intervalFromPrev === 0) {
-          midi = stepOnScale(prev, center >= prev ? 1 : -1, scalePcs);
+          midi = stepOnScale(prev, center >= prev ? 1 : -1, scaleAt(chord));
         } else {
           midi = nearestWithPc(midi, structuralPcs);
           if (Math.abs(midi - prev) > 9) midi = nearestWithPc(prev, [midi % 12]);
@@ -1534,7 +1560,7 @@ export function compose(opts: ComposeOptions): Piece {
       const direction: 1 | -1 = barPlan.ornamentType === 'turn' && ornamentIndex === 1
         ? (baseDirection === 1 ? -1 : 1)
         : baseDirection;
-      const midi = stepOnScale(target.midi, direction, scalePcs);
+      const midi = stepOnScale(target.midi, direction, scaleAt(chordAt(bar * 4 + barPlan.targetStep! * 0.5)));
       melody.push({
         beat,
         dur: 0.18,
@@ -1582,11 +1608,11 @@ export function compose(opts: ComposeOptions): Piece {
         // コードトーンだけのアルペジオへ戻らず、線として聞こえる最小限の非和声音にする。
         const directions: readonly (1 | -1)[] = [phraseDirection, phraseDirection === 1 ? -1 : 1];
         for (const direction of directions) {
-          const middle = stepOnScale(phraseAnchor, direction, scalePcs);
+          const middle = stepOnScale(phraseAnchor, direction, scaleAt(chord));
           if (middle < COUNTER_LO || middle > COUNTER_HI) continue;
           const middlePc = middle % 12;
           if (chord.pcs.includes(middlePc)) continue;
-          const forward = stepOnScale(middle, direction, scalePcs);
+          const forward = stepOnScale(middle, direction, scaleAt(chord));
           midi = middle;
           pendingResolution = forward >= COUNTER_LO
             && forward <= COUNTER_HI
@@ -1620,6 +1646,39 @@ export function compose(opts: ComposeOptions): Piece {
         });
         previousCounter = midi;
       }
+    }
+  }
+
+  // --- 保続ガイドライン（進行から導出した最短連結ストランドのロングトーン化） ---
+  // 実音ラインは手書きせず、コード列の声部連結から毎回導出する。発音区間は
+  // 他の対旋律装置と同じく編成計画の counterDensity に従い、常設レイヤーにしない。
+  if (arrangementPlan.counterRole === 'guideline') {
+    const strand = featuredGuideStrand(
+      chords.map((chord) => chord.pcs),
+      chords.map((chord) => chord.pcs[0]!),
+    );
+    let previousGuide: number | null = null;
+    if (strand) {
+      chords.forEach((chord, index) => {
+        const bar = Math.min(opts.bars - 1, Math.floor(chord.beat / 4));
+        const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
+        const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
+        if (sectionPlan.counterDensity === 0) {
+          previousGuide = null;
+          return;
+        }
+        // 主旋律域(C5以上)との完全ユニゾンを避け、対旋律域の中でも主旋律の下に敷く。
+        const midi = nearestWithPc(previousGuide ?? 67, [strand.pcs[index]!], COUNTER_LO, MELODY_LO - 1);
+        counterMelody.push({
+          beat: chord.beat,
+          dur: Math.max(0.5, chord.dur - 0.05),
+          midi,
+          velocity: Math.max(0.35, phrasePlan.bars[bar]!.dynamic - 0.16),
+          articulation: 'tenuto',
+          role: 'structural',
+        });
+        previousGuide = midi;
+      });
     }
   }
 
@@ -1681,7 +1740,7 @@ export function compose(opts: ComposeOptions): Piece {
         let approachPc = nextRootPc;
         while (distance < 12 && approachPc === nextRootPc) {
           const candidate = (nextRootPc - dir * distance + 120) % 12;
-          if (scalePcs.includes(candidate)) approachPc = candidate;
+          if (scaleAt(endChord).includes(candidate)) approachPc = candidate;
           distance++;
         }
         const pickup: NoteEvent = {

@@ -5,6 +5,21 @@ import type {
   Piece,
 } from './compose.js';
 import type { SongPlan } from './song-plan.js';
+import { CHORDS } from './theory.js';
+import { featuredGuideStrand } from './voice-leading.js';
+
+/**
+ * 進行の実トークン列が「全移動半音以内」の最短連結ストランドを持つときだけ、
+ * 保続ガイドラインを対旋律役割の候補にする。導出は常に行い、採用は品質ゲート＋
+ * シード抽選＋テクスチャ戦略の土俵で決める（全曲への一律適用を構造的に防ぐ）。
+ */
+function guidelineEligible(plan: SongPlan | undefined): boolean {
+  if (!plan) return false;
+  const tokens = plan.harmony.flatMap((bar) => bar.tokens);
+  const seq = tokens.map((token) => CHORDS[token]!.tones);
+  const roots = tokens.map((token) => CHORDS[token]!.tones[0]!);
+  return featuredGuideStrand(seq, roots) !== null;
+}
 
 type SectionDevice = 'none' | 'echo' | 'counter1' | 'counter2' | 'arp1' | 'arp2';
 
@@ -118,9 +133,16 @@ export function arrangementPlanFor(
   songPlan?: SongPlan,
 ): ArrangementPlan {
   const textureStrategy = textureStrategyFor(bars, seed, songPlan);
-  const counterRole = textureStrategy === 'counterDrive' || textureStrategy === 'hybrid'
-    ? 'counterline'
-    : 'response';
+  // 対旋律が主役の戦略では counterline と同格（1/2）の抽選対象、2A03では応答の
+  // 代替候補（1/4）。それ以外の編成では従来どおり短い応答に限定し、保続ラインを
+  // 常設装置にしない。抽選は単一ビット参照でなくハッシュで取り、小さいシード帯でも
+  // 一様に発火させる（発火率はテストで観測できる）。
+  const guidelineDraw = (Math.imul((seed ^ 0x4755_4944) >>> 0, 0x9e37_79b1) >>> 13) & 3;
+  const counterRole: ArrangementPlan['counterRole'] = textureStrategy === 'counterDrive' || textureStrategy === 'hybrid'
+    ? (guidelineDraw & 1) === 1 && guidelineEligible(songPlan) ? 'guideline' : 'counterline'
+    : guidelineDraw === 3 && songPlan?.soundChip === 'nes2a03' && guidelineEligible(songPlan)
+      ? 'guideline'
+      : 'response';
   const bassRole = textureStrategy === 'bassDrive' && progressionId === 'minor-pedal'
     ? 'pedal'
     : 'rootMotion';
