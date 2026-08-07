@@ -17,6 +17,15 @@ export type ComposedBgmDef = (SfxDef & { loopStart: number; loopEnd: number }) |
 export const isPcmBgm = (def: ComposedBgmDef): def is PcmBgmDef =>
   'kind' in def && def.kind === 'pcm';
 
+/**
+ * チップ音源の代わりに使う外部レンダラ(作曲スタジオのPCM/SoundFont等)。
+ * idはレンダリングキャッシュのキーへ混ぜるので、音が変わる要因(フォント差替え)を必ず含める。
+ */
+export interface BgmPcmRenderer {
+  id: string;
+  render(piece: Piece, options: ComposeOptions): Promise<ComposedBgmDef>;
+}
+
 /** 保存曲の音源指定を、既存プレイヤーが扱えるOPLL列またはPCMへ変換する単一入口。 */
 export function arrangeComposedBgm(piece: Piece, options: ComposeOptions): ComposedBgmDef {
   if (options.soundChip === 'nes2a03') {

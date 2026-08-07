@@ -89,6 +89,7 @@ import {
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import { arrangeComposedBgm } from './bgm-audio.js';
+import type { BgmPcmRenderer } from './bgm-audio.js';
 import { NES_DUTIES } from './nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
 import { OPLL_VOICES } from './opll-core.js';
@@ -304,7 +305,11 @@ function loadComposerForm(): ComposerForm {
   };
 }
 
-export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
+export function BgmComposerPanel({ player, pcmRenderer = null }: {
+  player: SfxPlayer;
+  /** 作曲スタジオが注入するPCM(SoundFont)レンダラ。nullならチップ音源(OPLL/2A03)。 */
+  pcmRenderer?: BgmPcmRenderer | null;
+}) {
   const [initial] = useState(loadComposerForm);
   const [bars, setBars] = useState<ComposeBars>(initial.bars);
   const [progId, setProgId] = useState(initial.progId);
@@ -466,6 +471,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     };
   };
 
+  /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
+  const bgmCacheKey = (opts: ComposeOptions): string =>
+    pcmRenderer ? `${JSON.stringify(opts)}|${pcmRenderer.id}` : JSON.stringify(opts);
+
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
     try {
       const p = compose(opts);
@@ -477,9 +486,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       setPlaying(false);
       setBlindPlaying(null);
       if (!player.enabled) return;
-      const def = arrangeComposedBgm(p, opts);
+      const def = pcmRenderer ? await pcmRenderer.render(p, opts) : arrangeComposedBgm(p, opts);
       setProgress(0);
-      const result = await player.playComposedBgm(JSON.stringify(opts), def, 0, {
+      const result = await player.playComposedBgm(bgmCacheKey(opts), def, 0, {
         loop,
         onProgress: setProgress,
       });
@@ -537,9 +546,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       setPlaying(false);
       setBlindPlaying(null);
       const candidatePiece = compose(candidate.options);
-      const def = arrangeComposedBgm(candidatePiece, candidate.options);
+      const def = pcmRenderer
+        ? await pcmRenderer.render(candidatePiece, candidate.options)
+        : arrangeComposedBgm(candidatePiece, candidate.options);
       setProgress(0);
-      const result = await player.playComposedBgm(JSON.stringify(candidate.options), def, 0, {
+      const result = await player.playComposedBgm(bgmCacheKey(candidate.options), def, 0, {
         loop: false,
         onProgress: setProgress,
         ...(segment ?? {}),
@@ -670,6 +681,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
     if (song) {
       try {
         const p = compose(song.options);
+        // ボーナス割当の先行レンダリングは常にチップ音源(ゲーム側の再生経路と一致させる)。
         void player.ensureComposedBgm(
           JSON.stringify(song.options),
           arrangeComposedBgm(p, song.options),
