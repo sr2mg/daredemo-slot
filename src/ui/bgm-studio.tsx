@@ -24,7 +24,7 @@ const SOURCE_OPTIONS: readonly { id: SoundFontSource; label: string }[] = [
   { id: 'picked', label: '保存済みの選択ファイル' },
 ];
 
-const PCM_PARTS: readonly PcmPart[] = ['lead', 'counter', 'ostinato', 'backing', 'bass', 'drums'];
+const PCM_PARTS: readonly PcmPart[] = ['lead', 'duet', 'counter', 'ostinato', 'backing', 'bass', 'drums'];
 const PCM_VOICES_KEY = 'daredemo.pcmVoices.v1';
 
 function loadPcmVoices(): PcmVoiceOverride {

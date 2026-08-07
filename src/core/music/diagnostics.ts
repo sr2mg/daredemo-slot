@@ -1,3 +1,4 @@
+import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS, MAJOR_SCALE, NATURAL_MINOR_SCALE } from './theory.js';
 import { grooveBeat } from './timing.js';
 import { melodicSectionSimilarities } from './diversity.js';
@@ -549,10 +550,10 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     add('texture', 'warning', bodyStart, -1, 'ペダル低音が低音主導以外の編成へ常設されている');
   }
   if (
-    piece.songPlan.soundChip === 'nes2a03'
+    !capabilitiesFor(piece.songPlan.soundChip).independentArpeggio
     && (piece.ostinato.length > 0 || textureSections.some((section) => section.ostinatoDensity > 0))
   ) {
-    add('texture', 'error', bodyStart, -1, '2A03の声部予算を超える独立分散和音が計画されている');
+    add('texture', 'error', bodyStart, -1, '声部予算を超える独立分散和音が計画されている');
   }
   if (
     textureSections.some((section) => section.ostinatoTuplet !== null)

@@ -19,13 +19,15 @@ import {
 } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import type { HarmonicFunction, StyleDef } from './theory.js';
-import { arrangementPlanFor } from './arrangement.js';
+import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
 import type { CompositionStrategy } from './composition-strategy.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import { grooveBeat } from './timing.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
 import { selectTensionPcs } from './tension.js';
 import type { TensionPolicy } from './tension.js';
+import { capabilitiesFor } from './sound-capabilities.js';
+import type { SoundBackendId } from './sound-capabilities.js';
 import { applyDiminution } from './diminution.js';
 import type { DiminutionPolicy } from './diminution.js';
 import {
@@ -236,6 +238,16 @@ export interface ComposeOptions {
    * 省略/autoはスタイル既定(通常off)。和風五音は装飾体系が別なので常にoff。
    */
   diminution?: 'auto' | DiminutionPolicy;
+  /**
+   * ハモリ(主旋律への平行下3度)。声部予算のあるバックエンド(duetLayer)のみ。
+   * 省略/autoはスタイル既定。和風五音は常にoff。
+   */
+  duet?: 'auto' | 'off' | 'on';
+  /**
+   * スライド(ポルタメント)指示の付与。表現できるバックエンド(glide)のみ。
+   * 省略/autoはスタイル既定。和風五音は常にoff(揺り・間の体系と衝突)。
+   */
+  glide?: 'auto' | 'off' | 'on';
   /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
   melodyEdits?: readonly MelodyEdit[];
   seed: number;
@@ -251,8 +263,12 @@ export interface ComposeOptions {
   voices?: VoiceOverride;
   /** OPLLの音色0番へ書き込む1曲1個のユーザー音色。 */
   opllUserPatch?: OpllUserPatchId;
-  /** 省略時は従来どおり OPLL。保存済み v1 曲との後方互換を保つ。 */
-  soundChip?: 'opll' | 'nes2a03';
+  /**
+   * 作曲対象のバックエンド。省略時は従来どおり OPLL(保存済み v1 曲との後方互換)。
+   * 'pcm' は制約の少ない作曲対象(広い編成・テンション等)で、チップでの再生時は
+   * 各編曲層が能力に応じて劣化させる(sound-capabilities.ts)。
+   */
+  soundChip?: SoundBackendId;
   /** ファミコン 2A03 モード固有の音色パラメータ。 */
   nes?: NesVoiceOptions;
 }
@@ -285,6 +301,11 @@ export interface NoteEvent {
   ornament?: OrnamentType;
   /** 装飾音はPhrasePlanの骨格リズム検証から除外する。 */
   role?: 'structural' | 'ornament';
+  /**
+   * この音の頭で、指定MIDIノートから目標音高へ滑らせる(ポルタメント)。
+   * 表現できないバックエンドは無視してよい(sound-capabilities.glide)。
+   */
+  glideFrom?: number;
 }
 
 export interface ChordEvent {
@@ -405,6 +426,8 @@ export interface Piece {
   counterMelody: NoteEvent[];
   /** リフと別に推進力を担当する分散和音。チップ別編曲で優先度を付けて配線する。 */
   ostinato: NoteEvent[];
+  /** 主旋律に下3度で並走するハモリ。声部予算のあるバックエンドだけが鳴らす。 */
+  duet: NoteEvent[];
   bass: NoteEvent[];
   drums: DrumEvent[];
   /** 全声部が共有する、フレーズ・終止・起伏の設計図。 */
@@ -1242,14 +1265,21 @@ export function compose(opts: ComposeOptions): Piece {
     if (choice === undefined || choice === 'auto') return styleDefault ?? 'off';
     return choice;
   };
-  // テンションは連符レイヤーと同じくOPLL専用。2A03はpulse2の単声が和声の全てを
-  // 担うため、カラートーンが第3音を追い出すと和声の同一性ごと失われる。
-  const tensionPolicy: TensionPolicy = (opts.soundChip ?? 'opll') !== 'opll'
+  // テンションは伴奏がカラートーンを担える(colorTones)バックエンドだけ。2A03は
+  // pulse2の単声が和声の全てを担うため、第3音を追い出すと和声の同一性ごと失われる。
+  const tensionPolicy: TensionPolicy = !capabilitiesFor(opts.soundChip).colorTones
     ? 'off'
     : resolveDevicePolicy<TensionPolicy>(opts.tensionPolicy, style.tension);
   const diminutionPolicy: DiminutionPolicy = resolveDevicePolicy<DiminutionPolicy>(
     opts.diminution, style.diminution,
   );
+  const backendCaps = capabilitiesFor(opts.soundChip);
+  const duetPolicy = backendCaps.duetLayer
+    ? resolveDevicePolicy<'on' | 'off'>(opts.duet, style.duet)
+    : 'off';
+  const glidePolicy = backendCaps.glide
+    ? resolveDevicePolicy<'on' | 'off'>(opts.glide, style.glide)
+    : 'off';
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
     : defaultChoiceFor(prog, opts.bars));
@@ -2056,6 +2086,57 @@ export function compose(opts: ComposeOptions): Piece {
     ];
   }
 
+  // --- ハモリ層(平行下3度) ---
+  // 四千年実測(3度の同時音が約3割)に基づく「連れ」の声部。骨格音だけに付け、
+  // コードスケール上を2度数下へ写して並走する。編成がfullの区間だけ(出し引き)。
+  const duet: NoteEvent[] = [];
+  if (duetPolicy === 'on') {
+    const sectionSource = { bars: opts.bars, loopStartBeat, arrangementPlan };
+    // 主旋律用のstepOnScaleは音域端で反転するため使わない(ハモリは旋律音域の下へ出る)。
+    const scaleStepBelow = (midi: number, pcs: readonly number[]): number => {
+      for (let m = midi - 1; m >= midi - 12; m--) {
+        if (pcs.includes(((m % 12) + 12) % 12)) return m;
+      }
+      return midi;
+    };
+    for (const note of finalMelody) {
+      if (note.role === 'ornament' || note.beat < loopStartBeat) continue;
+      if (arrangementSectionFor(sectionSource, note.beat).backingDensity !== 'full') continue;
+      const chord = chordAt(note.beat - loopStartBeat);
+      const scale = scaleAt(chord);
+      if (!scale.includes(note.midi % 12)) continue; // 半音階的な音には連れを付けない
+      const below = scaleStepBelow(scaleStepBelow(note.midi, scale), scale);
+      if (below >= note.midi || below < 55 || note.midi - below > 5) continue; // 下3度圏のみ
+      duet.push({
+        beat: note.beat,
+        dur: note.dur,
+        midi: below,
+        velocity: Math.max(0.25, (note.velocity ?? 0.75) * 0.72),
+        articulation: note.articulation ?? 'normal',
+        role: 'structural',
+      });
+    }
+  }
+
+  // --- スライド(ポルタメント)指示 ---
+  // 実測: 四千年のリードは±250セント級の遅い滑りが署名。前音とほぼ地続き(間隙0.3拍
+  // 以内)の3〜9半音の移動で、強拍でない着地に限って前音から滑らせる(決定論)。
+  if (glidePolicy === 'on') {
+    const line = finalMelody
+      .filter((note) => note.beat >= loopStartBeat)
+      .sort((a, b) => a.beat - b.beat);
+    for (let i = 1; i < line.length; i++) {
+      const prev = line[i - 1]!;
+      const note = line[i]!;
+      const restGap = note.beat - (prev.beat + prev.dur);
+      const interval = Math.abs(note.midi - prev.midi);
+      const strongBeat = ((note.beat - loopStartBeat) % 2) === 0;
+      if (restGap <= 0.3 && interval >= 3 && interval <= 9 && !strongBeat) {
+        note.glideFrom = prev.midi;
+      }
+    }
+  }
+
   return {
     bpm: opts.bpm,
     styleId: style.id,
@@ -2074,6 +2155,7 @@ export function compose(opts: ComposeOptions): Piece {
     melody: finalMelody,
     counterMelody,
     ostinato,
+    duet,
     bass: [...introBass, ...bass],
     drums: [...introDrums, ...drums],
     phrasePlan,

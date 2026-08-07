@@ -11,6 +11,7 @@ import type { PcmBgmDef } from './bgm-audio.js';
 import { renderSf2 } from './sf2.js';
 import type { Sf2Font, Sf2Note } from './sf2.js';
 import {
+  ambienceFor,
   panGains,
   pingPongDelay,
   ROLE_PROFILES,
@@ -21,7 +22,7 @@ import {
 
 export const SF2_SAMPLE_RATE = 44100;
 
-export type PcmPart = 'lead' | 'counter' | 'ostinato' | 'backing' | 'bass' | 'drums';
+export type PcmPart = 'lead' | 'duet' | 'counter' | 'ostinato' | 'backing' | 'bass' | 'drums';
 export interface PcmPresetRef {
   bank: number;
   program: number;
@@ -31,6 +32,7 @@ export type PcmVoiceOverride = Partial<Record<PcmPart, PcmPresetRef>>;
 
 export const PCM_PART_LABELS: Record<PcmPart, string> = {
   lead: '主旋律',
+  duet: 'ハモリ',
   counter: '副旋律',
   ostinato: '分散和音',
   backing: '伴奏',
@@ -73,12 +75,12 @@ export function arrangeSf2Parts(
   overrides: PcmVoiceOverride = {},
 ): Record<PcmPart, Sf2Note[]> {
   const programs = STYLE_PROGRAMS[piece.styleId] ?? DEFAULT_PROGRAMS;
-  const refFor = (part: Exclude<PcmPart, 'drums'>): PcmPresetRef =>
+  const refFor = (part: Exclude<PcmPart, 'drums' | 'duet'>): PcmPresetRef =>
     overrides[part] ?? { bank: 0, program: programs[part] };
   const drumRef = overrides.drums ?? { bank: 128, program: 0 };
   const spb = 60 / piece.bpm;
   const partFor = (
-    events: readonly { beat: number; dur: number; midi: number; velocity?: number }[],
+    events: readonly { beat: number; dur: number; midi: number; velocity?: number; glideFrom?: number }[],
     ref: PcmPresetRef,
     gain: number,
   ): Sf2Note[] => events.map((event) => ({
@@ -89,6 +91,7 @@ export function arrangeSf2Parts(
     startSec: event.beat * spb,
     durSec: Math.max(0.03, event.dur * spb),
     gain,
+    ...(event.glideFrom !== undefined ? { glideFromMidi: event.glideFrom } : {}),
   }));
   // バッキング: ボイシング全声部を持続和音で。PCMでは出し引きより響きの厚みを優先する。
   const backing = refFor('backing');
@@ -117,6 +120,8 @@ export function arrangeSf2Parts(
   }
   return {
     lead: partFor(piece.melody, refFor('lead'), 1.0),
+    // ハモリ既定はリードと同じ音色(実測の「連れ」は同種の音)。上書きで別楽器にもできる。
+    duet: partFor(piece.duet ?? [], overrides.duet ?? refFor('lead'), 0.55),
     counter: partFor(piece.counterMelody, refFor('counter'), 0.65),
     ostinato: partFor(piece.ostinato, refFor('ostinato'), 0.6),
     backing: backingNotes,
@@ -151,6 +156,7 @@ export function renderSf2Bgm(
   const chorusBus = new Float32Array(length);
   const delayBus = new Float32Array(length);
 
+  const ambience = ambienceFor(piece.styleId);
   const parts = arrangeSf2Parts(piece, overrides);
   for (const [part, baseNotes] of Object.entries(parts) as [PcmPart, Sf2Note[]][]) {
     const profile = ROLE_PROFILES[part]!;
@@ -158,20 +164,21 @@ export function renderSf2Bgm(
     if (notes.length === 0) continue;
     const wave = renderSf2(font, notes, SF2_SAMPLE_RATE, totalSec);
     const [gainLeft, gainRight] = panGains(profile.pan);
+    const reverbSend = profile.reverbSend * ambience.reverbSendScale;
     for (let i = 0; i < length; i++) {
       const sample = wave[i]!;
       dryLeft[i] = dryLeft[i]! + sample * gainLeft;
       dryRight[i] = dryRight[i]! + sample * gainRight;
-      if (profile.reverbSend > 0) reverbBus[i] = reverbBus[i]! + sample * profile.reverbSend;
+      if (reverbSend > 0) reverbBus[i] = reverbBus[i]! + sample * reverbSend;
       if (profile.chorusSend > 0) chorusBus[i] = chorusBus[i]! + sample * profile.chorusSend;
       if (profile.delaySend > 0) delayBus[i] = delayBus[i]! + sample * profile.delaySend;
     }
   }
 
-  const reverb = stereoReverb(reverbBus, SF2_SAMPLE_RATE);
+  const reverb = stereoReverb(reverbBus, SF2_SAMPLE_RATE, ambience.reverbFeedback);
   const chorus = stereoChorus(chorusBus, SF2_SAMPLE_RATE);
   // ディレイは付点8分をテンポ同期で。フィードバック量が残響の伸びを決める(harakami則)。
-  const delay = pingPongDelay(delayBus, SF2_SAMPLE_RATE, 0.75 * spb, 0.45);
+  const delay = pingPongDelay(delayBus, SF2_SAMPLE_RATE, 0.75 * spb, ambience.delayFeedback);
   const left = new Float32Array(length);
   const right = new Float32Array(length);
   for (let i = 0; i < length; i++) {

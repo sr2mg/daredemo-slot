@@ -39,6 +39,37 @@ export interface RoleSoundProfile {
   echo: EchoTrackSpec | null;
 }
 
+/**
+ * スタイル別アンビエンス。リバーブの長さはコムのフィードバックで決まる
+ * (RT60 ≈ 遅延×6.91/ln(1/fb): fb0.78≈1.1s、fb0.86≈1.9s、fb0.90≈2.9s)。
+ * kmmoは四千年の実測(曲中の切れ目20箇所からRT60中央値≈2.85s)に合わせたディープホール。
+ */
+export interface AmbienceProfile {
+  /** コム・フィードバック。大きいほど残響が長い。 */
+  reverbFeedback: number;
+  /** ロール別リバーブセンドへの倍率。 */
+  reverbSendScale: number;
+  /** ピンポンディレイのフィードバック(harakami則: これがダイナミクスを決める)。 */
+  delayFeedback: number;
+}
+
+export const DEFAULT_AMBIENCE: AmbienceProfile = {
+  reverbFeedback: 0.78,
+  reverbSendScale: 1.0,
+  delayFeedback: 0.45,
+};
+
+export const STYLE_AMBIENCE: Record<string, AmbienceProfile> = {
+  // 実測RT60≈2.9s級のディープホール+深めのセンド。「夢幻的」の定量的な再現。
+  kmmo: { reverbFeedback: 0.9, reverbSendScale: 1.45, delayFeedback: 0.5 },
+  // タイトな部屋鳴り。
+  rock: { reverbFeedback: 0.72, reverbSendScale: 0.85, delayFeedback: 0.35 },
+};
+
+export function ambienceFor(styleId: string): AmbienceProfile {
+  return STYLE_AMBIENCE[styleId] ?? DEFAULT_AMBIENCE;
+}
+
 export const ROLE_PROFILES: Record<string, RoleSoundProfile> = {
   lead: {
     pan: 0,
@@ -47,6 +78,8 @@ export const ROLE_PROFILES: Record<string, RoleSoundProfile> = {
     delaySend: 0.22,
     echo: { delayBeats: 0.75, taps: 2, decay: 0.55 },
   },
+  // ハモリはリードのすぐ横。エコーは掛けず(リード側の残響と混濁するため)。
+  duet: { pan: -0.18, reverbSend: 0.3, chorusSend: 0.14, delaySend: 0.08, echo: null },
   counter: {
     pan: 0.42,
     reverbSend: 0.28,
@@ -92,10 +125,13 @@ export function withEchoTracks<T extends { startSec: number; gain: number }>(
  * Schroeder型ステレオリバーブ。左右でコム遅延を僅かにずらし、モノ入力から広がりを作る。
  * 入力=センドバス(ウェットのみ返す)。
  */
-export function stereoReverb(input: Float32Array, sampleRate: number): StereoWave {
+export function stereoReverb(
+  input: Float32Array,
+  sampleRate: number,
+  combFeedback = DEFAULT_AMBIENCE.reverbFeedback,
+): StereoWave {
   const render = (detune: number): Float32Array => {
     const combDelaysMs = [29.7, 37.1, 41.1, 43.7].map((ms) => ms * detune);
-    const combFeedback = 0.78;
     const allpassDelaysMs = [5.0, 1.7];
     const allpassGain = 0.7;
     const combBuffers = combDelaysMs.map((ms) => new Float32Array(Math.max(1, Math.round(ms * sampleRate / 1000))));

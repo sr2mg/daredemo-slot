@@ -42,6 +42,8 @@ import type {
   TupletOverlayChoice,
   VoiceOverride,
 } from '../core/music/compose.js';
+import { capabilitiesFor } from '../core/music/sound-capabilities.js';
+import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import {
   createBlindStudyTrial,
   createBlindStudyVote,
@@ -156,7 +158,7 @@ const DIMINUTION_CHOICES = Object.keys(DIMINUTION_POLICY_LABELS) as ('auto' | Di
 function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
-  const chip = options.soundChip === 'nes2a03' ? 'ファミコン2A03' : 'OPLL';
+  const chip = capabilitiesFor(options.soundChip).label;
   const form = options.bars === 40
     ? 'OPLL BIG風40小節'
     : options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
@@ -181,7 +183,7 @@ function songSummary(options: ComposeOptions): string {
     : '';
   const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
   const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${tension}${diminution}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
-  if (options.soundChip === 'nes2a03') return base;
+  if (options.soundChip && options.soundChip !== 'opll') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
   return `${base} / ${overridden.map(({ part, label }) => `${label}=${voiceLabel(options.voices![part]!)}`).join('・')}`;
@@ -210,9 +212,11 @@ interface ComposerForm {
   tupletOverlay: TupletOverlayChoice;
   tensionPolicy: 'auto' | TensionPolicy;
   diminution: 'auto' | DiminutionPolicy;
+  duet: 'auto' | 'off' | 'on';
+  glide: 'auto' | 'off' | 'on';
   keyRoot: number;
   bpm: number;
-  soundChip: 'opll' | 'nes2a03';
+  soundChip: SoundBackendId;
   voices: VoiceOverride;
   opllUserPatch: OpllUserPatchId;
   nes: NesVoiceOptions;
@@ -273,9 +277,13 @@ function loadComposerForm(): ComposerForm {
     diminution: DIMINUTION_CHOICES.includes(raw.diminution as 'auto' | DiminutionPolicy)
       ? raw.diminution as 'auto' | DiminutionPolicy
       : 'auto',
+    duet: raw.duet === 'off' || raw.duet === 'on' ? raw.duet : 'auto',
+    glide: raw.glide === 'off' || raw.glide === 'on' ? raw.glide : 'auto',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
-    soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
+    soundChip: raw.soundChip === 'nes2a03' || raw.soundChip === 'pcm'
+      ? raw.soundChip as SoundBackendId
+      : 'opll',
     voices,
     opllUserPatch: ['brightLead', 'metalBell', 'punchBass'].includes(String(raw.opllUserPatch))
       ? raw.opllUserPatch as OpllUserPatchId
@@ -321,9 +329,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
   const [tupletOverlay, setTupletOverlay] = useState<TupletOverlayChoice>(initial.tupletOverlay);
   const [tensionPolicy, setTensionPolicy] = useState<'auto' | TensionPolicy>(initial.tensionPolicy);
   const [diminution, setDiminution] = useState<'auto' | DiminutionPolicy>(initial.diminution);
+  const [duet, setDuet] = useState<'auto' | 'off' | 'on'>(initial.duet);
+  const [glide, setGlide] = useState<'auto' | 'off' | 'on'>(initial.glide);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
-  const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
+  const [soundChip, setSoundChip] = useState<SoundBackendId>(initial.soundChip);
   /** パート別音色の上書き。未指定パートはスタイル既定（選ばない限り保存データにも入らない） */
   const [voices, setVoices] = useState<VoiceOverride>(initial.voices);
   const [opllUserPatch, setOpllUserPatch] = useState<OpllUserPatchId>(initial.opllUserPatch);
@@ -385,12 +395,12 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
   useEffect(() => {
     saveStored(FORM_KEY, {
       bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
-      tensionPolicy, diminution,
+      tensionPolicy, diminution, duet, glide,
       keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
     });
   }, [
     bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
-    tensionPolicy, diminution,
+    tensionPolicy, diminution, duet, glide,
     keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
@@ -454,16 +464,23 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
         ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
       } : {}),
       ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
-      // 実際に効かない組合せ（2A03・三連オーバーレイ）では保存JSONへ入れず、キャッシュ同一性を保つ
-      ...(soundChip === 'opll' && grooveFeel !== 'tripletOverlay' && tupletOverlay !== 'off'
+      // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
+      ...(capabilitiesFor(soundChip).independentArpeggio
+        && grooveFeel !== 'tripletOverlay' && tupletOverlay !== 'off'
         ? { tupletOverlay }
         : {}),
-      // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)。
-      // テンションはエンジン側と同じくOPLL専用。
-      ...(tensionPolicy !== 'auto' && melodicLanguage !== 'japanese' && soundChip === 'opll'
+      // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)
+      ...(tensionPolicy !== 'auto' && melodicLanguage !== 'japanese'
+        && capabilitiesFor(soundChip).colorTones
         ? { tensionPolicy }
         : {}),
       ...(diminution !== 'auto' && melodicLanguage !== 'japanese' ? { diminution } : {}),
+      ...(duet !== 'auto' && melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).duetLayer
+        ? { duet }
+        : {}),
+      ...(glide !== 'auto' && melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).glide
+        ? { glide }
+        : {}),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
@@ -877,12 +894,13 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
         <div className="panel-controls">
           <select
             value={soundChip}
-            onChange={(e) => setSoundChip(e.target.value as 'opll' | 'nes2a03')}
+            onChange={(e) => setSoundChip(e.target.value as SoundBackendId)}
             data-testid="st-sound-chip"
             title="曲ごとに保存され、BB/RB中の再生にもそのまま使われます"
           >
             <option value="opll">OPLL（YM2413・FM音源）</option>
             <option value="nes2a03">ファミコン 2A03（標準5ch制約）</option>
+            <option value="pcm">PCM（SoundFont・制約最小）</option>
           </select>
           <select
             value={bars}
@@ -960,7 +978,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
               <option key={feel} value={feel}>グルーヴ: {GROOVE_FEEL_LABELS[feel]}</option>
             ))}
           </select>
-          {soundChip === 'opll' && grooveFeel !== 'tripletOverlay' && (
+          {capabilitiesFor(soundChip).independentArpeggio && grooveFeel !== 'tripletOverlay' && (
             <select
               value={String(tupletOverlay)}
               onChange={(e) => {
@@ -975,7 +993,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
               ))}
             </select>
           )}
-          {melodicLanguage !== 'japanese' && soundChip === 'opll' && (
+          {melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).colorTones && (
             <select
               value={tensionPolicy}
               onChange={(e) => setTensionPolicy(e.target.value as 'auto' | TensionPolicy)}
@@ -997,6 +1015,30 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
               {DIMINUTION_CHOICES.map((v) => (
                 <option key={v} value={v}>細分: {DIMINUTION_POLICY_LABELS[v]}</option>
               ))}
+            </select>
+          )}
+          {melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).duetLayer && (
+            <select
+              value={duet}
+              onChange={(e) => setDuet(e.target.value as 'auto' | 'off' | 'on')}
+              data-testid="st-duet"
+              title="主旋律に下3度で並走するハモリ声部。声部が混雑するチップでは自動的に譲ります"
+            >
+              <option value="auto">ハモリ: スタイル既定</option>
+              <option value="off">ハモリ: なし</option>
+              <option value="on">ハモリ: あり（下3度）</option>
+            </select>
+          )}
+          {melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).glide && (
+            <select
+              value={glide}
+              onChange={(e) => setGlide(e.target.value as 'auto' | 'off' | 'on')}
+              data-testid="st-glide"
+              title="近接した跳躍へポルタメント（前音からのスライド）を付けます"
+            >
+              <option value="auto">スライド: スタイル既定</option>
+              <option value="off">スライド: なし</option>
+              <option value="on">スライド: あり</option>
             </select>
           )}
         </div>
@@ -1435,7 +1477,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
 
         {progress !== null && (
           <p className="panel-note" data-testid="st-progress">
-            🎛 {soundChip === 'nes2a03' ? '2A03回路をエミュレーション' : 'OPLL（YM2413）で演奏を仕込み'}中… {Math.round(progress * 100)}%
+            🎛 {capabilitiesFor(soundChip).label} で演奏を仕込み中… {Math.round(progress * 100)}%
           </p>
         )}
         {error && <p className="badge-ng">{error}</p>}

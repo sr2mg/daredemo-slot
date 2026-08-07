@@ -13,16 +13,17 @@ import type { ChordEvent, DrumEvent, NoteEvent, PhraseSection, Piece } from './c
 
 export type PieceSectionId = 'intro' | PhraseSection;
 
-export type PiecePartId = 'melody' | 'counter' | 'ostinato' | 'bass' | 'drums' | 'chords';
+export type PiecePartId = 'melody' | 'counter' | 'ostinato' | 'duet' | 'bass' | 'drums' | 'chords';
 
 export const PIECE_PART_IDS: readonly PiecePartId[] = [
-  'melody', 'counter', 'ostinato', 'bass', 'drums', 'chords',
+  'melody', 'counter', 'ostinato', 'duet', 'bass', 'drums', 'chords',
 ];
 
 export const PIECE_PART_LABELS: Record<PiecePartId, string> = {
   melody: '主旋律',
   counter: '副旋律',
   ostinato: '分散和音',
+  duet: 'ハモリ',
   bass: 'ベース',
   drums: 'ドラム',
   chords: '伴奏和音',
@@ -75,6 +76,8 @@ const noteToken = (note: NoteEvent, startBeat: number): string => [
   num(note.beat - startBeat), num(note.dur), note.midi,
   note.velocity === undefined ? '' : num(note.velocity),
   note.articulation ?? '', note.ornament ?? '', note.role ?? '',
+  // 既存スナップショットを揺らさないため、スライド指示があるときだけ末尾へ足す。
+  ...(note.glideFrom === undefined ? [] : [`g${note.glideFrom}`]),
 ].join(':');
 
 const chordToken = (chord: ChordEvent, startBeat: number): string => [
@@ -94,7 +97,8 @@ function hashRange<T extends { beat: number }>(
 }
 
 export interface PieceSectionDigest extends PieceSectionRange {
-  parts: Record<PiecePartId, string>;
+  /** duetはハモリを使う曲だけに現れる(既存スナップショットの後方互換)。 */
+  parts: Partial<Record<PiecePartId, string>> & Record<Exclude<PiecePartId, 'duet'>, string>;
 }
 
 export interface PieceDigest {
@@ -116,6 +120,7 @@ export function digestPiece(piece: Piece): PieceDigest {
         melody: hashRange(piece.melody, range, noteToken),
         counter: hashRange(piece.counterMelody, range, noteToken),
         ostinato: hashRange(piece.ostinato, range, noteToken),
+        ...(piece.duet.length > 0 ? { duet: hashRange(piece.duet, range, noteToken) } : {}),
         bass: hashRange(piece.bass, range, noteToken),
         drums: hashRange(piece.drums, range, drumToken),
         chords: hashRange(piece.chords, range, chordToken),
