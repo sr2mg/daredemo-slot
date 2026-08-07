@@ -23,6 +23,7 @@ import { arrangementPlanFor } from './arrangement.js';
 import type { CompositionStrategy } from './composition-strategy.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import { grooveBeat } from './timing.js';
+import { groupingDissonanceFor } from './metric-modulation.js';
 import {
   createSongPlan,
   legacyMelodyMode,
@@ -96,6 +97,8 @@ export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
 export type JapaneseScaleChoice = 'auto' | JapaneseScale;
 export type OrnamentType = 'grace' | 'turn' | 'shake';
 export type GrooveFeel = 'straight' | 'tripletOverlay' | 'bounce';
+export type TupletDivision = 5 | 6 | 7;
+export type TupletOverlayChoice = 'off' | 'auto' | TupletDivision;
 export type PhraseFunction = 'statement' | 'restatement' | 'departure' | 'conclusion';
 export type IntroRole = 'motif' | 'groove' | 'fanfare' | 'runup';
 export type CadenceType = 'open' | 'half' | 'closed' | 'turnaround';
@@ -155,6 +158,14 @@ export const GROOVE_FEEL_LABELS: Record<GrooveFeel, string> = {
   bounce: '跳ねる8分',
 };
 
+export const TUPLET_OVERLAY_LABELS: Record<'off' | 'auto' | '5' | '6' | '7', string> = {
+  off: 'なし',
+  auto: '自動（区間ごと）',
+  '5': '5連符（暗示×1.25）',
+  '6': '6連符（暗示×1.5）',
+  '7': '7連符（暗示×1.75）',
+};
+
 export const PHRASE_FUNCTION_LABELS: Record<PhraseFunction, string> = {
   statement: '提示',
   restatement: '変奏反復',
@@ -199,6 +210,13 @@ export interface ComposeOptions {
   japaneseScale?: JapaneseScaleChoice;
   /** 和風様式とは独立したゲーム向けのリズム層。 */
   grooveFeel?: GrooveFeel;
+  /**
+   * 分散和音を基準グリッドから外し、1小節をdiv等分した連符に乗せるレイヤー。
+   * div個の打点が暗示テンポ（bpm×div/4）の4分音符として機能し、不動の基準面
+   * （他声部）との摩擦でテンポが変わったように聴かせる。OPLL専用で、
+   * 三連オーバーレイとは併用しない（該当時は無効化される）。省略時はoff。
+   */
+  tupletOverlay?: TupletOverlayChoice;
   /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
   melodyEdits?: readonly MelodyEdit[];
   seed: number;
@@ -323,6 +341,8 @@ export interface ArrangementSectionPlan {
   ostinatoDensity: 0 | 1 | 2;
   /** 16分へ加速するフレーズ位置。区間ごとに同じ場所へ固定しない。 */
   ostinatoPeak: PhraseFunction | null;
+  /** 連符レイヤーの分割数。nullは基準グリッド。密度1=1小節div等分、密度2=半小節div等分。 */
+  ostinatoTuplet: TupletDivision | null;
 }
 
 export interface ArrangementPlan {
@@ -1203,7 +1223,9 @@ export function compose(opts: ComposeOptions): Piece {
     intro: opts.intro !== false,
     ...(opts.compositionStrategy ? { compositionStrategy: opts.compositionStrategy } : {}),
   });
-  const arrangementPlan = arrangementPlanFor(opts.bars, opts.seed, opts.progressionId, songPlan);
+  const arrangementPlan = arrangementPlanFor(
+    opts.bars, opts.seed, opts.progressionId, songPlan, opts.tupletOverlay ?? 'off',
+  );
 
   // --- SongPlanで確定した和声機能と変化位置を、実コードへ展開する。 ---
   const barTokens = songPlan.harmony.map((bar) => [...bar.tokens]);
@@ -1768,6 +1790,36 @@ export function compose(opts: ComposeOptions): Piece {
   // 曲全体のTextureStrategyで有効になった区間だけに置き、常設レイヤーにはしない。
   // chordAtを各打点で引くため、2拍目など小節途中のコード変化にもその場で追従する。
   const ostinato: NoteEvent[] = [];
+  // アルペジオが回る窓（密集配置）を毎小節ルートへ戻さず、直前の窓から総移動距離が
+  // 最小の転回形を選ぶ。伴奏voiceChordの「最短声部連結」原理を窓決めへ適用したもので、
+  // 和声が動いても層の音域がなだらかに繋がる。初回だけ従来どおりルート基調で入る。
+  let ostinatoWindow: number[] | null = null;
+  let ostinatoWindowBeat = -1;
+  const ostinatoWindowAt = (logicalBeat: number): number[] => {
+    const chord = chordAt(logicalBeat);
+    if (ostinatoWindow !== null && chord.beat === ostinatoWindowBeat) return ostinatoWindow;
+    const previous = ostinatoWindow;
+    const candidates = chord.pcs.map((bassPc) => {
+      const bass = nearestWithPc(previous?.[0] ?? 60, [bassPc], 55, 67);
+      const upper = chord.pcs
+        .filter((pc) => pc !== bassPc)
+        .map((pc) => bass + ((pc - bassPc + 12) % 12))
+        .sort((a, b) => a - b);
+      return [bass, ...upper];
+    });
+    const rootPc = (CHORDS[chord.token]!.root + keyRoot) % 12;
+    const cost = (candidate: number[]): number => previous === null
+      ? candidate[0]! % 12 === rootPc ? 0 : 1
+      : candidate.reduce(
+        (sum, midi, i) => sum + Math.abs(midi - previous[Math.min(i, previous.length - 1)]!),
+        0,
+      );
+    ostinatoWindow = candidates.reduce((best, candidate) => (
+      cost(candidate) < cost(best) ? candidate : best
+    ));
+    ostinatoWindowBeat = chord.beat;
+    return ostinatoWindow;
+  };
   for (const barPlan of phrasePlan.bars) {
     const sectionIndex = opts.bars === 40
       ? Math.floor(barPlan.bar / 8)
@@ -1785,25 +1837,54 @@ export function compose(opts: ComposeOptions): Piece {
     if (plannedDensity === 1 && !activeFunctions.includes(barPlan.phraseFunction)) continue;
     // 16分型の加速点もSongPlanに沿う区間ごとの候補から選び、毎回「展開」に固定しない。
     const density = plannedDensity === 2 && barPlan.phraseFunction === peak ? 2 : 1;
-    const subdivision = density === 2 ? 0.25 : 0.5;
-    const fullStepCount = density === 2 ? 16 : 8;
-    const stepCount = barPlan.cadence === 'half' || barPlan.cadence === 'turnaround'
-      ? fullStepCount - (density === 2 ? 4 : 2)
-      : fullStepCount;
     const contour = [
       [0, 1, 2, 1],
       [0, 2, 1, 2],
       [2, 1, 0, 1],
       [0, 1, 2, 0],
     ][(barPlan.bar + sectionIndex + opts.seed) % 4]!;
+    const pitchAt = (logicalBeat: number, step: number): number => {
+      const window = ostinatoWindowAt(logicalBeat);
+      const contourIndex = Math.min(contour[step % contour.length]!, window.length - 1);
+      return window[contourIndex]!;
+    };
+    const tuplet = sectionPlan.ostinatoTuplet;
+    if (tuplet !== null) {
+      // 連符レイヤー（grouping dissonance G(n:4)）: 1小節をn等分（加速小節は半小節を
+      // n等分）し、各打点を暗示テンポ（bpm×n/4）の4分・8分として鳴らす。基準面
+      // （他声部）は不動のまま摩擦を作る装置なので、グルーヴ変形は適用せず均等へ保つ。
+      const dissonance = groupingDissonanceFor(tuplet);
+      const unit = density === 2 ? 2 / tuplet : 4 / tuplet;
+      const total = tuplet * (density === 2 ? 2 : 1);
+      for (let k = 0; k < total; k++) {
+        const offset = k * unit;
+        // 終止小節は最終拍ぶんを休ませ、基準グリッドとの合流点（次小節頭）を空ける。
+        if ((barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') && offset >= 3) break;
+        const logicalBeat = barPlan.bar * 4 + offset;
+        // アクセントは基準面との合流点（カタログのanchorBeats）。錯覚の錨を毎回同じ
+        // 位置で聴かせ、n=6なら半小節ごと、n=5/7なら小節頭だけが浮き上がる。
+        const isAnchor = dissonance.anchorBeats.some((anchor) => Math.abs(offset - anchor) < 1e-6);
+        ostinato.push({
+          beat: logicalBeat,
+          // ゲートは既存の8分(0.58)/16分(0.66)スタッカートの中間。
+          dur: Math.max(0.1, unit * 0.62),
+          midi: pitchAt(logicalBeat, k),
+          // ベース強拍と同じ+0.06の家内規約でアクセントを付ける。
+          velocity: Math.min(1, Math.max(0.38, barPlan.dynamic - 0.2) + (isAnchor ? 0.06 : 0)),
+          articulation: 'staccato',
+          role: 'structural',
+        });
+      }
+      continue;
+    }
+    const subdivision = density === 2 ? 0.25 : 0.5;
+    const fullStepCount = density === 2 ? 16 : 8;
+    const stepCount = barPlan.cadence === 'half' || barPlan.cadence === 'turnaround'
+      ? fullStepCount - (density === 2 ? 4 : 2)
+      : fullStepCount;
     for (let step = 0; step < stepCount; step++) {
       const logicalBeat = barPlan.bar * 4 + step * subdivision;
-      const chord = chordAt(logicalBeat);
-      const rootPc = (CHORDS[chord.token]!.root + keyRoot) % 12;
-      const rootMidi = nearestWithPc(60, [rootPc], 55, 67);
-      const chordMidis = chord.pcs.map((pc) => nearestWithPc(rootMidi, [pc], rootMidi, rootMidi + 16));
-      const contourIndex = Math.min(contour[step % contour.length]!, chordMidis.length - 1);
-      const midi = chordMidis[contourIndex]!;
+      const midi = pitchAt(logicalBeat, step);
       // 16分アルペジオは均等に保ち、bounceの8分スウィングで打点順が詰まるのを避ける。
       const beat = density === 2 ? logicalBeat : grooveBeat(logicalBeat, grooveFeel);
       const nextLogicalBeat = logicalBeat + subdivision;

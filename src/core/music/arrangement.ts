@@ -3,8 +3,11 @@ import type {
   ArrangementSectionPlan,
   ComposeBars,
   Piece,
+  TupletDivision,
+  TupletOverlayChoice,
 } from './compose.js';
 import type { SongPlan } from './song-plan.js';
+import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { CHORDS } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 
@@ -36,6 +39,7 @@ const section = (
   counterDensity: device === 'counter1' ? 1 : device === 'counter2' ? 2 : 0,
   ostinatoDensity: device === 'arp1' ? 1 : device === 'arp2' ? 2 : 0,
   ostinatoPeak: null,
+  ostinatoTuplet: null,
 });
 
 /** 帰還区間の前進感を、曲全体で選ばれたテクスチャ戦略の主役から導く。 */
@@ -87,7 +91,10 @@ function textureStrategyFor(
   bars: ComposeBars,
   seed: number,
   plan: SongPlan | undefined,
+  forceArp: boolean,
 ): ArrangementPlan['textureStrategy'] {
+  // 連符レイヤー有効時は、担い手のオスティナート区間が必ず生まれる編成に固定する。
+  if (forceArp) return 'arpDrive';
   if (!plan) {
     const fallback = bars < 16
       ? ['classic', 'counterDrive', 'arpDrive', 'bassDrive'] as const
@@ -122,6 +129,67 @@ function textureStrategyFor(
   return candidates[(seed >>> 1) % candidates.length]!;
 }
 
+/** 連符レイヤーの発動判定。OPLL以外・三連オーバーレイ併用時は静かに無効へ落とす。 */
+function resolveTupletOverlay(
+  choice: TupletOverlayChoice,
+  songPlan: SongPlan | undefined,
+): TupletDivision | 'auto' | null {
+  if (choice === 'off' || !songPlan) return null;
+  if (songPlan.soundChip !== 'opll' || songPlan.grooveFeel === 'tripletOverlay') return null;
+  return choice;
+}
+
+/**
+ * 連符レイヤーを担う区間を確定する。数値指定は全区間同値。autoは区間エネルギーの
+ * 順位を拍節的不協和の緊張度順位（metric-modulation.tsのカタログ順）へ写す:
+ * 頂点区間=最も不協和な分割、中位=中位、それ以外と単一区間=最も協和的な分割。
+ */
+function withTupletLayer(
+  plan: ArrangementPlan,
+  tuplet: TupletDivision | 'auto',
+  seed: number,
+  songPlan: SongPlan | undefined,
+): ArrangementPlan {
+  const energies = songPlan?.form.sections.map((item) => item.energy) ?? plan.sections.map(() => 3);
+  const sections = [...plan.sections];
+  if (!sections.some((item) => item.ostinatoDensity > 0)) {
+    // 編成方針の上書き（不在区間の整理など）で担い手が消えた場合、最高エネルギー区間へ復帰させる。
+    const index = sections
+      .map((_, i) => i)
+      .filter((i) => sections[i]!.drum !== 'breakdown')
+      .sort((a, b) => energies[b]! - energies[a]!)[0] ?? 0;
+    sections[index] = {
+      ...sections[index]!,
+      ostinatoDensity: 1,
+      ostinatoPeak: (['restatement', 'departure', 'conclusion'] as const)[(seed + index * 5) % 3]!,
+    };
+  }
+  const arpEnergies = sections.map((item, i) => item.ostinatoDensity > 0 ? energies[i]! : -1);
+  const peakEnergy = Math.max(...arpEnergies);
+  const sorted = [...energies].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)]!;
+  // 緊張度の昇順カタログ。低エネルギー→協和的（ヘミオラ族）、頂点→最も不協和。
+  const byTension = GROUPING_DISSONANCES;
+  const calmest = byTension[0]!.division;
+  const middle = byTension[Math.floor((byTension.length - 1) / 2)]!.division;
+  const tensest = byTension[byTension.length - 1]!.division;
+  const mapped = sections.map((item, i) => {
+    if (item.ostinatoDensity === 0) return item;
+    const division: TupletDivision = tuplet !== 'auto'
+      ? tuplet
+      : sections.length === 1
+        ? calmest
+        : arpEnergies[i] === peakEnergy ? tensest : energies[i]! >= median ? middle : calmest;
+    return { ...item, ostinatoTuplet: division };
+  });
+  return {
+    ...plan,
+    sectionA: mapped[0]!,
+    sectionB: mapped[1] ?? mapped[0]!,
+    sections: mapped,
+  };
+}
+
 /**
  * 曲全体のテクスチャ設計。奏法は「使えるから全部使う」のではなく、
  * 主役を一つ決め、別区間で休止・再登場させる。音数制限より前に密度を整理する。
@@ -131,8 +199,21 @@ export function arrangementPlanFor(
   seed: number,
   progressionId?: string,
   songPlan?: SongPlan,
+  tupletOverlay: TupletOverlayChoice = 'off',
 ): ArrangementPlan {
-  const textureStrategy = textureStrategyFor(bars, seed, songPlan);
+  const tuplet = resolveTupletOverlay(tupletOverlay, songPlan);
+  const plan = planArrangement(bars, seed, progressionId, songPlan, tuplet !== null);
+  return tuplet === null ? plan : withTupletLayer(plan, tuplet, seed, songPlan);
+}
+
+function planArrangement(
+  bars: ComposeBars,
+  seed: number,
+  progressionId: string | undefined,
+  songPlan: SongPlan | undefined,
+  forceArp: boolean,
+): ArrangementPlan {
+  const textureStrategy = textureStrategyFor(bars, seed, songPlan, forceArp);
   // 対旋律が主役の戦略では counterline と同格（1/2）の抽選対象、2A03では応答の
   // 代替候補（1/4）。それ以外の編成では従来どおり短い応答に限定し、保続ラインを
   // 常設装置にしない。抽選は単一ビット参照でなくハッシュで取り、小さいシード帯でも

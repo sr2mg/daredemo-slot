@@ -8,6 +8,7 @@ import {
   COUNTER_ROLE_LABELS,
   TEXTURE_STRATEGY_LABELS,
   GROOVE_FEEL_LABELS,
+  TUPLET_OVERLAY_LABELS,
   JAPANESE_SCALE_LABELS,
   ORNAMENT_LABELS,
   PHRASE_FUNCTION_LABELS,
@@ -33,6 +34,8 @@ import type {
   OpllUserPatchId,
   Piece,
   Tonality,
+  TupletDivision,
+  TupletOverlayChoice,
   VoiceOverride,
 } from '../core/music/compose.js';
 import {
@@ -158,8 +161,11 @@ function songSummary(options: ComposeOptions): string {
   const groove = options.grooveFeel && options.grooveFeel !== 'straight'
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
+  const tuplet = options.tupletOverlay && options.tupletOverlay !== 'off'
+    ? ` / 連符${TUPLET_OVERLAY_LABELS[String(options.tupletOverlay) as keyof typeof TUPLET_OVERLAY_LABELS]}`
+    : '';
   const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
-  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
   if (options.soundChip === 'nes2a03') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
@@ -186,6 +192,7 @@ interface ComposerForm {
   melodicLanguage: MelodicLanguage;
   japaneseScale: JapaneseScaleChoice;
   grooveFeel: GrooveFeel;
+  tupletOverlay: TupletOverlayChoice;
   keyRoot: number;
   bpm: number;
   soundChip: 'opll' | 'nes2a03';
@@ -240,6 +247,9 @@ function loadComposerForm(): ComposerForm {
     grooveFeel: ['tripletOverlay', 'bounce'].includes(String(raw.grooveFeel))
       ? raw.grooveFeel as GrooveFeel
       : 'straight',
+    tupletOverlay: raw.tupletOverlay === 'auto' || [5, 6, 7].includes(raw.tupletOverlay as number)
+      ? raw.tupletOverlay as TupletOverlayChoice
+      : 'off',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
     soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
@@ -281,6 +291,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [melodicLanguage, setMelodicLanguage] = useState<MelodicLanguage>(initial.melodicLanguage);
   const [japaneseScale, setJapaneseScale] = useState<JapaneseScaleChoice>(initial.japaneseScale);
   const [grooveFeel, setGrooveFeel] = useState<GrooveFeel>(initial.grooveFeel);
+  const [tupletOverlay, setTupletOverlay] = useState<TupletOverlayChoice>(initial.tupletOverlay);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
   const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
@@ -344,11 +355,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
     saveStored(FORM_KEY, {
-      bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel,
+      bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
       keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
     });
   }, [
-    bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel,
+    bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
     keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
@@ -412,6 +423,10 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
         ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
       } : {}),
       ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
+      // 実際に効かない組合せ（2A03・三連オーバーレイ）では保存JSONへ入れず、キャッシュ同一性を保つ
+      ...(soundChip === 'opll' && grooveFeel !== 'tripletOverlay' && tupletOverlay !== 'off'
+        ? { tupletOverlay }
+        : {}),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
@@ -901,6 +916,21 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               <option key={feel} value={feel}>グルーヴ: {GROOVE_FEEL_LABELS[feel]}</option>
             ))}
           </select>
+          {soundChip === 'opll' && grooveFeel !== 'tripletOverlay' && (
+            <select
+              value={String(tupletOverlay)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setTupletOverlay(v === 'off' || v === 'auto' ? v : Number(v) as TupletDivision);
+              }}
+              data-testid="st-tuplet-overlay"
+              title="分散和音だけを1小節div等分の連符へ乗せ、他声部は動かさずに暗示テンポ（BPM×div/4）の錯覚を作ります"
+            >
+              {(['off', 'auto', '5', '6', '7'] as const).map((v) => (
+                <option key={v} value={v}>連符レイヤー: {TUPLET_OVERLAY_LABELS[v]}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {soundChip === 'opll' ? (
