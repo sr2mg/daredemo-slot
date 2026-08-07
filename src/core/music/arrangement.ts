@@ -8,6 +8,7 @@ import type {
 } from './compose.js';
 import type { SongPlan } from './song-plan.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
+import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 
@@ -47,11 +48,12 @@ function returnDeviceFor(
   textureStrategy: ArrangementPlan['textureStrategy'],
   plan: SongPlan,
 ): SectionDevice {
+  const caps = capabilitiesFor(plan.soundChip);
   if (textureStrategy === 'counterDrive') return 'counter2';
-  if (textureStrategy === 'arpDrive') return plan.soundChip === 'opll' ? 'arp2' : 'counter2';
+  if (textureStrategy === 'arpDrive') return caps.independentArpeggio ? 'arp2' : 'counter2';
   if (textureStrategy === 'bassDrive') return 'counter1';
-  if (textureStrategy === 'hybrid') return plan.soundChip === 'opll' ? 'arp2' : 'counter2';
-  return plan.soundChip === 'opll' ? 'echo' : 'counter1';
+  if (textureStrategy === 'hybrid') return caps.independentArpeggio ? 'arp2' : 'counter2';
+  return caps.echoDoubling ? 'echo' : 'counter1';
 }
 
 function withTransitions(
@@ -102,8 +104,8 @@ function textureStrategyFor(
     return fallback[(seed >>> 1) % fallback.length]!;
   }
   let candidates: ArrangementPlan['textureStrategy'][];
-  if (plan.soundChip === 'nes2a03') {
-    // 2パルス+三角波では、独立アルペジオを作って後段で捨てない。
+  if (!capabilitiesFor(plan.soundChip).independentArpeggio) {
+    // 独立アルペジオの声部予算が無いバックエンドでは、作って後段で捨てない。
     candidates = plan.styleId === 'ska' ? ['counterDrive', 'classic'] : ['bassDrive', 'classic'];
   } else if (plan.styleId === 'rock') {
     candidates = ['bassDrive', 'counterDrive', 'hybrid'];
@@ -135,7 +137,9 @@ function resolveTupletOverlay(
   songPlan: SongPlan | undefined,
 ): TupletDivision | 'auto' | null {
   if (choice === 'off' || !songPlan) return null;
-  if (songPlan.soundChip !== 'opll' || songPlan.grooveFeel === 'tripletOverlay') return null;
+  // 連符レイヤーは独立オスティナート声部が担い手。予算のないバックエンドでは畳む。
+  if (!capabilitiesFor(songPlan.soundChip).independentArpeggio) return null;
+  if (songPlan.grooveFeel === 'tripletOverlay') return null;
   return choice;
 }
 
@@ -221,7 +225,10 @@ function planArrangement(
   const guidelineDraw = (Math.imul((seed ^ 0x4755_4944) >>> 0, 0x9e37_79b1) >>> 13) & 3;
   const counterRole: ArrangementPlan['counterRole'] = textureStrategy === 'counterDrive' || textureStrategy === 'hybrid'
     ? (guidelineDraw & 1) === 1 && guidelineEligible(songPlan) ? 'guideline' : 'counterline'
-    : guidelineDraw === 3 && songPlan?.soundChip === 'nes2a03' && guidelineEligible(songPlan)
+    : guidelineDraw === 3
+      && songPlan !== undefined
+      && !capabilitiesFor(songPlan.soundChip).independentArpeggio
+      && guidelineEligible(songPlan)
       ? 'guideline'
       : 'response';
   const bassRole = textureStrategy === 'bassDrive' && progressionId === 'minor-pedal'
@@ -273,7 +280,7 @@ function planArrangement(
     const finaleIndex = sectionIndexFor(arrangementPolicy?.finaleSection);
     if (songPlan && arrangementPolicy?.emphasizeReturn) {
       if (absenceIndex >= 0) {
-        const absenceDevice: SectionDevice = songPlan.soundChip === 'opll'
+        const absenceDevice: SectionDevice = capabilitiesFor(songPlan.soundChip).echoDoubling
           && (textureStrategy === 'classic' || textureStrategy === 'arpDrive')
           ? 'echo'
           : 'none';
@@ -311,7 +318,7 @@ function planArrangement(
       ((seed >>> 7) & 1) === 0 ? 'base' : 'sectionB',
       device,
     );
-    compact.echo = songPlan?.soundChip !== 'nes2a03'
+    compact.echo = capabilitiesFor(songPlan?.soundChip).echoDoubling
       && textureStrategy === 'classic'
       && ((seed >>> 8) & 1) === 1;
     compact.entrance = ((seed >>> 9) & 1) === 0 ? 'cymbal' : 'none';

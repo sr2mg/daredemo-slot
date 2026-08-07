@@ -18,6 +18,7 @@ import type {
 } from './composition-strategy.js';
 import { harmonicFunctionForToken } from './theory.js';
 import type { HarmonicFunction, ProgressionDef, StyleDef } from './theory.js';
+import type { SoundBackendId } from './sound-capabilities.js';
 
 export type HarmonicGoal = 'establish' | 'continue' | 'depart' | 'resolve' | 'turnaround';
 export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale';
@@ -121,7 +122,7 @@ export interface SongPlan {
   progressionId: string;
   /** 進行カタログ自体の長さ。4小節進行を長尺化した際の反復診断に使う。 */
   progressionBars: number;
-  soundChip: 'opll' | 'nes2a03';
+  soundChip: SoundBackendId;
   intro: SongIntroPlan;
   form: SongFormPlan;
   harmony: readonly HarmonyBarPlan[];
@@ -410,7 +411,7 @@ export interface CreateSongPlanOptions {
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
   grooveFeel: GrooveFeel;
-  soundChip: 'opll' | 'nes2a03';
+  soundChip: SoundBackendId;
   progression: ProgressionDef;
   style: StyleDef;
   choice: readonly number[];

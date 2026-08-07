@@ -443,6 +443,10 @@ export interface StyleDef {
   tension?: 'soft' | 'lush';
   /** スタイル既定のディミニューション密度(diminution.ts)。省略はoff。 */
   diminution?: 'light' | 'rich';
+  /** スタイル既定のハモリ(平行下3度)。省略はoff。 */
+  duet?: 'on';
+  /** スタイル既定のスライド(ポルタメント)指示。省略はoff。 */
+  glide?: 'on';
 }
 
 export const STYLES: StyleDef[] = [
@@ -514,6 +518,9 @@ export const STYLES: StyleDef[] = [
     bassCadence: 'diatonicPickup',
     tension: 'lush',
     diminution: 'rich',
+    // 実測由来: 四千年は3度ハモリ約3割+±250セント級スライドが署名。
+    duet: 'on',
+    glide: 'on',
   },
   {
     id: 'ska',

@@ -29,7 +29,11 @@ export interface BgmPcmRenderer {
   render(piece: Piece, options: ComposeOptions): Promise<ComposedBgmDef>;
 }
 
-/** 保存曲の音源指定を、既存プレイヤーが扱えるOPLL列またはPCMへ変換する単一入口。 */
+/**
+ * 保存曲の音源指定を、既存プレイヤーが扱えるOPLL列またはPCMへ変換する単一入口。
+ * soundChip='pcm'(作曲対象がPCM)の曲は、SoundFont環境が無い文脈(ゲーム本体)では
+ * OPLL編曲へ品位よく劣化させる。スタジオではpcmRendererオーバーライドが優先される。
+ */
 export function arrangeComposedBgm(piece: Piece, options: ComposeOptions): ComposedBgmDef {
   if (options.soundChip === 'nes2a03') {
     const spb = 60 / piece.bpm;

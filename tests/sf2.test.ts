@@ -179,6 +179,19 @@ describe('SF2パーサ(合成最小フォント)', () => {
     expect(crossings).toBeGreaterThan(880 * 2 * 0.3 * 0.85);
     expect(crossings).toBeLessThan(880 * 2 * 0.3 * 1.15);
   });
+
+  it('ポルタメント: 序盤は前音の音高、後半は目標音高で鳴る', () => {
+    const rate = 44100;
+    const wave = renderSf2(font, [
+      { program: 0, bank: 0, midi: 81, velocity: 100, startSec: 0, durSec: 0.5, gain: 1, glideFromMidi: 69 },
+    ], rate, 0.7);
+    // グライドは dur/2 上限90ms。序盤20msは440Hz寄り、200ms以降は880Hzに到達している。
+    const early = zeroCrossings(wave, 0.0, 0.02, rate) / 0.02;
+    const late = zeroCrossings(wave, 0.2, 0.45, rate) / 0.25;
+    expect(early).toBeLessThan(880 * 2 * 0.8);
+    expect(late).toBeGreaterThan(880 * 2 * 0.85);
+    expect(late).toBeLessThan(880 * 2 * 1.15);
+  });
 });
 
 describe('PCM編曲(Piece→GMノート)', () => {

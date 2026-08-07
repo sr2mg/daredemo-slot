@@ -6,7 +6,7 @@ import { initRhythmMode } from './mml.js';
 import { SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
 
-type MelodicPart = 'lead' | 'bass' | 'counter' | 'ostinato' | 'backing' | 'doubling';
+type MelodicPart = 'lead' | 'bass' | 'counter' | 'ostinato' | 'backing' | 'doubling' | 'duet';
 
 export interface VoiceAllocationStats {
   assigned: number;
@@ -102,6 +102,8 @@ const PART_PRIORITY: Record<MelodicPart, number> = {
   counter: 75,
   ostinato: 65,
   backing: 50,
+  // ハモリは「声部が空いているときだけ鳴る」低優先度枠(実機ドライバの様式)。
+  duet: 45,
   doubling: 30,
 };
 
@@ -115,6 +117,8 @@ interface Candidate {
   vibrato: boolean;
   shake: boolean;
   priority: number;
+  /** ポルタメント: このMIDIノートの音高から滑って入る。 */
+  glideFrom?: number;
 }
 
 interface AssignedCandidate extends Candidate {
@@ -128,6 +132,7 @@ const emptyPartStats = (): VoiceAllocationStats['parts'] => ({
   counter: { assigned: 0, dropped: 0 },
   ostinato: { assigned: 0, dropped: 0 },
   backing: { assigned: 0, dropped: 0 },
+  duet: { assigned: 0, dropped: 0 },
   doubling: { assigned: 0, dropped: 0 },
 });
 
@@ -209,6 +214,7 @@ function noteCandidate(
     vibrato: part === 'lead' && note.articulation !== 'staccato' && note.dur >= 1,
     shake: part === 'lead' && note.ornament === 'shake',
     priority: PART_PRIORITY[part],
+    ...(part === 'lead' && note.glideFrom !== undefined ? { glideFrom: note.glideFrom } : {}),
   };
 }
 
@@ -248,6 +254,8 @@ export function arrangePiece(
   for (const note of piece.bass) candidates.push(noteCandidate('bass', note, voices.bass, 2));
   for (const note of piece.counterMelody) candidates.push(noteCandidate('counter', note, voices.counter, 5));
   for (const note of piece.ostinato ?? []) candidates.push(noteCandidate('ostinato', note, voices.ostinato, 7));
+  // ハモリはリードと同じ音色で一段控えめに。優先度45なので混雑時は自然に消える。
+  for (const note of piece.duet ?? []) candidates.push(noteCandidate('duet', note, voices.lead, 7));
 
   // コードの中央声部を単音リフとして刻む。独立声部が多い瞬間だけアロケータが先に落とす。
   for (const chord of piece.chords) {
@@ -303,7 +311,19 @@ export function arrangePiece(
     const start = note.beat * spb;
     const end = note.endBeat * spb;
     const freq = midiFreq(note.midi);
-    b.keyOn(note.ch, note.voice, note.volume, freq, start);
+    // ポルタメント近似: 前音の音高でキーオンし、60msかけてピッチイベントで目標へ滑る。
+    if (note.glideFrom !== undefined && !note.shake) {
+      const startFreq = midiFreq(note.glideFrom);
+      const glideEnd = Math.min(end, start + 0.06);
+      b.keyOn(note.ch, note.voice, note.volume, startFreq, start);
+      for (let at = start + 0.01; at < glideEnd; at += 0.01) {
+        const progress = Math.min(1, (at - start) / 0.06);
+        b.pitch(note.ch, startFreq * (freq / startFreq) ** progress, at);
+      }
+      b.pitch(note.ch, freq, glideEnd);
+    } else {
+      b.keyOn(note.ch, note.voice, note.volume, freq, start);
+    }
     if (note.shake || note.vibrato) {
       const from = note.shake ? start : start + (end - start) * 0.3;
       const depth = note.shake ? 32 : 10;

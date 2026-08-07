@@ -276,6 +276,8 @@ export interface Sf2Note {
   durSec: number;
   /** パート別ミックス係数。 */
   gain: number;
+  /** ポルタメント: このMIDIノートの音高から目標へ滑って入る。 */
+  glideFromMidi?: number;
 }
 
 interface Voice {
@@ -336,6 +338,12 @@ export function renderSf2(
     const { zone, note } = voice;
     const ratio = (zone.sample.rate / sampleRate)
       * 2 ** (((note.midi - zone.rootKey) * zone.scaleTuning + zone.cents) / 1200);
+    // ポルタメント: 開始時は前音の音高、durの半分(最大90ms)かけて目標へ等比で滑る。
+    const glideCents = note.glideFromMidi !== undefined ? (note.glideFromMidi - note.midi) * 100 : 0;
+    const glideSamples = glideCents !== 0
+      ? Math.max(1, Math.floor(Math.min(0.09, note.durSec * 0.5) * sampleRate))
+      : 0;
+    let currentRatio = glideSamples > 0 ? ratio * 2 ** (glideCents / 1200) : ratio;
     // EMU互換: initialAttenuationは実測0.4倍で効く(fluidsynth互換。GeneralUser前提)。
     const baseAmp = 10 ** (-(zone.attenuationCb * 0.4) / 200)
       * (note.velocity / 127) ** 2
@@ -379,7 +387,16 @@ export function renderSf2(
       const frac = position - floor;
       const sample = (data[floor]! + frac * (data[floor + 1]! - data[floor]!)) / 32768;
       out[i] = out[i]! + sample * env * baseAmp * 0.25;
-      position += ratio;
+      if (glideSamples > 0) {
+        const elapsed = i - startIndex;
+        if (elapsed >= glideSamples) {
+          currentRatio = ratio;
+        } else if ((elapsed & 31) === 0) {
+          // 32サンプルごとの区分等比補間(サンプル毎のpowを避ける)。
+          currentRatio = ratio * 2 ** ((glideCents * (1 - elapsed / glideSamples)) / 1200);
+        }
+      }
+      position += currentRatio;
     }
   }
   // ソフトクリップで和音の重なりを整える(オフラインなのでtanhでよい)。
