@@ -180,6 +180,44 @@ export const COMPOSITION_HYPOTHESES: readonly CompositionHypothesis[] = [
     experimentIds: [],
     nextComparison: '同じ短いゲーム場面へ候補曲をランダムに組み込み、適合感・邪魔にならなさ・再記憶を比較する。',
   },
+  {
+    id: 'HYP-010',
+    title: '五音語彙×カラートーン和声の共存',
+    status: 'untested',
+    proposition: 'kmmo系の曲で旋律語法をpentatonic(無半音五音、装置は生かす)にすると、'
+      + 'standard(ダイアトニック)より00年代ネトゲBGM系の様式適合と魅力が上がる。'
+      + '根拠は四千年の実測(旋律pc上位5音=メジャーペンタで54%、和声はM7 41%のカラートーン飽和、'
+      + '跳躍は五音隣接2/3半音セル上行が最頻で彩りにP4/P5)。',
+    assessment: '装置は実装済み(melodicLanguage: pentatonic。五音は文化様式でなく音組織として分離し、'
+      + 'テンション・ディミニューション・デュエット・グライドは通常どおり)。様式適合・魅力は未聴取。',
+    experimentIds: [],
+    nextComparison: '同一シード・同一kmmoオプションで melodicLanguage standard/pentatonic だけを切り替えてブラインド比較する。',
+  },
+  {
+    id: 'HYP-011',
+    title: '走句による16分細分密度',
+    status: 'untested',
+    proposition: 'ストレート・中庸BPMのrich細分で4分対を16分走句(到達側へ寄せた音組織の歩み)で埋めると、'
+      + '8分対の経過音のみより疾走感が上がり、かつ機械的にならない。'
+      + '根拠はESTi系実測(BPM96-103でonsets/beat 2.74、旋律の65%が16分、16分裏拍率0.35)。'
+      + 'EXP-002/003で残っていた「16分裏拍シンコペーションの穴」への回答でもある。',
+    assessment: '装置は実装済み(diminution.tsのフィギュア一般化: 経過音・走句・刺繍音。'
+      + '走句はストレートのみ、副旋律の予約対は譲る、装飾は骨格の音域を広げない)。疾走感の効果は未聴取。',
+    experimentIds: [],
+    nextComparison: '同一シードで走句の入切(maxGapBeats 0.75/1.0)だけを変えてブラインド比較する。',
+  },
+  {
+    id: 'HYP-012',
+    title: '曲間モチーフ流用',
+    status: 'untested',
+    proposition: '同一モチーフ(実音でなくジェスチャー)を別のキー・語法・スタイルで再実現した2曲は、'
+      + '無関係な2曲より「同じ作品世界の曲」として認知され、セットとしての印象が上がる。'
+      + '根拠はESTiのモチーフ運用(Apparition主題のOP・四千年・MOTIVITYへの語法横断流用)。',
+    assessment: '装置は実装済み(Piece.motifの保存とComposeOptions.externalMotifによる移植。'
+      + 'モチーフは往復不変・決定論)。認知効果は未聴取。',
+    experimentIds: [],
+    nextComparison: 'externalMotifを共有した2曲ペアと独立シードの2曲ペアを聴かせ、「同じ世界の曲はどちらか」を当てさせる。',
+  },
 ] as const;
 
 export const COMPOSITION_HYPOTHESIS_STATUS_LABELS: Record<CompositionHypothesisStatus, string> = {

@@ -169,7 +169,7 @@ function songSummary(options: ComposeOptions): string {
   const tonalLabel = tonality === 'minor' ? ' / 短調' : '';
   const melody = melodicLanguage === 'japanese'
     ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
-    : '';
+    : melodicLanguage === 'pentatonic' ? ' / 五音ペンタ' : '';
   const groove = options.grooveFeel && options.grooveFeel !== 'straight'
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
@@ -244,7 +244,9 @@ function loadComposerForm(): ComposerForm {
     : raw.tonality === 'major' ? 'major' : legacyMode === 'minor' ? 'minor' : 'major';
   const melodicLanguage: MelodicLanguage = raw.melodicLanguage === 'japanese'
     ? 'japanese'
-    : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
+    : raw.melodicLanguage === 'pentatonic'
+      ? 'pentatonic'
+      : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
   const availableProgressions = progressionsForTonality(tonality).filter((p) => p.slots.length <= bars);
   const initialProgression = typeof raw.progId === 'string'
     ? availableProgressions.find((p) => p.id === raw.progId) ?? availableProgressions[0]!
@@ -467,7 +469,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
       ...(melodicLanguage === 'japanese' ? {
         melodicLanguage,
         ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
-      } : {}),
+      } : melodicLanguage === 'pentatonic' ? { melodicLanguage } : {}),
       ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
       // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
       ...(capabilitiesFor(soundChip).independentArpeggio
@@ -999,6 +1001,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
           >
             <option value="standard">旋律語法: 標準</option>
             <option value="japanese">旋律語法: 和風五音</option>
+            <option value="pentatonic">旋律語法: 五音ペンタ</option>
           </select>
           {melodicLanguage === 'japanese' && (
             <select

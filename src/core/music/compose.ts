@@ -14,7 +14,8 @@
 import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import {
-  CHORDS, MAJOR_SCALE, NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
+  CHORDS, MAJOR_PENTATONIC_SCALE, MAJOR_SCALE, MINOR_PENTATONIC_SCALE,
+  NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
   chordScalePcs, harmonicFunctionForToken, progressionForTonality,
 } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
@@ -100,7 +101,7 @@ export type {
 
 export type ComposeBars = 4 | 8 | 16 | 40;
 export type Tonality = 'major' | 'minor';
-export type MelodicLanguage = 'standard' | 'japanese';
+export type MelodicLanguage = 'standard' | 'japanese' | 'pentatonic';
 /** @deprecated v1保存曲の互換入力。新規コードはtonalityとmelodicLanguageを使う。 */
 export type MelodyMode = 'major' | 'minor' | 'japanese';
 export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
@@ -216,7 +217,11 @@ export interface ComposeOptions {
   intro?: boolean;
   /** 和声と進行カタログの調性。省略時はmajor。 */
   tonality?: Tonality;
-  /** 調性とは独立した旋律語法。japaneseは五音・核音・間・装飾を連動させる。 */
+  /**
+   * 調性とは独立した旋律語法。japaneseは五音・核音・間・装飾を連動させる文化様式。
+   * pentatonicは音組織だけを無半音五音に絞り、テンション・ディミニューション等の
+   * 装置は通常どおり使える汎用語彙(00年代ネトゲBGM系の「五音旋律×カラートーン和声」)。
+   */
   melodicLanguage?: MelodicLanguage;
   /** @deprecated v1保存曲との互換入力。 */
   melodyMode?: MelodyMode;
@@ -252,6 +257,13 @@ export interface ComposeOptions {
    * 省略/autoはスタイル既定。和風五音は常にoff(揺り・間の体系と衝突)。
    */
   glide?: 'auto' | GlidePolicy;
+  /**
+   * 別の曲から持ち込む主題ジェスチャー。指定すると主題区間(A)の音程ジェスチャーを
+   * これで置き換える(乱数消費は変えないので、他の区間・声部はそのまま)。
+   * 曲のPiece.motifを保存し、キー・調性・語法・スタイルを替えた別曲へ渡すことで、
+   * 同一モチーフの語法横断流用ができる。
+   */
+  externalMotif?: MelodicMotif;
   /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
   melodyEdits?: readonly MelodyEdit[];
   seed: number;
@@ -417,6 +429,16 @@ export interface Piece {
   /** @deprecated 表示・保存互換用。 */
   melodyMode: MelodyMode;
   japanesePlan: JapanesePlan | null;
+  /**
+   * 旋律語彙の絶対ピッチクラス(標準=ダイアトニック、和風=五音3様式、五音=無半音五音)。
+   * 診断・修正提案はこれを「その曲の音組織」として参照し、語法別の分岐を持たない。
+   */
+  melodicScalePcs: number[];
+  /**
+   * 主題区間(A)の音程ジェスチャー。保存して別の曲のexternalMotifへ渡すと、
+   * 同じモチーフを別のキー・語法・スタイルで再実現できる。
+   */
+  motif: MelodicMotif;
   grooveFeel: GrooveFeel;
   /** ループ本体の小節数。introBars は含めない。 */
   bars: number;
@@ -471,6 +493,19 @@ function nearestWithPc(target: number, pcs: readonly number[], lo = MELODY_LO, h
     }
   }
   return best; // pcs が空でない限り必ず見つかる
+}
+
+/** 音組織の隣接音級間の最大半音数(巡回)。「順次」の上限を音組織自身から導くために使う。 */
+function maxAdjacentScaleInterval(pcs: readonly number[]): number {
+  const sorted = [...new Set(pcs.map((pc) => ((pc % 12) + 12) % 12))].sort((a, b) => a - b);
+  let max = 0;
+  for (let index = 0; index < sorted.length; index++) {
+    const gap = index + 1 < sorted.length
+      ? sorted[index + 1]! - sorted[index]!
+      : sorted[0]! + 12 - sorted[index]!;
+    max = Math.max(max, gap);
+  }
+  return max;
 }
 
 /** 前後2音の双方へ近い候補を選び、大きな跳躍を片側へ押し付けない。 */
@@ -567,10 +602,39 @@ function makeDistinctMotifRhythm(
   return rhythm;
 }
 
-interface PhraseMove {
+/** ジェスチャーの1ステップ。実音でなく「方向・順次/跳躍・跳躍幅」だけを持つ。 */
+export interface MotifMove {
   direction: 1 | -1;
   stepwise: boolean;
+  /** 跳躍時の目安半音数(3〜7)。五音・和風語法では各音組織の跳躍語彙へ読み替える。 */
   leap: number;
+}
+type PhraseMove = MotifMove;
+
+/**
+ * 曲間で持ち運べる旋律モチーフ(2小節=8分16ステップのジェスチャー)。
+ * 実音を持たないため、別のキー・調性・音組織・スタイル・和声の上でも同じ「動き方」
+ * として再実現できる。モチーフの同一性を音高でなくジェスチャーに置くことで、
+ * 一つの主題を語法を替えて複数曲へ流用する運用(ESTi系のモチーフ横断)を支える。
+ */
+export interface MelodicMotif {
+  moves: readonly MotifMove[];
+}
+
+/**
+ * 外部モチーフを検証済みのジェスチャー列へ正規化する。壊れた保存データでも
+ * compose() を決定論のまま完走させるため、欠けたステップは fallback で補う。
+ */
+function sanitizeMotif(motif: MelodicMotif, fallback: readonly PhraseMove[]): PhraseMove[] {
+  return fallback.map((base, index) => {
+    const move = motif.moves[index];
+    if (!move) return { ...base };
+    return {
+      direction: move.direction === -1 ? -1 : 1,
+      stepwise: move.stepwise === true,
+      leap: Math.min(7, Math.max(3, Math.round(Number(move.leap) || 3))),
+    };
+  });
 }
 
 /**
@@ -1059,7 +1123,8 @@ function realizeIntro(
   // 本編と同じコードスケール法則をイントロの弱拍にも適用する（V7mの導音等）。
   const introChordScaleCache = new Map<string, readonly number[]>();
   const scaleAt = (chord: ChordEvent): readonly number[] => {
-    if (melodicLanguage === 'japanese') return scalePcs;
+    // 本編と同じ規則: 五音系語法は旋律語彙が固定で、コードスケールの上書きを受けない。
+    if (melodicLanguage !== 'standard') return scalePcs;
     let cached = introChordScaleCache.get(chord.token);
     if (!cached) {
       cached = chordScalePcs(scalePcs, chord.pcs, (CHORDS[chord.token]!.root + keyRoot) % 12);
@@ -1246,7 +1311,10 @@ export function compose(opts: ComposeOptions): Piece {
     ? japanesePlanFor(keyRoot, opts.japaneseScale ?? 'auto', opts.seed)
     : null;
   const scalePcs = japanesePlan?.scalePcs
-    ?? (tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE).map((t) => (t + keyRoot) % 12);
+    ?? (melodicLanguage === 'pentatonic'
+      ? (tonality === 'minor' ? MINOR_PENTATONIC_SCALE : MAJOR_PENTATONIC_SCALE)
+      : (tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE)
+    ).map((t) => (t + keyRoot) % 12);
   // 弱拍・経過音の音組織は小節のコードスケール（変位音でキーの音階を上書きした音組織）。
   // 和風五音は核音・間の独自語彙を持つため対象外とし、従来の音組織を保つ。
   // テンション導出も同じキャッシュを通し、旋律側と音組織の解釈が分岐しないようにする。
@@ -1260,7 +1328,9 @@ export function compose(opts: ComposeOptions): Piece {
     return cached;
   };
   const scaleAt = (chord: ChordEvent): readonly number[] => {
-    if (japanesePlan) return scalePcs;
+    // 五音系の語法は旋律語彙が固定(コードスケールで上書きしない)。変位和音への追従は
+    // 強拍のコードトーン規則が担い、弱拍の歩みは五音のまま保つ(四千年型の書法)。
+    if (melodicLanguage !== 'standard') return scalePcs;
     return chordScaleForToken(chord.token, chord.pcs);
   };
   const grooveFeel = opts.grooveFeel ?? 'straight';
@@ -1376,6 +1446,16 @@ export function compose(opts: ComposeOptions): Piece {
   );
   // 区間ごとに別の音程ジェスチャーを持つ。リズムだけ変えて同じ上下動をA〜Eへ貼らない。
   const phraseGestures = songPlan.form.sections.map(() => makePhraseGesture(rng, style));
+  // 曲間モチーフ流用: 外部モチーフは主題区間(A)のジェスチャーだけを置き換える。
+  // 乱数消費は変えない(全区間ぶん生成してから差し替える)ので、他区間・他声部は不変。
+  // B〜E側への浸透は既存のモチーフ借用(motifSourceBar / externalMotifPhrases)が担う。
+  if (opts.externalMotif) phraseGestures[0] = sanitizeMotif(opts.externalMotif, phraseGestures[0]!);
+  // 音組織上の「隣」とみなす最大半音数。標準=2(全音)。和風は既存挙動の4を保存
+  // (都節の1↔5枠を跨ぐ揺りを順次扱いにしてきた歴史的経緯)。五音は隣接音級の
+  // 最大間隔から導出する(無半音五音=3)。
+  const scaleStepMax = melodicLanguage === 'standard' ? 2
+    : melodicLanguage === 'japanese' ? 4
+      : maxAdjacentScaleInterval(scalePcs);
   const baseCenter = style.id === 'rock' ? 77 : style.id === 'ska' ? 79 : 78;
   const climaxChord = chordAt(phrasePlan.climaxBar * 4);
   const climaxMidi = nearestWithPc(
@@ -1459,10 +1539,17 @@ export function compose(opts: ComposeOptions): Piece {
           midi = prev;
         } else if (move.stepwise) {
           const chordScale = scaleAt(chord);
-          const motionPcs = melodicLanguage === 'japanese' || chordScale.includes(prev % 12) ? chordScale : chord.pcs;
+          const motionPcs = melodicLanguage !== 'standard' || chordScale.includes(prev % 12) ? chordScale : chord.pcs;
           midi = stepOnScale(prev, dir, motionPcs);
         } else {
-          const leap = melodicLanguage === 'japanese' ? (move.leap % 2 === 0 ? 7 : 5) : move.leap;
+          // 跳躍語彙は音組織から導く: 和風は4度枠の5/7半音、五音は「隣接音級2つぶん」
+          // (音組織の並びで1音飛ばし=4〜7半音。実測のP4/P5彩り帯がここから出る)、
+          // 標準は従来の3〜5半音。着地はいずれも和声音へ吸着する。
+          const leap = melodicLanguage === 'japanese'
+            ? (move.leap % 2 === 0 ? 7 : 5)
+            : melodicLanguage === 'pentatonic'
+              ? Math.abs(stepOnScale(stepOnScale(prev, dir, scalePcs), dir, scalePcs) - prev)
+              : move.leap;
           midi = nearestWithPc(prev + dir * leap, structuralPcs);
         }
       }
@@ -1589,8 +1676,8 @@ export function compose(opts: ComposeOptions): Piece {
       }
       const intervalFromPrev = Math.abs(midi - prev);
       const stepwiseFromPrev = (intervalFromPrev >= 1 && intervalFromPrev <= 2)
-        || (melodicLanguage === 'japanese'
-          && intervalFromPrev >= 1 && intervalFromPrev <= 4
+        || (scaleStepMax > 2
+          && intervalFromPrev >= 1 && intervalFromPrev <= scaleStepMax
           && scalePcs.includes(((prev % 12) + 12) % 12)
           && scalePcs.includes(midi % 12));
       if (
@@ -2088,6 +2175,12 @@ export function compose(opts: ComposeOptions): Piece {
       diminutionPolicy,
       (beat) => scaleAt(chordAt(beat - loopStartBeat)),
       (bound) => diminutionRng.nextInt(bound),
+      {
+        // 走句(4分対の16分埋め)は16分格子が有効なストレートのみ。bounce等は従来の8分対まで。
+        maxGapBeats: grooveFeel === 'straight' ? 1.0 : 0.75,
+        // 走句は8分格子位置にも乗るため、副旋律が予約した発音位置を避ける。
+        blockedBeats: counterMelody.map((note) => note.beat),
+      },
     );
     finalMelody = [
       ...editedMelody.filter((note) => note.beat < loopStartBeat),
@@ -2117,6 +2210,8 @@ export function compose(opts: ComposeOptions): Piece {
     melodicLanguage,
     melodyMode,
     japanesePlan,
+    melodicScalePcs: [...scalePcs],
+    motif: { moves: phraseGestures[0]!.map((move) => ({ ...move })) },
     grooveFeel,
     bars: opts.bars,
     introBars,
