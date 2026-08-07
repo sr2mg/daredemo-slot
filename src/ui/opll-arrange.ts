@@ -6,7 +6,15 @@ import { initRhythmMode } from './mml.js';
 import { SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
 
-type MelodicPart = 'lead' | 'bass' | 'counter' | 'ostinato' | 'backing' | 'doubling' | 'duet';
+import { glideDurationSec } from '../core/music/glide.js';
+import type { StageRole } from '../audio/stage.js';
+import { noteStageEchoFor } from '../audio/time-layer.js';
+
+/**
+ * OPLLの旋律パート語彙 = ミックスの役割語彙(stage.ts)からドラム(リズムモード担当)を
+ * 除き、エコー装置の再発音枠(doubling)を足したもの。役割追加時は型エラーで網羅を強制。
+ */
+type MelodicPart = Exclude<StageRole, 'drums'> | 'doubling';
 
 export interface VoiceAllocationStats {
   assigned: number;
@@ -253,7 +261,9 @@ export function arrangePiece(
     candidates.push(noteCandidate('lead', note, leadVoiceAt(note.beat), strong ? 2 : 4));
     const section = arrangementSectionFor(piece, note.beat);
     if (note.beat >= piece.loopStartBeat && section.echo && note.role !== 'ornament') {
-      const delay = piece.grooveFeel === 'bounce' ? 2 / 3 : 1 / 2;
+      // 遅延則は二重時間軸のMIDI段(time-layer.ts)と同じ関数を参照する。タップ数と
+      // 減衰だけは声部予算の都合でOPLL固有(1タップの音量+3ダブリング)。
+      const delay = noteStageEchoFor(piece.grooveFeel).delayBeats;
       let beat = note.beat + delay;
       if (beat >= piece.beats) beat = piece.loopStartBeat + beat - piece.beats;
       const dur = Math.min(note.dur, piece.beats - beat);
@@ -268,8 +278,13 @@ export function arrangePiece(
   for (const note of piece.bass) candidates.push(noteCandidate('bass', note, voices.bass, 2));
   for (const note of piece.counterMelody) candidates.push(noteCandidate('counter', note, voices.counter, 5));
   for (const note of piece.ostinato ?? []) candidates.push(noteCandidate('ostinato', note, voices.ostinato, 7));
-  // ハモリはその区間のリードと同じ音色で一段控えめに。優先度45なので混雑時は自然に消える。
-  for (const note of piece.duet ?? []) candidates.push(noteCandidate('duet', note, leadVoiceAt(note.beat), 7));
+  // ハモリはその区間のリードと同じ音色。優先度45なので混雑時は自然に消える。
+  // バランスはここが単独所有: リード比+2段(velocityは主旋律の継承で、調整には使わない)。
+  for (const note of piece.duet) {
+    const candidate = noteCandidate('duet', note, leadVoiceAt(note.beat), 7);
+    candidate.volume = Math.min(15, candidate.volume + 2);
+    candidates.push(candidate);
+  }
 
   // コードの中央声部を単音リフとして刻む。独立声部が多い瞬間だけアロケータが先に落とす。
   for (const chord of piece.chords) {
@@ -325,13 +340,15 @@ export function arrangePiece(
     const start = note.beat * spb;
     const end = note.endBeat * spb;
     const freq = midiFreq(note.midi);
-    // ポルタメント近似: 前音の音高でキーオンし、60msかけてピッチイベントで目標へ滑る。
+    // ポルタメント近似: 前音の音高でキーオンし、共有規則(glide.ts)の時間で
+    // 10ms刻みのピッチイベントで目標へ等比スライドする。
     if (note.glideFrom !== undefined && !note.shake) {
       const startFreq = midiFreq(note.glideFrom);
-      const glideEnd = Math.min(end, start + 0.06);
+      const glideSec = glideDurationSec(end - start);
+      const glideEnd = start + glideSec;
       b.keyOn(note.ch, note.voice, note.volume, startFreq, start);
       for (let at = start + 0.01; at < glideEnd; at += 0.01) {
-        const progress = Math.min(1, (at - start) / 0.06);
+        const progress = Math.min(1, (at - start) / glideSec);
         b.pitch(note.ch, startFreq * (freq / startFreq) ** progress, at);
       }
       b.pitch(note.ch, freq, glideEnd);

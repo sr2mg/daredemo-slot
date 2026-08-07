@@ -6,6 +6,11 @@
  * バックエンド追加のたびに全箇所の再訪が必要だった。ここに能力を宣言として集約し、
  * 各分岐は該当フィールドを参照するだけにする。
  *
+ * 注意: 各フィールドは「本リポジトリの編曲層がそのバックエンド向けに実装済みか」の
+ * 宣言であって、ハードウェアの理論上の能力ではない。例: 2A03はハード的には
+ * ピッチスライドが得意だが、NES編曲層が未実装なので glide: false。trueへ変えるのは
+ * 対応する編曲層の実装を用意してから。
+ *
  * 原則は「豊かに書いて、チップ側で品位よく劣化させる」:
  * - 能力が無いバックエンドでは装置を作曲段階で畳む(音が破綻しないことを保証)
  * - 劣化写像(GMドラム→チップ5音など)は各編曲層が実装し、ここに文書化する
@@ -58,7 +63,7 @@ export const SOUND_CAPABILITIES: Record<SoundBackendId, SoundCapabilities> = {
     echoDoubling: false,
     colorTones: false, // 単声伴奏でテンションが3度を追い出すと和声が消える
     duetLayer: false,
-    glide: false,
+    glide: false, // ハード(2A03)は得意だがNES編曲層が未実装
     stereo: false,
     backingPolyphony: false,
     drumVocabulary: 'chip5',

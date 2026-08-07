@@ -3,7 +3,9 @@
  * を明示的な仕様として一箇所に置く。
  *
  * - MIDI段(noteStage): 旋律の複製+遅延+減衰。再発音なのでアタックが立つ。
- *   遅延はOPLLと同じ8分(bounce時はスウィング後の2/3拍)——両バックエンドの意味論を統一。
+ *   遅延則(8分、bounce時はスウィング後の2/3拍)はnoteStageEchoForが単一に所有し、
+ *   OPLL編曲(opll-arrange)もPCM編曲もこの関数を参照する。タップ数と減衰だけは
+ *   声部予算の都合でバックエンド固有(OPLLは1タップの減衰ダブリング)。
  * - オーディオ段(audioStage): 付点8分のピンポンディレイ。スメアの軸。
  *   noteStageと**意図的に別の分割**を持つことで初めて「軸が2本」になる。
  * - どちらもarrangement層のセクション計画(section.echo)が有効にした区間だけで鳴る。
@@ -14,6 +16,7 @@
  */
 
 import type { GrooveFeel } from '../core/music/compose.js';
+import type { StageRole } from './stage.js';
 
 export interface NoteStageEcho {
   /** タップ遅延(拍)。 */
@@ -35,7 +38,7 @@ export function noteStageEchoFor(grooveFeel: GrooveFeel): NoteStageEcho {
 export const AUDIO_STAGE_DELAY_BEATS = 0.75;
 
 /** オーディオ段ディレイへの送り量(ロール別)。時間装置は空間(depth)と独立の軸。 */
-export const ROLE_DELAY_SEND: Record<string, number> = {
+export const ROLE_DELAY_SEND: Record<StageRole, number> = {
   lead: 0.22,
   duet: 0.08,
   counter: 0.12,

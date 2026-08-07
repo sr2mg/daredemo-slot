@@ -14,11 +14,12 @@
 
 import { arrangementSectionFor } from '../core/music/compose.js';
 import type { Piece } from '../core/music/compose.js';
-import type { PcmBgmDef } from '../ui/bgm-audio.js';
 import { duckWet, onePoleLowpass, pingPongDelay, stereoChorus, stereoReverb } from './effects.js';
+import type { PcmBgmDef } from './pcm-types.js';
 import { renderSf2Stems } from './sf2.js';
 import type { Sf2Font, Sf2Note } from './sf2.js';
 import { panGains, ROLE_STAGE, roomFor } from './stage.js';
+import type { StageRole } from './stage.js';
 import {
   AUDIO_STAGE_DELAY_BEATS,
   noteStageEchoFor,
@@ -28,7 +29,8 @@ import {
 
 export const SF2_SAMPLE_RATE = 44100;
 
-export type PcmPart = 'lead' | 'duet' | 'counter' | 'ostinato' | 'backing' | 'bass' | 'drums';
+/** PCMのパート語彙はミックスの役割語彙(stage.ts)そのもの。 */
+export type PcmPart = StageRole;
 export interface PcmPresetRef {
   bank: number;
   program: number;
@@ -78,10 +80,14 @@ const DRUM_KEYS: Record<string, { key: number; velocity: number }> = {
 const velocityOf = (value: number | undefined): number =>
   Math.max(1, Math.min(127, Math.round(30 + (value ?? 0.75) * 97)));
 
-/** パート別の音量ヒエラルキー(ミックスの縦)。空間は stage.ts、時間は time-layer.ts。 */
+/**
+ * パート別の音量ヒエラルキー(ミックスの縦)。空間は stage.ts、時間は time-layer.ts。
+ * ハモリのバランスはここが単独所有する(velocityは主旋律のフレージングの継承であって
+ * バランス調整には使わない)。
+ */
 const PART_GAINS: Record<PcmPart, number> = {
   lead: 1.0,
-  duet: 0.55,
+  duet: 0.45,
   counter: 0.65,
   ostinato: 0.6,
   backing: 0.5,
@@ -151,8 +157,8 @@ export function arrangeSf2Parts(
   }
   return {
     lead: piece.melody.map((event) => noteFor(event, leadRefAt(event.beat), PART_GAINS.lead)),
-    // ハモリはその区間のリードと同じ音色(実測の「連れ」は同種の音)。
-    duet: (piece.duet ?? []).map((event) => noteFor(
+    // ハモリはその区間のリードと同じ音色(「連れ」は同種の音、という様式仮説)。
+    duet: piece.duet.map((event) => noteFor(
       event, overrides.duet ?? leadRefAt(event.beat), PART_GAINS.duet,
     )),
     counter: partFor(piece.counterMelody, refFor('counter'), PART_GAINS.counter),
@@ -216,7 +222,7 @@ export function renderSf2Bgm(
   const echoSpec = noteStageEchoFor(piece.grooveFeel);
   for (const [part, baseNotes] of Object.entries(parts) as [PcmPart, Sf2Note[]][]) {
     if (baseNotes.length === 0) continue;
-    const stage = ROLE_STAGE[part]!;
+    const stage = ROLE_STAGE[part];
     // MIDI段エコー: セクション計画が有効にした区間のリードだけ。タップはループへ巻き戻す。
     const notes = part === 'lead'
       ? [
@@ -240,7 +246,7 @@ export function renderSf2Bgm(
     const [gainLeft, gainRight] = panGains(stage.pan);
     const dryGain = room.dryAt(stage.depth);
     const chorusSend = stage.width * 0.5;
-    const delaySend = ROLE_DELAY_SEND[part] ?? 0;
+    const delaySend = ROLE_DELAY_SEND[part];
     // 深度由来の高域減衰を送り経路にだけ掛ける(直接音は明瞭なまま)。
     if (stems.send.length > 0) onePoleLowpass(stems.send, SF2_SAMPLE_RATE, room.dampHzAt(stage.depth));
     const preDelaySamples = Math.round((room.preDelayMsAt(stage.depth) / 1000) * SF2_SAMPLE_RATE);
@@ -263,6 +269,8 @@ export function renderSf2Bgm(
   const delay = pingPongDelay(delayBus, SF2_SAMPLE_RATE, AUDIO_STAGE_DELAY_BEATS * spb, room.delayFeedback);
 
   // 合算→ループ末尾の尾をループ区間へ巻き戻し→総和一箇所でソフトクリップ。
+  // 巻き戻しの帰結として、初回再生でもループ入口で(まだ鳴っていない音の)残響尾が
+  // 先に聞こえる。継ぎ目で尾が途切れるより知覚的害が小さい、意図した妥協。
   const sumLeft = new Float32Array(length);
   const sumRight = new Float32Array(length);
   for (let i = 0; i < length; i++) {

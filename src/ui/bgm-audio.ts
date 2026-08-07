@@ -1,19 +1,11 @@
 import type { ComposeOptions, Piece } from '../core/music/compose.js';
 import { renderNesPiece, NES_SAMPLE_RATE } from '../audio/nes-apu.js';
+import type { PcmBgmDef } from '../audio/pcm-types.js';
 import { arrangePiece } from './opll-arrange.js';
 import type { SfxDef } from './opll-core.js';
 
-export interface PcmBgmDef {
-  kind: 'pcm';
-  /** モノラル、またはステレオの左チャンネル。 */
-  wave: Float32Array;
-  /** ステレオの右チャンネル。省略時はモノラル再生(2A03等)。waveと同一長であること。 */
-  waveRight?: Float32Array;
-  sampleRate: number;
-  /** 初回は0秒から再生し、2周目以降はこの区間だけをループする。 */
-  loopStart: number;
-  loopEnd: number;
-}
+// 型の所有はaudio層(audio→uiの逆依存を作らない)。既存の参照先として再エクスポート。
+export type { PcmBgmDef } from '../audio/pcm-types.js';
 
 export type ComposedBgmDef = (SfxDef & { loopStart: number; loopEnd: number }) | PcmBgmDef;
 
