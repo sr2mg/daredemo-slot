@@ -1155,6 +1155,9 @@ export function App() {
           <span className="panel-note">
             ベット/レバー等の音色変更は「効果音作成」パネルで（レシピ・音色を選んで契機に割り当て）
           </span>
+          <a className="panel-note" href="bgm.html" target="_blank" rel="noreferrer">
+            作曲スタジオ（単独ページ）を開く ↗
+          </a>
         </div>
         <SoundTestPanel player={sfxRef.current!} />
         <BgmComposerPanel player={sfxRef.current!} />

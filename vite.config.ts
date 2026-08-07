@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
@@ -11,6 +12,16 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   base: '/daredemo-slot/',
+  build: {
+    rollupOptions: {
+      // 2エントリ構成: スロット本体と作曲スタジオ。作曲専用の重い機能
+      // （将来のPCMレンダラ等）をゲーム側バンドルへ乗せないための分離。
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        bgm: fileURLToPath(new URL('./bgm.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     port: Number(process.env['PORT']) || 5173,
     // モバイル実機確認用: ngrok 等のトンネル越しアクセスを許可（それ以外のホストは既定どおり拒否）
