@@ -39,7 +39,11 @@ export interface SoundCapabilities {
   stereo: boolean;
   /** 伴奏の同時発音(和音をそのまま鳴らせるか。falseなら単音リフに要約)。 */
   backingPolyphony: boolean;
-  /** ドラム語彙。chip5 = kick/snare/tom/cymbal/hat の5音(YM2413リズムモード由来)。 */
+  /**
+   * ドラム語彙。chip5 = kick/snare/tom/cymbal/hat の5音(YM2413リズムモード由来)。
+   * gm はさらにハットのopen/closeと拍節アクセント(DrumEvent.open/velocity、
+   * drum-articulation.tsが導出)を鳴らし分ける。chip5は両フィールドを無視して劣化。
+   */
   drumVocabulary: 'chip5' | 'gm';
 }
 

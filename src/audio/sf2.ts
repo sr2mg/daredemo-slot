@@ -285,22 +285,56 @@ export interface Sf2Note {
 interface Voice {
   zone: Sf2Zone;
   note: Sf2Note;
+  /** このゾーンのサンプルが属するフォントのPCM(スタック対応)。 */
+  data: Int16Array;
   releaseStartSec: number;
   releaseSec: number;
 }
 
-function findPreset(font: Sf2Font, bank: number, program: number): Sf2Preset | null {
-  return font.presets.find((p) => p.bank === bank && p.program === program)
-    ?? (bank === 128
-      ? font.presets.find((p) => p.bank === 128) ?? null
-      : font.presets.find((p) => p.bank === 0 && p.program === program)
-        ?? font.presets.find((p) => p.bank === 0 && p.program === 0)
-        ?? null);
+/**
+ * フォントの重ね。先頭が主フォントで、無いプリセットは後続が補う。
+ * ワークステーション時代の「足りない音は隣のモジュールから鳴らす」MIDIレイヤリングを
+ * 再生側で再現する仕組みで、部分的なフォント(実機抜粋のsf2等)を実用にする。
+ */
+export type Sf2FontStack = Sf2Font | readonly Sf2Font[];
+
+const fontsOf = (stack: Sf2FontStack): readonly Sf2Font[] =>
+  Array.isArray(stack) ? stack as readonly Sf2Font[] : [stack as Sf2Font];
+
+/**
+ * 段階制の解決: 「正確な(bank,program)一致」を全フォント順に探し、無ければ
+ * 劣化代替(ドラムは任意のbank128→同番号→ピアノ)も同じ順で探す。
+ * 「主フォントのピアノ」より「補完フォントの本物」を優先するのが狙い。
+ */
+function findPreset(
+  fonts: readonly Sf2Font[],
+  bank: number,
+  program: number,
+): { preset: Sf2Preset; font: Sf2Font } | null {
+  for (const font of fonts) {
+    const exact = font.presets.find((p) => p.bank === bank && p.program === program);
+    if (exact && exact.zones.length > 0) return { preset: exact, font };
+  }
+  if (bank === 128) {
+    for (const font of fonts) {
+      const kit = font.presets.find((p) => p.bank === 128);
+      if (kit && kit.zones.length > 0) return { preset: kit, font };
+    }
+  }
+  for (const font of fonts) {
+    const sameProgram = font.presets.find((p) => p.bank === 0 && p.program === program);
+    if (sameProgram && sameProgram.zones.length > 0) return { preset: sameProgram, font };
+  }
+  for (const font of fonts) {
+    const piano = font.presets.find((p) => p.bank === 0 && p.program === 0);
+    if (piano && piano.zones.length > 0) return { preset: piano, font };
+  }
+  return null;
 }
 
 /** ノート列をモノラルPCMへオフライン合成する(単一ステム)。 */
 export function renderSf2(
-  font: Sf2Font,
+  font: Sf2FontStack,
   notes: readonly Sf2Note[],
   sampleRate: number,
   totalSec: number,
@@ -313,26 +347,28 @@ export function renderSf2(
  * sendWeightは音価比例センド(時間マスキング則: 持続音はウェット、ランはドライ)の受け皿。
  */
 export function renderSf2Stems(
-  font: Sf2Font,
+  font: Sf2FontStack,
   notes: readonly Sf2Note[],
   sampleRate: number,
   totalSec: number,
   sendWeight?: (note: Sf2Note) => number,
 ): { main: Float32Array; send: Float32Array } {
+  const fonts = fontsOf(font);
   const out = new Float32Array(Math.ceil(totalSec * sampleRate));
   const send = new Float32Array(sendWeight ? out.length : 0);
   const voices: Voice[] = [];
   const exclusiveActive = new Map<string, Voice>();
   const sorted = [...notes].sort((a, b) => a.startSec - b.startSec);
   for (const note of sorted) {
-    const preset = findPreset(font, note.bank, note.program);
-    if (!preset) continue;
-    for (const zone of preset.zones) {
+    const resolved = findPreset(fonts, note.bank, note.program);
+    if (!resolved) continue;
+    for (const zone of resolved.preset.zones) {
       if (note.midi < zone.keyLo || note.midi > zone.keyHi) continue;
       if (note.velocity < zone.velLo || note.velocity > zone.velHi) continue;
       const voice: Voice = {
         zone,
         note,
+        data: resolved.font.sampleData,
         releaseStartSec: note.startSec + note.durSec,
         releaseSec: zone.releaseSec,
       };
@@ -350,9 +386,8 @@ export function renderSf2Stems(
     }
   }
 
-  const data = font.sampleData;
   for (const voice of voices) {
-    const { zone, note } = voice;
+    const { zone, note, data } = voice;
     const noteSendWeight = sendWeight ? sendWeight(note) : 0;
     const ratio = (zone.sample.rate / sampleRate)
       * 2 ** (((note.midi - zone.rootKey) * zone.scaleTuning + zone.cents) / 1200);

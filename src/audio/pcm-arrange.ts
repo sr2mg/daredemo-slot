@@ -17,7 +17,7 @@ import type { Piece } from '../core/music/compose.js';
 import { duckWet, onePoleLowpass, pingPongDelay, stereoChorus, stereoReverb } from './effects.js';
 import type { PcmBgmDef } from './pcm-types.js';
 import { renderSf2Stems } from './sf2.js';
-import type { Sf2Font, Sf2Note } from './sf2.js';
+import type { Sf2FontStack, Sf2Note } from './sf2.js';
 import { panGains, ROLE_STAGE, roomFor } from './stage.js';
 import type { StageRole } from './stage.js';
 import {
@@ -35,8 +35,16 @@ export interface PcmPresetRef {
   bank: number;
   program: number;
 }
-/** パート別の音色上書き。未指定パートはスタイル既定のGMプログラム。 */
-export type PcmVoiceOverride = Partial<Record<PcmPart, PcmPresetRef>>;
+/** 主旋律の受け渡し色(arrangement.tsのleadColor)。0=看板(hook) 1=展開(development) 2=緩急(relief)。 */
+export type LeadColorSlot = 0 | 1 | 2;
+/**
+ * パート別の音色上書き。未指定パートはスタイル既定のGMプログラム。
+ * 主旋律はleadColorVoicesで受け渡し色ごとに上書きできる(A=ピアノ、B=ギター等)。
+ * 優先順: leadColorVoices[色] > lead(全区間固定) > スタイル既定パレット。
+ */
+export interface PcmVoiceOverride extends Partial<Record<PcmPart, PcmPresetRef>> {
+  leadColorVoices?: Partial<Record<LeadColorSlot, PcmPresetRef>>;
+}
 
 export const PCM_PART_LABELS: Record<PcmPart, string> = {
   lead: '主旋律',
@@ -68,11 +76,12 @@ const DEFAULT_PROGRAMS: GmProgramMap = {
   leadPalette: [0], counter: 73, ostinato: 46, backing: 48, bass: 33,
 };
 
-/** GMパーカッション(bank128)のキー。 */
+/** GMパーカッション(bank128)のキー。ハットはopen指示でクローズ42/オープン46を使い分ける。 */
 const DRUM_KEYS: Record<string, { key: number; velocity: number }> = {
   kick: { key: 36, velocity: 105 },
   snare: { key: 38, velocity: 100 },
   hat: { key: 42, velocity: 78 },
+  hatOpen: { key: 46, velocity: 84 },
   tom: { key: 47, velocity: 96 },
   cymbal: { key: 49, velocity: 100 },
 };
@@ -105,11 +114,13 @@ export function arrangeSf2Parts(
     overrides[part] ?? { bank: 0, program: programs[part] };
   const drumRef = overrides.drums ?? { bank: 128, program: 0 };
   const spb = 60 / piece.bpm;
-  // 主旋律の音色はセクションのleadColorでパレットから選ぶ(受け渡し)。上書きは全区間固定。
+  // 主旋律の音色はセクションのleadColorでパレットから選ぶ(受け渡し)。
+  // 上書きは色別(leadColorVoices)が最優先で、次に全区間固定(lead)。
   const leadRefAt = (beat: number): PcmPresetRef => {
-    if (overrides.lead) return overrides.lead;
-    const color = arrangementSectionFor(piece, beat).leadColor ?? 0;
-    return { bank: 0, program: programs.leadPalette[color % programs.leadPalette.length]! };
+    const color = (arrangementSectionFor(piece, beat).leadColor ?? 0) as LeadColorSlot;
+    return overrides.leadColorVoices?.[color]
+      ?? overrides.lead
+      ?? { bank: 0, program: programs.leadPalette[color % programs.leadPalette.length]! };
   };
   const noteFor = (
     event: { beat: number; dur: number; midi: number; velocity?: number; glideFrom?: number },
@@ -143,15 +154,18 @@ export function arrangeSf2Parts(
   })));
   const drumNotes: Sf2Note[] = [];
   for (const drum of piece.drums) {
-    const mapped = DRUM_KEYS[drum.inst];
+    const open = drum.inst === 'hat' && drum.open === true;
+    const mapped = open ? DRUM_KEYS['hatOpen']! : DRUM_KEYS[drum.inst];
     if (!mapped) continue;
     drumNotes.push({
       program: drumRef.program,
       bank: drumRef.bank,
       midi: mapped.key,
-      velocity: mapped.velocity,
+      // 拍節アクセント(drum-articulation.ts)はベースベロシティへの乗算で反映する。
+      velocity: Math.max(1, Math.min(127, Math.round(mapped.velocity * (drum.velocity ?? 1)))),
       startSec: drum.beat * spb,
-      durSec: 0.2,
+      // オープンは鳴り残す(次のハットのexclusiveClassチョーク(sf2.ts)が裁ち落とす)。
+      durSec: open ? 0.7 : 0.2,
       gain: PART_GAINS.drums,
     });
   }
@@ -194,10 +208,14 @@ function echoGateFor(piece: Piece, length: number, sampleRate: number, spb: numb
   return gate;
 }
 
-/** PieceをSoundFontで合成し、既存プレイヤーのPCM BGM形式(ステレオ)で返す。 */
+/**
+ * PieceをSoundFontで合成し、既存プレイヤーのPCM BGM形式(ステレオ)で返す。
+ * fontに配列を渡すと重ねになり、先頭に無いプリセットは後続フォントが補完する
+ * (sf2.tsのSf2FontStack。部分フォント+フルGMの2台構成が典型)。
+ */
 export function renderSf2Bgm(
   piece: Piece,
-  font: Sf2Font,
+  font: Sf2FontStack,
   overrides: PcmVoiceOverride = {},
 ): PcmBgmDef {
   const spb = 60 / piece.bpm;
