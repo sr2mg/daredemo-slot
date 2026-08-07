@@ -90,11 +90,12 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
-import { arrangeComposedBgm } from './bgm-audio.js';
+import { arrangeComposedBgm, isPcmBgm } from './bgm-audio.js';
 import type { BgmPcmRenderer } from './bgm-audio.js';
+import { exportMp3 } from '../audio/mp3-export.js';
 import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
-import { OPLL_VOICES } from './opll-core.js';
+import { OPLL_RATE, OPLL_VOICES } from './opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
 
@@ -356,6 +357,10 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
   const [songName, setSongName] = useState('');
   /** OPLL レンダリングの進捗（0..1）。null = レンダリング中でない */
   const [progress, setProgress] = useState<number | null>(null);
+  /** MP3書き出しの進捗（0..1）。null = 書き出し中でない */
+  const [exporting, setExporting] = useState<number | null>(null);
+  const [exportLoops, setExportLoops] = useState(2);
+  const [exportFade, setExportFade] = useState(true);
   const [blindTrial, setBlindTrial] = useState<BlindStudyTrial | null>(null);
   const [blindListened, setBlindListened] = useState<BlindCandidateId[]>([]);
   const [blindSelection, setBlindSelection] = useState<BlindCandidateId | null>(null);
@@ -514,6 +519,45 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
     } catch (e) {
       setProgress(null);
       setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /**
+   * 最後に作曲した曲を「イントロ+ループ本体×N周(+フェード)」へ展開してMP3保存する。
+   * 波形は試聴と同じキャッシュ経路なので、試聴済みの曲は再レンダリングされない。
+   */
+  const exportMp3File = async () => {
+    if (!lastOpts || exporting !== null) return;
+    try {
+      setError('');
+      setExporting(0);
+      const p = compose(lastOpts);
+      const def = pcmRenderer ? await pcmRenderer.render(p, lastOpts) : arrangeComposedBgm(p, lastOpts);
+      // レンダリングを進捗の前半4割、エンコードを後半6割に配分する。
+      const wave = await player.ensureComposedBgm(bgmCacheKey(lastOpts), def, (r) => setExporting(r * 0.4));
+      const blob = await exportMp3(
+        {
+          wave,
+          ...(isPcmBgm(def) && def.waveRight && def.waveRight.length === wave.length
+            ? { waveRight: def.waveRight }
+            : {}),
+          sampleRate: isPcmBgm(def) ? def.sampleRate : OPLL_RATE,
+          loopStartSec: def.loopStart,
+          loopEndSec: def.loopEnd,
+        },
+        { loopCount: exportLoops, fade: exportFade },
+        (r) => setExporting(0.4 + r * 0.6),
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `bgm-${lastOpts.styleId}-seed${lastOpts.seed}-x${exportLoops}.mp3`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -1233,6 +1277,28 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
             />
             {volume}
           </label>
+          <label className="st-loop" title="mp3はギャップレスループができないため、ループ本体を指定回数ぶん展開して書き出します">
+            周回
+            <select
+              value={exportLoops}
+              onChange={(e) => setExportLoops(Number(e.target.value))}
+              data-testid="st-export-loops"
+            >
+              {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <label className="st-loop" title="最終周のあと、次のループ頭へ食い込みながら4秒でフェードアウトします">
+            <input type="checkbox" checked={exportFade} onChange={(e) => setExportFade(e.target.checked)} />
+            フェード
+          </label>
+          <button
+            onClick={() => void exportMp3File()}
+            disabled={!lastOpts || progress !== null || exporting !== null}
+            data-testid="st-export-mp3"
+            title="最後に作曲した曲をMP3で保存します(まず作曲して再生してください)"
+          >
+            💾 MP3書き出し
+          </button>
         </div>
 
         <section className="blind-study" data-testid="blind-study">
@@ -1478,6 +1544,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
         {progress !== null && (
           <p className="panel-note" data-testid="st-progress">
             🎛 {capabilitiesFor(soundChip).label} で演奏を仕込み中… {Math.round(progress * 100)}%
+          </p>
+        )}
+        {exporting !== null && (
+          <p className="panel-note" data-testid="st-export-progress">
+            💾 MP3書き出し中… {Math.round(exporting * 100)}%
           </p>
         )}
         {error && <p className="badge-ng">{error}</p>}
