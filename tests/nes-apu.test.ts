@@ -8,7 +8,7 @@ import {
   renderNesPiece,
   triangleFrequencyForTimer,
   triangleTimerForMidi,
-} from '../src/ui/nes-apu.js';
+} from '../src/audio/nes-apu.js';
 
 const options = {
   progressionId: 'royal-pop',

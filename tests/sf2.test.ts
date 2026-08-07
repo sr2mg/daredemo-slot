@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import { parseSf2, renderSf2 } from '../src/ui/sf2.js';
-import { arrangeSf2Notes, renderSf2Bgm, SF2_SAMPLE_RATE } from '../src/ui/pcm-arrange.js';
+import { parseSf2, renderSf2 } from '../src/audio/sf2.js';
+import { arrangeSf2Notes, arrangeSf2Parts, renderSf2Bgm, SF2_SAMPLE_RATE } from '../src/audio/pcm-arrange.js';
 
 /**
  * SF2パーサ+オフラインレンダラの検証。
@@ -204,6 +204,19 @@ describe('PCM編曲(Piece→GMノート)', () => {
     expect(notes.some((n) => n.program === 110 && n.bank === 0)).toBe(true); // kmmoリード=Fiddle
     expect(notes.some((n) => n.bank === 128)).toBe(true); // ドラム
     expect(notes.every((n) => n.durSec > 0)).toBe(true);
+  });
+
+  it('受け渡し: 16小節ではセクションごとに主旋律のプリセットが変わる', () => {
+    const piece16 = compose({
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+    });
+    const parts = arrangeSf2Parts(piece16);
+    const programs = new Set(parts.lead.map((n) => n.program));
+    expect(programs.size).toBeGreaterThan(1); // hook=看板(Fiddle)、development=第2色(Flute)
+    expect(programs.has(110)).toBe(true);
+    // 上書き時は全区間固定
+    const fixed = arrangeSf2Parts(piece16, { lead: { bank: 0, program: 40 } });
+    expect(new Set(fixed.lead.map((n) => n.program)).size).toBe(1);
   });
 
   it('パート別上書きが主旋律のプリセットを差し替える(バンク指定込み)', () => {

@@ -92,7 +92,7 @@ import {
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import { arrangeComposedBgm } from './bgm-audio.js';
 import type { BgmPcmRenderer } from './bgm-audio.js';
-import { NES_DUTIES } from './nes-apu.js';
+import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
 import { OPLL_VOICES } from './opll-core.js';
 import { loadStored, saveStored } from './persist.js';

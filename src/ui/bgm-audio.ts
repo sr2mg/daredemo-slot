@@ -1,5 +1,5 @@
 import type { ComposeOptions, Piece } from '../core/music/compose.js';
-import { renderNesPiece, NES_SAMPLE_RATE } from './nes-apu.js';
+import { renderNesPiece, NES_SAMPLE_RATE } from '../audio/nes-apu.js';
 import { arrangePiece } from './opll-arrange.js';
 import type { SfxDef } from './opll-core.js';
 

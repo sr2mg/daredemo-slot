@@ -296,14 +296,29 @@ function findPreset(font: Sf2Font, bank: number, program: number): Sf2Preset | n
         ?? null);
 }
 
-/** ノート列をモノラルPCMへオフライン合成する。 */
+/** ノート列をモノラルPCMへオフライン合成する(単一ステム)。 */
 export function renderSf2(
   font: Sf2Font,
   notes: readonly Sf2Note[],
   sampleRate: number,
   totalSec: number,
 ): Float32Array {
+  return renderSf2Stems(font, notes, sampleRate, totalSec).main;
+}
+
+/**
+ * 合成は加法なので、1パスで「本線」と「ノート別重み付き送り」の2ステムを出せる。
+ * sendWeightは音価比例センド(時間マスキング則: 持続音はウェット、ランはドライ)の受け皿。
+ */
+export function renderSf2Stems(
+  font: Sf2Font,
+  notes: readonly Sf2Note[],
+  sampleRate: number,
+  totalSec: number,
+  sendWeight?: (note: Sf2Note) => number,
+): { main: Float32Array; send: Float32Array } {
   const out = new Float32Array(Math.ceil(totalSec * sampleRate));
+  const send = new Float32Array(sendWeight ? out.length : 0);
   const voices: Voice[] = [];
   const exclusiveActive = new Map<string, Voice>();
   const sorted = [...notes].sort((a, b) => a.startSec - b.startSec);
@@ -336,6 +351,7 @@ export function renderSf2(
   const data = font.sampleData;
   for (const voice of voices) {
     const { zone, note } = voice;
+    const noteSendWeight = sendWeight ? sendWeight(note) : 0;
     const ratio = (zone.sample.rate / sampleRate)
       * 2 ** (((note.midi - zone.rootKey) * zone.scaleTuning + zone.cents) / 1200);
     // ポルタメント: 開始時は前音の音高、durの半分(最大90ms)かけて目標へ等比で滑る。
@@ -386,7 +402,9 @@ export function renderSf2(
       const floor = Math.floor(position);
       const frac = position - floor;
       const sample = (data[floor]! + frac * (data[floor + 1]! - data[floor]!)) / 32768;
-      out[i] = out[i]! + sample * env * baseAmp * 0.25;
+      const value = sample * env * baseAmp * 0.25;
+      out[i] = out[i]! + value;
+      if (noteSendWeight > 0) send[i] = send[i]! + value * noteSendWeight;
       if (glideSamples > 0) {
         const elapsed = i - startIndex;
         if (elapsed >= glideSamples) {
@@ -399,7 +417,7 @@ export function renderSf2(
       position += currentRatio;
     }
   }
-  // ソフトクリップで和音の重なりを整える(オフラインなのでtanhでよい)。
-  for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i]!);
-  return out;
+  // クリップはここでは掛けない。ミキサーがバス総和の一箇所でだけソフトクリップする
+  // (センドがクリップ済み信号をタップしてミックスが非線形になるのを防ぐ)。
+  return { main: out, send };
 }
