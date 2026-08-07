@@ -91,7 +91,7 @@ import {
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import { arrangeComposedBgm, isPcmBgm } from './bgm-audio.js';
-import type { BgmPcmRenderer } from './bgm-audio.js';
+import type { BgmPcmRenderer, ComposedBgmDef } from './bgm-audio.js';
 import { exportMp3 } from '../audio/mp3-export.js';
 import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
@@ -316,10 +316,16 @@ function loadComposerForm(): ComposerForm {
   };
 }
 
-export function BgmComposerPanel({ player, pcmRenderer = null }: {
+export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange }: {
   player: SfxPlayer;
-  /** 作曲スタジオが注入するPCM(SoundFont)レンダラ。nullならチップ音源(OPLL/2A03)。 */
+  /**
+   * 作曲スタジオが注入するPCM(SoundFont)レンダラ。曲の音源設定がpcmのときだけ使い、
+   * OPLL/2A03の曲はレンダラがあってもチップ音源で鳴らす(曲側が再生音源の決定権を持つ)。
+   * null(ゲーム本体等)ならpcm曲はOPLL編曲へ品位よく劣化する。
+   */
   pcmRenderer?: BgmPcmRenderer | null;
+  /** 曲の音源設定がPCMかどうかの通知。スタジオはこれを受けてSoundFontを遅延ロードする。 */
+  onPcmNeededChange?: (needed: boolean) => void;
 }) {
   const [initial] = useState(loadComposerForm);
   const [bars, setBars] = useState<ComposeBars>(initial.bars);
@@ -397,6 +403,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
     player.setBgmVolume(volume / 100);
     saveBgmVolume(volume);
   }, [player, volume]);
+
+  // 曲の音源設定がPCMになったらスタジオへ通知し、SoundFontのロードを促す。
+  useEffect(() => {
+    onPcmNeededChange?.(soundChip === 'pcm');
+  }, [soundChip, onPcmNeededChange]);
 
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
@@ -495,12 +506,26 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
     };
   };
 
+  /** その曲の再生に使うレンダラ。曲側の音源設定がpcmのときだけPCMレンダラを使う。 */
+  const rendererFor = (opts: ComposeOptions): BgmPcmRenderer | null =>
+    opts.soundChip === 'pcm' ? pcmRenderer : null;
+
+  const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
+    const renderer = rendererFor(opts);
+    return renderer ? await renderer.render(p, opts) : arrangeComposedBgm(p, opts);
+  };
+
   /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
-  const bgmCacheKey = (opts: ComposeOptions): string =>
-    pcmRenderer ? `${JSON.stringify(opts)}|${pcmRenderer.id}` : JSON.stringify(opts);
+  const bgmCacheKey = (opts: ComposeOptions): string => {
+    const renderer = rendererFor(opts);
+    return renderer ? `${JSON.stringify(opts)}|${renderer.id}` : JSON.stringify(opts);
+  };
 
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
     try {
+      // 保存曲がpcmなら(現在の編集フォームがチップでも)フォントのロードを促す。
+      // ロード完了前の再生はチップ編曲へ劣化し、完了後の再生からPCMで鳴る。
+      if (opts.soundChip === 'pcm') onPcmNeededChange?.(true);
       const p = compose(opts);
       if (!preserveRepairHistory) setRepairHistory([]);
       setError(player.enabled ? '' : '「音」が OFF のため音は鳴りません（このタブ上部で ON にできます）');
@@ -510,7 +535,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
       setPlaying(false);
       setBlindPlaying(null);
       if (!player.enabled) return;
-      const def = pcmRenderer ? await pcmRenderer.render(p, opts) : arrangeComposedBgm(p, opts);
+      const def = await renderBgmDef(p, opts);
       setProgress(0);
       const result = await player.playComposedBgm(bgmCacheKey(opts), def, 0, {
         loop,
@@ -534,7 +559,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
       setError('');
       setExporting(0);
       const p = compose(lastOpts);
-      const def = pcmRenderer ? await pcmRenderer.render(p, lastOpts) : arrangeComposedBgm(p, lastOpts);
+      const def = await renderBgmDef(p, lastOpts);
       // レンダリングを進捗の前半4割、エンコードを後半6割に配分する。
       const wave = await player.ensureComposedBgm(bgmCacheKey(lastOpts), def, (r) => setExporting(r * 0.4));
       const blob = await exportMp3(
@@ -609,9 +634,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
       setPlaying(false);
       setBlindPlaying(null);
       const candidatePiece = compose(candidate.options);
-      const def = pcmRenderer
-        ? await pcmRenderer.render(candidatePiece, candidate.options)
-        : arrangeComposedBgm(candidatePiece, candidate.options);
+      const def = await renderBgmDef(candidatePiece, candidate.options);
       setProgress(0);
       const result = await player.playComposedBgm(bgmCacheKey(candidate.options), def, 0, {
         loop: false,
@@ -1131,7 +1154,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
               </select>
             )}
           </div>
-        ) : (
+        ) : soundChip === 'nes2a03' ? (
           <>
             <div className="panel-controls" data-testid="st-nes-controls">
               {([
@@ -1159,6 +1182,12 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
               40小節フォームも再生できますが、新しい独立声部の2A03専用間引きは次段階です。
             </p>
           </>
+        ) : (
+          <p className="panel-note" data-testid="st-pcm-voice-note">
+            {pcmRenderer
+              ? 'PCMの音色はページ上部のSoundFont設定でパート別に選べます。主旋律はセクション役割（A=看板 / B=展開 / 緩急）ごとに指定でき、未指定ならスタイル既定の受け渡しで自動的に切り替わります。'
+              : 'PCM(SoundFont)は作曲スタジオ（bgm.html）でのみ鳴ります。ここではOPLL編曲で代替再生されます。'}
+          </p>
         )}
 
         <div className="panel-controls">
@@ -1740,6 +1769,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null }: {
               2A03は日本版ファミコンのクロックで音程を整数タイマーへ量子化し、パルス2声・32段三角波・
               LFSRノイズを非線形ミキサーと実機相当の90Hz/440Hz HPF・14kHz LPFへ通します。
               拡張音源、任意波形、リバーブ、チャンネルエコーは使いません。DPCMサンプル編集は次段階です。
+            </>
+          ) : soundChip === 'pcm' ? (
+            <>
+              PCMはSoundFont2で00年代GM/GS音源風に鳴らします。ステレオ舞台配置・リバーブ・コーラス・
+              ディレイと、主旋律のセクション別受け渡し（音色によるフォーム分節）が使えます。
             </>
           ) : (
             <>

@@ -31,6 +31,7 @@ import { capabilitiesFor } from './sound-capabilities.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 import { applyDiminution } from './diminution.js';
 import type { DiminutionPolicy } from './diminution.js';
+import { applyDrumArticulation } from './drum-articulation.js';
 import { duetLayerFor } from './duet.js';
 import type { DuetPolicy } from './duet.js';
 import { applyGlideMarks } from './glide.js';
@@ -341,6 +342,13 @@ export interface ChordEvent {
 export interface DrumEvent {
   beat: number;
   inst: 'kick' | 'snare' | 'hat' | 'tom' | 'cymbal';
+  /**
+   * ハットのオープン指示(drum-articulation.tsが譜面の間隙から導出)。
+   * GMドラム(PCM)だけが鳴らし分け、チップ5音ドラムは無視して劣化する。
+   */
+  open?: boolean;
+  /** 拍節アクセント(0..1、省略=1)。同じく能力のないバックエンドは無視する。 */
+  velocity?: number;
 }
 
 export interface PhraseBarPlan {
@@ -2225,7 +2233,11 @@ export function compose(opts: ComposeOptions): Piece {
     ostinato,
     duet,
     bass: [...introBass, ...bass],
-    drums: [...introDrums, ...drums],
+    drums: applyDrumArticulation(
+      [...introDrums, ...drums],
+      loopStartBeat,
+      loopStartBeat + opts.bars * 4,
+    ),
     phrasePlan,
     songPlan,
     arrangementPlan,

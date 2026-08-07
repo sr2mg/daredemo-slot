@@ -84,8 +84,12 @@ const chordToken = (chord: ChordEvent, startBeat: number): string => [
   num(chord.beat - startBeat), num(chord.dur), chord.token, chord.midis.join('.'),
 ].join(':');
 
-const drumToken = (drum: DrumEvent, startBeat: number): string =>
-  `${num(drum.beat - startBeat)}:${drum.inst}`;
+// open/velocityはPCMで聴こえる差なのでダイジェストへ含める(無い音色は従来表現のまま)。
+const drumToken = (drum: DrumEvent, startBeat: number): string => [
+  num(drum.beat - startBeat), drum.inst,
+  ...(drum.open ? ['o'] : []),
+  ...(drum.velocity === undefined ? [] : [num(drum.velocity)]),
+].join(':');
 
 function hashRange<T extends { beat: number }>(
   events: readonly T[],
