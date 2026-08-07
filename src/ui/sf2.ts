@@ -378,7 +378,7 @@ export function renderSf2(
       const floor = Math.floor(position);
       const frac = position - floor;
       const sample = (data[floor]! + frac * (data[floor + 1]! - data[floor]!)) / 32768;
-      out[i] += sample * env * baseAmp * 0.25;
+      out[i] = out[i]! + sample * env * baseAmp * 0.25;
       position += ratio;
     }
   }

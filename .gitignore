@@ -6,3 +6,5 @@ coverage/
 tmp/
 # 音楽リファレンス分析(著作権のある音源・研究ツールをOSSに含めない)
 analysis/
+# 私物SoundFont置き場(SC-88系など再配布不可のフォントはここへ。user.sf2が自動検出される)
+public/soundfonts/local/
