@@ -59,6 +59,10 @@ const STYLE_VOICES: Record<string, StyleVoices> = {
   ska: {
     lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'offbeat',
   },
+  // カラートーンを持続和音で聴かせたいので、裏打ちでなくハーフのパッド型。
+  kmmo: {
+    lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'half',
+  },
 };
 const DEFAULT_VOICES: StyleVoices = STYLE_VOICES['eurobeat']!;
 

@@ -24,6 +24,10 @@ import type { CompositionStrategy } from './composition-strategy.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import { grooveBeat } from './timing.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
+import { selectTensionPcs } from './tension.js';
+import type { TensionPolicy } from './tension.js';
+import { applyDiminution } from './diminution.js';
+import type { DiminutionPolicy } from './diminution.js';
 import {
   createSongPlan,
   legacyMelodyMode,
@@ -99,6 +103,10 @@ export type OrnamentType = 'grace' | 'turn' | 'shake';
 export type GrooveFeel = 'straight' | 'tripletOverlay' | 'bounce';
 export type TupletDivision = 5 | 6 | 7;
 export type TupletOverlayChoice = 'off' | 'auto' | TupletDivision;
+export type { TensionPolicy } from './tension.js';
+export type { DiminutionPolicy } from './diminution.js';
+export { TENSION_POLICY_LABELS } from './tension.js';
+export { DIMINUTION_POLICY_LABELS } from './diminution.js';
 export type PhraseFunction = 'statement' | 'restatement' | 'departure' | 'conclusion';
 export type IntroRole = 'motif' | 'groove' | 'fanfare' | 'runup';
 export type CadenceType = 'open' | 'half' | 'closed' | 'turnaround';
@@ -217,6 +225,17 @@ export interface ComposeOptions {
    * 三連オーバーレイとは併用しない（該当時は無効化される）。省略時はoff。
    */
   tupletOverlay?: TupletOverlayChoice;
+  /**
+   * 伴奏ボイシングへ足すカラートーンの方針(アヴェイラブル・テンション導出)。
+   * 和声機能(pcs)は変えず声部だけ色づける。省略/autoはスタイル既定(通常off)。
+   * 和風五音は開放五度の美学と衝突するため常にoff。
+   */
+  tensionPolicy?: 'auto' | TensionPolicy;
+  /**
+   * 主旋律のディミニューション(8分骨格の間へ16分経過音を挿入)。骨格は不変。
+   * 省略/autoはスタイル既定(通常off)。和風五音は装飾体系が別なので常にoff。
+   */
+  diminution?: 'auto' | DiminutionPolicy;
   /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
   melodyEdits?: readonly MelodyEdit[];
   seed: number;
@@ -278,6 +297,8 @@ export interface ChordEvent {
   pcs: number[];
   /** 直前のコードから最短距離で接続した、低音から高音順の伴奏ボイシング。 */
   midis: number[];
+  /** テンション方針で声部へ足したカラートーン(絶対pc)。機能はpcsのまま。 */
+  colorPcs?: number[];
 }
 
 export interface DrumEvent {
@@ -1207,6 +1228,18 @@ export function compose(opts: ComposeOptions): Piece {
     return cached;
   };
   const grooveFeel = opts.grooveFeel ?? 'straight';
+  // カラートーンとディミニューションはスタイル既定を土台に上書き。和風五音は
+  // 開放五度・間の美学と衝突するため両方とも常にoffへ落とす。
+  const tensionPolicy: TensionPolicy = melodicLanguage === 'japanese'
+    ? 'off'
+    : (opts.tensionPolicy ?? 'auto') === 'auto'
+      ? style.tension ?? 'off'
+      : opts.tensionPolicy as TensionPolicy;
+  const diminutionPolicy: DiminutionPolicy = melodicLanguage === 'japanese'
+    ? 'off'
+    : (opts.diminution ?? 'auto') === 'auto'
+      ? style.diminution ?? 'off'
+      : opts.diminution as DiminutionPolicy;
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
     : defaultChoiceFor(prog, opts.bars));
@@ -1239,7 +1272,14 @@ export function compose(opts: ComposeOptions): Piece {
       const dur = barChordDurations[bar]![i]!;
       const def = CHORDS[token]!;
       const pcs = def.tones.map((t) => (t + keyRoot) % 12);
-      const midis = voiceChord(pcs, previousVoicing, melodicLanguage === 'japanese');
+      const rootPc = (def.root + keyRoot) % 12;
+      // カラートーンはボイシングにだけ足す。機能検証・旋律の強拍アンカーはpcsのまま。
+      // イントロは薄い導入なので素の三和音に留め、本編でテンションが開く出し引きにする。
+      const colorPcs = (tensionPolicy === 'off'
+        ? []
+        : selectTensionPcs(pcs, chordScalePcs(scalePcs, pcs, rootPc), rootPc, tensionPolicy)
+      ).slice(0, Math.max(0, 5 - pcs.length)); // 密集配置(≤14半音)が成立する5声まで
+      const midis = voiceChord([...pcs, ...colorPcs], previousVoicing, melodicLanguage === 'japanese');
       chords.push({
         beat: bar * 4 + offset,
         dur,
@@ -1248,6 +1288,7 @@ export function compose(opts: ComposeOptions): Piece {
         function: harmonicFunctionForToken(token),
         pcs,
         midis,
+        colorPcs,
       });
       previousVoicing = midis;
       offset += dur;
@@ -1257,7 +1298,9 @@ export function compose(opts: ComposeOptions): Piece {
   for (let pass = 0; pass < 2; pass++) {
     let previous = chords.at(-1)?.midis ?? null;
     for (const chord of chords) {
-      chord.midis = voiceChord(chord.pcs, previous, melodicLanguage === 'japanese');
+      chord.midis = voiceChord(
+        [...chord.pcs, ...(chord.colorPcs ?? [])], previous, melodicLanguage === 'japanese',
+      );
       previous = chord.midis;
     }
   }
@@ -1971,6 +2014,19 @@ export function compose(opts: ComposeOptions): Piece {
   const introBass = realizedIntro.bass;
   const introDrums = realizedIntro.drums;
   const introChordNames = realizedIntro.chordNames;
+
+  // --- ディミニューション（骨格確定後の最終旋律パス） ---
+  // イントロのモチーフ引用が済んでから細分する。乱数は骨格生成と独立に持ち、
+  // 装置のon/offで骨格が1音も動かないことを保証する。
+  if (diminutionPolicy !== 'off') {
+    const diminutionRng = new Xoshiro128((opts.seed ^ 0x44494d49) >>> 0);
+    applyDiminution(
+      melody,
+      diminutionPolicy,
+      (beat) => scaleAt(chordAt(beat)),
+      (bound) => diminutionRng.nextInt(bound),
+    );
+  }
 
   if (loopStartBeat > 0) {
     for (const event of chords) event.beat += loopStartBeat;

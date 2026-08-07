@@ -9,6 +9,8 @@ import {
   TEXTURE_STRATEGY_LABELS,
   GROOVE_FEEL_LABELS,
   TUPLET_OVERLAY_LABELS,
+  TENSION_POLICY_LABELS,
+  DIMINUTION_POLICY_LABELS,
   JAPANESE_SCALE_LABELS,
   ORNAMENT_LABELS,
   PHRASE_FUNCTION_LABELS,
@@ -27,6 +29,8 @@ import type {
   CompositionStrategy,
   ComposeOptions,
   DiagnosticCategory,
+  DiminutionPolicy,
+  TensionPolicy,
   GrooveFeel,
   JapaneseScaleChoice,
   MelodicLanguage,
@@ -164,8 +168,14 @@ function songSummary(options: ComposeOptions): string {
   const tuplet = options.tupletOverlay && options.tupletOverlay !== 'off'
     ? ` / 連符${TUPLET_OVERLAY_LABELS[String(options.tupletOverlay) as keyof typeof TUPLET_OVERLAY_LABELS]}`
     : '';
+  const tension = options.tensionPolicy && options.tensionPolicy !== 'auto'
+    ? ` / テンション:${options.tensionPolicy}`
+    : '';
+  const diminution = options.diminution && options.diminution !== 'auto'
+    ? ` / 細分:${options.diminution}`
+    : '';
   const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
-  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${tension}${diminution}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
   if (options.soundChip === 'nes2a03') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
@@ -193,6 +203,8 @@ interface ComposerForm {
   japaneseScale: JapaneseScaleChoice;
   grooveFeel: GrooveFeel;
   tupletOverlay: TupletOverlayChoice;
+  tensionPolicy: 'auto' | TensionPolicy;
+  diminution: 'auto' | DiminutionPolicy;
   keyRoot: number;
   bpm: number;
   soundChip: 'opll' | 'nes2a03';
@@ -250,6 +262,12 @@ function loadComposerForm(): ComposerForm {
     tupletOverlay: raw.tupletOverlay === 'auto' || [5, 6, 7].includes(raw.tupletOverlay as number)
       ? raw.tupletOverlay as TupletOverlayChoice
       : 'off',
+    tensionPolicy: ['off', 'soft', 'lush'].includes(String(raw.tensionPolicy))
+      ? raw.tensionPolicy as TensionPolicy
+      : 'auto',
+    diminution: ['off', 'light', 'rich'].includes(String(raw.diminution))
+      ? raw.diminution as DiminutionPolicy
+      : 'auto',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
     soundChip: raw.soundChip === 'nes2a03' ? 'nes2a03' : 'opll',
@@ -292,6 +310,8 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   const [japaneseScale, setJapaneseScale] = useState<JapaneseScaleChoice>(initial.japaneseScale);
   const [grooveFeel, setGrooveFeel] = useState<GrooveFeel>(initial.grooveFeel);
   const [tupletOverlay, setTupletOverlay] = useState<TupletOverlayChoice>(initial.tupletOverlay);
+  const [tensionPolicy, setTensionPolicy] = useState<'auto' | TensionPolicy>(initial.tensionPolicy);
+  const [diminution, setDiminution] = useState<'auto' | DiminutionPolicy>(initial.diminution);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
   const [soundChip, setSoundChip] = useState<'opll' | 'nes2a03'>(initial.soundChip);
@@ -356,10 +376,12 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
   useEffect(() => {
     saveStored(FORM_KEY, {
       bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
+      tensionPolicy, diminution,
       keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
     });
   }, [
     bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
+    tensionPolicy, diminution,
     keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
@@ -427,6 +449,9 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       ...(soundChip === 'opll' && grooveFeel !== 'tripletOverlay' && tupletOverlay !== 'off'
         ? { tupletOverlay }
         : {}),
+      // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)
+      ...(tensionPolicy !== 'auto' && melodicLanguage !== 'japanese' ? { tensionPolicy } : {}),
+      ...(diminution !== 'auto' && melodicLanguage !== 'japanese' ? { diminution } : {}),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
@@ -928,6 +953,30 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
             >
               {(['off', 'auto', '5', '6', '7'] as const).map((v) => (
                 <option key={v} value={v}>連符レイヤー: {TUPLET_OVERLAY_LABELS[v]}</option>
+              ))}
+            </select>
+          )}
+          {melodicLanguage !== 'japanese' && (
+            <select
+              value={tensionPolicy}
+              onChange={(e) => setTensionPolicy(e.target.value as 'auto' | TensionPolicy)}
+              data-testid="st-tension-policy"
+              title="伴奏ボイシングへ足すカラートーン。アヴェイラブル・テンション理論で自動導出します（和声機能は不変）"
+            >
+              {(['auto', 'off', 'soft', 'lush'] as const).map((v) => (
+                <option key={v} value={v}>テンション: {TENSION_POLICY_LABELS[v]}</option>
+              ))}
+            </select>
+          )}
+          {melodicLanguage !== 'japanese' && (
+            <select
+              value={diminution}
+              onChange={(e) => setDiminution(e.target.value as 'auto' | DiminutionPolicy)}
+              data-testid="st-diminution"
+              title="8分骨格の間へ16分の経過音を挿入します（骨格は不変・縮小変奏）"
+            >
+              {(['auto', 'off', 'light', 'rich'] as const).map((v) => (
+                <option key={v} value={v}>細分: {DIMINUTION_POLICY_LABELS[v]}</option>
               ))}
             </select>
           )}
