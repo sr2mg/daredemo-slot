@@ -251,8 +251,13 @@ export function arrangePiece(
 
   // コードの中央声部を単音リフとして刻む。独立声部が多い瞬間だけアロケータが先に落とす。
   for (const chord of piece.chords) {
-    const lowerVoice = chord.midis[1] ?? chord.midis[0]!;
-    const upperVoice = chord.midis[2] ?? lowerVoice;
+    // 単音バッキングは和音の同一性を先に確立する。テンション声部(colorPcs)を
+    // 単独で持続させると第3音不在のままM7/9thだけが鳴り和声が読めなくなるため、
+    // 基幹はコードトーンから取り、カラートーンは後拍・裏拍の彩りに限定する。
+    const chordToneMidis = chord.midis.filter((midi) => chord.pcs.includes(midi % 12));
+    const colorVoice = chord.midis.find((midi) => (chord.colorPcs ?? []).includes(midi % 12));
+    const lowerVoice = chordToneMidis[1] ?? chordToneMidis[0] ?? chord.midis[1] ?? chord.midis[0]!;
+    const upperVoice = colorVoice ?? chordToneMidis[2] ?? lowerVoice;
     const section = arrangementSectionFor(piece, chord.beat);
     const thin = chord.beat < piece.loopStartBeat || section.backingDensity === 'sparse';
     const volume = thin ? 9 : 7;
@@ -277,8 +282,10 @@ export function arrangePiece(
         candidates.push({
           part: 'backing',
           beat: chord.beat + beat,
+          // パッドは頭でコードトーンを確立し、後半だけカラートーンへ差し替える
+          // （掛留の作法。カラー無しの曲では従来と同一の音）。
+          midi: beat > 0 && colorVoice !== undefined ? colorVoice : lowerVoice,
           dur: Math.min(2, chord.dur - beat) * 0.75,
-          midi: lowerVoice,
           voice: voices.backing,
           volume,
           vibrato: false,

@@ -105,6 +105,29 @@ describe('ディミニューション(縮小変奏)', () => {
     const report = diagnosePiece(compose({ ...base, diminution: 'rich' }));
     expect(report.issues.filter((issue) => issue.severity === 'error')).toEqual([]);
   });
+
+  it('局所修正(melodyEdits)の後に経過音を選ぶ(修正で挿入音が孤児化しない)', () => {
+    const plain = compose(base);
+    const target = plain.melody.find(
+      (note) => note.role !== 'ornament' && note.beat >= plain.loopStartBeat + 8,
+    )!;
+    const piece = compose({
+      ...base,
+      diminution: 'rich',
+      melodyEdits: [{ beat: target.beat, fromMidi: target.midi, toMidi: target.midi + 2 }],
+    });
+    const structural = piece.melody
+      .filter((note) => note.role !== 'ornament')
+      .sort((a, b) => a.beat - b.beat);
+    for (const note of piece.melody.filter((n) => n.role === 'ornament')) {
+      const before = [...structural].reverse().find((s) => s.beat < note.beat);
+      const after = structural.find((s) => s.beat > note.beat);
+      if (!before || !after) continue;
+      if (Math.abs(note.beat - (before.beat + after.beat) / 2) >= 0.01) continue;
+      expect(note.midi).toBeGreaterThan(Math.min(before.midi, after.midi));
+      expect(note.midi).toBeLessThan(Math.max(before.midi, after.midi));
+    }
+  });
 });
 
 describe('vi軌道進行と韓国MMO風スタイル', () => {

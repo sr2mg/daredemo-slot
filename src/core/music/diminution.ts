@@ -48,8 +48,10 @@ export function applyDiminution(
     const from = structural[i]!;
     const to = structural[i + 1]!;
     const gap = to.beat - from.beat;
-    // 8分相当の対だけ(bounce時は2/3や1/3の対も含む)。長い音は歌わせたまま残す。
-    if (gap < 0.3 || gap > 0.75) continue;
+    // 8分相当の対だけ。長い音は歌わせたまま残す。下限0.45は、bounceの
+    // 「裏拍(k+2/3)→次拍頭」対(間隔1/3)を除外するための境界——そこへ挿入すると
+    // 音価が1/6拍(170BPMで約40ms)のグリッド外ブリップになる。表→裏対(2/3)は許す。
+    if (gap < 0.45 || gap > 0.75) continue;
     const interval = to.midi - from.midi;
     // 全音以下の順次には挟む音が存在しない(半音階は語彙外)。
     if (Math.abs(interval) < 3) continue;

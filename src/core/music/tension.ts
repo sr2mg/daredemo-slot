@@ -19,7 +19,8 @@ export const TENSION_POLICY_LABELS: Record<'auto' | TensionPolicy, string> = {
   auto: 'スタイル既定',
   off: 'なし（素の和音）',
   soft: 'ソフト（1音）',
-  lush: 'リッチ（2音）',
+  // 4和音(7th系)は密集配置の5声上限により1音に丸まる。三和音でだけ2音になる。
+  lush: 'リッチ（最大2音）',
 };
 
 /** ルートからの相対音程による選好順。7度系→9th→6th/13th→11th。 */

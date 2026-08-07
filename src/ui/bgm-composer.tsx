@@ -147,6 +147,10 @@ const VOICE_PARTS: readonly { part: keyof VoiceOverride; label: string }[] = [
 const voiceLabel = (id: number): string =>
   id === 0 ? 'ユーザー音色' : OPLL_VOICES.find((v) => v.id === id)?.label.split('（')[0] ?? String(id);
 
+/** 選択肢の唯一の出所はLABELS。型・バリデータ・selectの選択肢がここから同期する。 */
+const TENSION_CHOICES = Object.keys(TENSION_POLICY_LABELS) as ('auto' | TensionPolicy)[];
+const DIMINUTION_CHOICES = Object.keys(DIMINUTION_POLICY_LABELS) as ('auto' | DiminutionPolicy)[];
+
 /** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
 function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
@@ -169,10 +173,10 @@ function songSummary(options: ComposeOptions): string {
     ? ` / 連符${TUPLET_OVERLAY_LABELS[String(options.tupletOverlay) as keyof typeof TUPLET_OVERLAY_LABELS]}`
     : '';
   const tension = options.tensionPolicy && options.tensionPolicy !== 'auto'
-    ? ` / テンション:${options.tensionPolicy}`
+    ? ` / テンション:${TENSION_POLICY_LABELS[options.tensionPolicy]}`
     : '';
   const diminution = options.diminution && options.diminution !== 'auto'
-    ? ` / 細分:${options.diminution}`
+    ? ` / 細分:${DIMINUTION_POLICY_LABELS[options.diminution]}`
     : '';
   const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
   const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${tension}${diminution}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
@@ -262,11 +266,11 @@ function loadComposerForm(): ComposerForm {
     tupletOverlay: raw.tupletOverlay === 'auto' || [5, 6, 7].includes(raw.tupletOverlay as number)
       ? raw.tupletOverlay as TupletOverlayChoice
       : 'off',
-    tensionPolicy: ['off', 'soft', 'lush'].includes(String(raw.tensionPolicy))
-      ? raw.tensionPolicy as TensionPolicy
+    tensionPolicy: TENSION_CHOICES.includes(raw.tensionPolicy as 'auto' | TensionPolicy)
+      ? raw.tensionPolicy as 'auto' | TensionPolicy
       : 'auto',
-    diminution: ['off', 'light', 'rich'].includes(String(raw.diminution))
-      ? raw.diminution as DiminutionPolicy
+    diminution: DIMINUTION_CHOICES.includes(raw.diminution as 'auto' | DiminutionPolicy)
+      ? raw.diminution as 'auto' | DiminutionPolicy
       : 'auto',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
@@ -449,8 +453,11 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
       ...(soundChip === 'opll' && grooveFeel !== 'tripletOverlay' && tupletOverlay !== 'off'
         ? { tupletOverlay }
         : {}),
-      // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)
-      ...(tensionPolicy !== 'auto' && melodicLanguage !== 'japanese' ? { tensionPolicy } : {}),
+      // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)。
+      // テンションはエンジン側と同じくOPLL専用。
+      ...(tensionPolicy !== 'auto' && melodicLanguage !== 'japanese' && soundChip === 'opll'
+        ? { tensionPolicy }
+        : {}),
       ...(diminution !== 'auto' && melodicLanguage !== 'japanese' ? { diminution } : {}),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
@@ -956,14 +963,14 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               ))}
             </select>
           )}
-          {melodicLanguage !== 'japanese' && (
+          {melodicLanguage !== 'japanese' && soundChip === 'opll' && (
             <select
               value={tensionPolicy}
               onChange={(e) => setTensionPolicy(e.target.value as 'auto' | TensionPolicy)}
               data-testid="st-tension-policy"
-              title="伴奏ボイシングへ足すカラートーン。アヴェイラブル・テンション理論で自動導出します（和声機能は不変）"
+              title="伴奏ボイシングへ足すカラートーン。アヴェイラブル・テンション理論で自動導出します（和声機能は不変。7th系和音は声部上限により1音まで）"
             >
-              {(['auto', 'off', 'soft', 'lush'] as const).map((v) => (
+              {TENSION_CHOICES.map((v) => (
                 <option key={v} value={v}>テンション: {TENSION_POLICY_LABELS[v]}</option>
               ))}
             </select>
@@ -975,7 +982,7 @@ export function BgmComposerPanel({ player }: { player: SfxPlayer }) {
               data-testid="st-diminution"
               title="8分骨格の間へ16分の経過音を挿入します（骨格は不変・縮小変奏）"
             >
-              {(['auto', 'off', 'light', 'rich'] as const).map((v) => (
+              {DIMINUTION_CHOICES.map((v) => (
                 <option key={v} value={v}>細分: {DIMINUTION_POLICY_LABELS[v]}</option>
               ))}
             </select>

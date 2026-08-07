@@ -1217,29 +1217,39 @@ export function compose(opts: ComposeOptions): Piece {
     ?? (tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE).map((t) => (t + keyRoot) % 12);
   // 弱拍・経過音の音組織は小節のコードスケール（変位音でキーの音階を上書きした音組織）。
   // 和風五音は核音・間の独自語彙を持つため対象外とし、従来の音組織を保つ。
+  // テンション導出も同じキャッシュを通し、旋律側と音組織の解釈が分岐しないようにする。
   const chordScaleCache = new Map<string, readonly number[]>();
-  const scaleAt = (chord: ChordEvent): readonly number[] => {
-    if (japanesePlan) return scalePcs;
-    let cached = chordScaleCache.get(chord.token);
+  const chordScaleForToken = (token: string, pcs: readonly number[]): readonly number[] => {
+    let cached = chordScaleCache.get(token);
     if (!cached) {
-      cached = chordScalePcs(scalePcs, chord.pcs, (CHORDS[chord.token]!.root + keyRoot) % 12);
-      chordScaleCache.set(chord.token, cached);
+      cached = chordScalePcs(scalePcs, pcs, (CHORDS[token]!.root + keyRoot) % 12);
+      chordScaleCache.set(token, cached);
     }
     return cached;
+  };
+  const scaleAt = (chord: ChordEvent): readonly number[] => {
+    if (japanesePlan) return scalePcs;
+    return chordScaleForToken(chord.token, chord.pcs);
   };
   const grooveFeel = opts.grooveFeel ?? 'straight';
   // カラートーンとディミニューションはスタイル既定を土台に上書き。和風五音は
   // 開放五度・間の美学と衝突するため両方とも常にoffへ落とす。
-  const tensionPolicy: TensionPolicy = melodicLanguage === 'japanese'
+  const resolveDevicePolicy = <T extends string>(
+    choice: 'auto' | T | undefined,
+    styleDefault: T | undefined,
+  ): T | 'off' => {
+    if (melodicLanguage === 'japanese') return 'off';
+    if (choice === undefined || choice === 'auto') return styleDefault ?? 'off';
+    return choice;
+  };
+  // テンションは連符レイヤーと同じくOPLL専用。2A03はpulse2の単声が和声の全てを
+  // 担うため、カラートーンが第3音を追い出すと和声の同一性ごと失われる。
+  const tensionPolicy: TensionPolicy = (opts.soundChip ?? 'opll') !== 'opll'
     ? 'off'
-    : (opts.tensionPolicy ?? 'auto') === 'auto'
-      ? style.tension ?? 'off'
-      : opts.tensionPolicy as TensionPolicy;
-  const diminutionPolicy: DiminutionPolicy = melodicLanguage === 'japanese'
-    ? 'off'
-    : (opts.diminution ?? 'auto') === 'auto'
-      ? style.diminution ?? 'off'
-      : opts.diminution as DiminutionPolicy;
+    : resolveDevicePolicy<TensionPolicy>(opts.tensionPolicy, style.tension);
+  const diminutionPolicy: DiminutionPolicy = resolveDevicePolicy<DiminutionPolicy>(
+    opts.diminution, style.diminution,
+  );
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
     : defaultChoiceFor(prog, opts.bars));
@@ -1277,7 +1287,7 @@ export function compose(opts: ComposeOptions): Piece {
       // イントロは薄い導入なので素の三和音に留め、本編でテンションが開く出し引きにする。
       const colorPcs = (tensionPolicy === 'off'
         ? []
-        : selectTensionPcs(pcs, chordScalePcs(scalePcs, pcs, rootPc), rootPc, tensionPolicy)
+        : selectTensionPcs(pcs, chordScaleForToken(token, pcs), rootPc, tensionPolicy)
       ).slice(0, Math.max(0, 5 - pcs.length)); // 密集配置(≤14半音)が成立する5声まで
       const midis = voiceChord([...pcs, ...colorPcs], previousVoicing, melodicLanguage === 'japanese');
       chords.push({
@@ -2015,19 +2025,6 @@ export function compose(opts: ComposeOptions): Piece {
   const introDrums = realizedIntro.drums;
   const introChordNames = realizedIntro.chordNames;
 
-  // --- ディミニューション（骨格確定後の最終旋律パス） ---
-  // イントロのモチーフ引用が済んでから細分する。乱数は骨格生成と独立に持ち、
-  // 装置のon/offで骨格が1音も動かないことを保証する。
-  if (diminutionPolicy !== 'off') {
-    const diminutionRng = new Xoshiro128((opts.seed ^ 0x44494d49) >>> 0);
-    applyDiminution(
-      melody,
-      diminutionPolicy,
-      (beat) => scaleAt(chordAt(beat)),
-      (bound) => diminutionRng.nextInt(bound),
-    );
-  }
-
   if (loopStartBeat > 0) {
     for (const event of chords) event.beat += loopStartBeat;
     for (const event of melody) event.beat += loopStartBeat;
@@ -2038,6 +2035,26 @@ export function compose(opts: ComposeOptions): Piece {
   }
 
   const editedMelody = withMelodyEdits([...introMelody, ...melody], opts.melodyEdits);
+
+  // --- ディミニューション（局所修正まで確定した後の最終旋律パス） ---
+  // melodyEditsで骨格音が動いた後に経過音を選ぶことで、挿入音が必ず「編集後の
+  // 両端の間」に挟まれる不変条件を守る。乱数は骨格生成と独立に持ち、装置のon/off
+  // で骨格が1音も動かないことを保証する。イントロは薄い導入なので細分しない。
+  let finalMelody = editedMelody;
+  if (diminutionPolicy !== 'off') {
+    const diminutionRng = new Xoshiro128((opts.seed ^ 0x44494d49) >>> 0);
+    const bodyMelody = editedMelody.filter((note) => note.beat >= loopStartBeat);
+    applyDiminution(
+      bodyMelody,
+      diminutionPolicy,
+      (beat) => scaleAt(chordAt(beat - loopStartBeat)),
+      (bound) => diminutionRng.nextInt(bound),
+    );
+    finalMelody = [
+      ...editedMelody.filter((note) => note.beat < loopStartBeat),
+      ...bodyMelody,
+    ];
+  }
 
   return {
     bpm: opts.bpm,
@@ -2054,7 +2071,7 @@ export function compose(opts: ComposeOptions): Piece {
     beats: loopStartBeat + opts.bars * 4,
     keyRoot,
     chords: [...introChords, ...chords],
-    melody: editedMelody,
+    melody: finalMelody,
     counterMelody,
     ostinato,
     bass: [...introBass, ...bass],
