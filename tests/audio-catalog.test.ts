@@ -6,7 +6,7 @@ import {
   stereoChorus,
   stereoReverb,
 } from '../src/audio/effects.js';
-import { DEFAULT_ROOM, panGains, ROLE_STAGE, roomFor, STYLE_ROOMS } from '../src/audio/stage.js';
+import { DEFAULT_ROOM, panGains, ROLE_STAGE, room, roomFor, STYLE_ROOMS } from '../src/audio/stage.js';
 import { noteStageEchoFor, withEchoTracks } from '../src/audio/time-layer.js';
 
 /**
@@ -23,9 +23,19 @@ describe('舞台と部屋(深度モデル)', () => {
     expect(room.dryAt(0.8)).toBeLessThan(room.dryAt(0.2));
   });
 
-  it('kmmoの部屋は実測RT60(≈2.85s)を宣言し、未登録スタイルは既定の部屋へ', () => {
+  it('kmmoの部屋はRT60 2.85s(未検証の参照値)を宣言し、未登録スタイルは既定の部屋へ', () => {
     expect(STYLE_ROOMS['kmmo']!.rt60Sec).toBeCloseTo(2.85, 2);
     expect(roomFor('unknown-style')).toBe(DEFAULT_ROOM);
+  });
+
+  it('部屋の全パラメータはRT60だけから導出される(大きい部屋ほど濡れ、深く出し引きする)', () => {
+    const hall = room(2.85);
+    const club = room(0.9);
+    expect(hall.sendAt(0.5)).toBeGreaterThan(club.sendAt(0.5));
+    expect(hall.duckAmount).toBeGreaterThan(club.duckAmount);
+    expect(hall.delayFeedback).toBeGreaterThan(club.delayFeedback);
+    // 深度則(遠近)は部屋の大きさと独立。
+    expect(hall.preDelayMsAt(0.5)).toBe(club.preDelayMsAt(0.5));
   });
 
   it('全ロールが舞台位置を持ち、ベースが最前・パッドが最奥', () => {
@@ -44,7 +54,7 @@ describe('舞台と部屋(深度モデル)', () => {
 });
 
 describe('時間装置(二重時間軸)', () => {
-  it('MIDI段エコーの遅延はグルーヴから導出される(OPLLと同一規則)', () => {
+  it('MIDI段エコーの遅延はグルーヴから導出される(OPLL編曲も同じ関数を参照)', () => {
     expect(noteStageEchoFor('straight').delayBeats).toBe(0.5);
     expect(noteStageEchoFor('bounce').delayBeats).toBeCloseTo(2 / 3, 6);
   });

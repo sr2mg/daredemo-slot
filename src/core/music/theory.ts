@@ -7,6 +7,9 @@
  *   ドミナント等のキー外の音も「正解」にするため。III7 の G# など）
  */
 
+import type { DuetPolicy } from './duet.js';
+import type { GlidePolicy } from './glide.js';
+
 export interface ChordDef {
   /** キー主音からの相対ルート（半音） */
   root: number;
@@ -443,10 +446,10 @@ export interface StyleDef {
   tension?: 'soft' | 'lush';
   /** スタイル既定のディミニューション密度(diminution.ts)。省略はoff。 */
   diminution?: 'light' | 'rich';
-  /** スタイル既定のハモリ(平行下3度)。省略はoff。 */
-  duet?: 'on';
-  /** スタイル既定のスライド(ポルタメント)指示。省略はoff。 */
-  glide?: 'on';
+  /** スタイル既定のハモリ(平行下3度、duet.ts)。省略はoff。 */
+  duet?: DuetPolicy;
+  /** スタイル既定のスライド(ポルタメント)指示(glide.ts)。省略はoff。 */
+  glide?: GlidePolicy;
 }
 
 export const STYLES: StyleDef[] = [
@@ -518,7 +521,8 @@ export const STYLES: StyleDef[] = [
     bassCadence: 'diatonicPickup',
     tension: 'lush',
     diminution: 'rich',
-    // 実測由来: 四千年は3度ハモリ約3割+±250セント級スライドが署名。
+    // 様式仮説(未検証): 四千年系の3度ハモリ+スライド。測定物のコミットを経るまで
+    // 「実測由来」とは呼ばない(duet.ts / glide.ts の注記を参照)。
     duet: 'on',
     glide: 'on',
   },

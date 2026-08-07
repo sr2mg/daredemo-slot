@@ -30,6 +30,10 @@ import { capabilitiesFor } from './sound-capabilities.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 import { applyDiminution } from './diminution.js';
 import type { DiminutionPolicy } from './diminution.js';
+import { duetLayerFor } from './duet.js';
+import type { DuetPolicy } from './duet.js';
+import { applyGlideMarks } from './glide.js';
+import type { GlidePolicy } from './glide.js';
 import {
   createSongPlan,
   legacyMelodyMode,
@@ -239,15 +243,15 @@ export interface ComposeOptions {
    */
   diminution?: 'auto' | DiminutionPolicy;
   /**
-   * ハモリ(主旋律への平行下3度)。声部予算のあるバックエンド(duetLayer)のみ。
+   * ハモリ(主旋律への平行下3度、duet.ts)。声部予算のあるバックエンド(duetLayer)のみ。
    * 省略/autoはスタイル既定。和風五音は常にoff。
    */
-  duet?: 'auto' | 'off' | 'on';
+  duet?: 'auto' | DuetPolicy;
   /**
-   * スライド(ポルタメント)指示の付与。表現できるバックエンド(glide)のみ。
+   * スライド(ポルタメント)指示の付与(glide.ts)。表現できるバックエンド(glide)のみ。
    * 省略/autoはスタイル既定。和風五音は常にoff(揺り・間の体系と衝突)。
    */
-  glide?: 'auto' | 'off' | 'on';
+  glide?: 'auto' | GlidePolicy;
   /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
   melodyEdits?: readonly MelodyEdit[];
   seed: number;
@@ -1280,10 +1284,10 @@ export function compose(opts: ComposeOptions): Piece {
   );
   const backendCaps = capabilitiesFor(opts.soundChip);
   const duetPolicy = backendCaps.duetLayer
-    ? resolveDevicePolicy<'on' | 'off'>(opts.duet, style.duet)
+    ? resolveDevicePolicy<DuetPolicy>(opts.duet, style.duet)
     : 'off';
   const glidePolicy = backendCaps.glide
-    ? resolveDevicePolicy<'on' | 'off'>(opts.glide, style.glide)
+    ? resolveDevicePolicy<GlidePolicy>(opts.glide, style.glide)
     : 'off';
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
@@ -2091,56 +2095,20 @@ export function compose(opts: ComposeOptions): Piece {
     ];
   }
 
-  // --- ハモリ層(平行下3度) ---
-  // 四千年実測(3度の同時音が約3割)に基づく「連れ」の声部。骨格音だけに付け、
-  // コードスケール上を2度数下へ写して並走する。編成がfullの区間だけ(出し引き)。
-  const duet: NoteEvent[] = [];
-  if (duetPolicy === 'on') {
-    const sectionSource = { bars: opts.bars, loopStartBeat, arrangementPlan };
-    // 主旋律用のstepOnScaleは音域端で反転するため使わない(ハモリは旋律音域の下へ出る)。
-    const scaleStepBelow = (midi: number, pcs: readonly number[]): number => {
-      for (let m = midi - 1; m >= midi - 12; m--) {
-        if (pcs.includes(((m % 12) + 12) % 12)) return m;
-      }
-      return midi;
-    };
-    for (const note of finalMelody) {
-      if (note.role === 'ornament' || note.beat < loopStartBeat) continue;
-      if (arrangementSectionFor(sectionSource, note.beat).backingDensity !== 'full') continue;
-      const chord = chordAt(note.beat - loopStartBeat);
-      const scale = scaleAt(chord);
-      if (!scale.includes(note.midi % 12)) continue; // 半音階的な音には連れを付けない
-      const below = scaleStepBelow(scaleStepBelow(note.midi, scale), scale);
-      if (below >= note.midi || below < 55 || note.midi - below > 5) continue; // 下3度圏のみ
-      duet.push({
-        beat: note.beat,
-        dur: note.dur,
-        midi: below,
-        velocity: Math.max(0.25, (note.velocity ?? 0.75) * 0.72),
-        articulation: note.articulation ?? 'normal',
-        role: 'structural',
-      });
-    }
-  }
+  // --- ハモリ層(平行下3度、duet.ts) ---
+  // 音量はここでは決めない: velocityは主旋律を継承し、バランスは各ミキサーが所有する。
+  const sectionSource = { bars: opts.bars, loopStartBeat, arrangementPlan };
+  const duet: NoteEvent[] = duetPolicy === 'on'
+    ? duetLayerFor(
+      finalMelody,
+      loopStartBeat,
+      (beat) => arrangementSectionFor(sectionSource, beat),
+      (beat) => scaleAt(chordAt(beat - loopStartBeat)),
+    )
+    : [];
 
-  // --- スライド(ポルタメント)指示 ---
-  // 実測: 四千年のリードは±250セント級の遅い滑りが署名。前音とほぼ地続き(間隙0.3拍
-  // 以内)の3〜9半音の移動で、強拍でない着地に限って前音から滑らせる(決定論)。
-  if (glidePolicy === 'on') {
-    const line = finalMelody
-      .filter((note) => note.beat >= loopStartBeat)
-      .sort((a, b) => a.beat - b.beat);
-    for (let i = 1; i < line.length; i++) {
-      const prev = line[i - 1]!;
-      const note = line[i]!;
-      const restGap = note.beat - (prev.beat + prev.dur);
-      const interval = Math.abs(note.midi - prev.midi);
-      const strongBeat = ((note.beat - loopStartBeat) % 2) === 0;
-      if (restGap <= 0.3 && interval >= 3 && interval <= 9 && !strongBeat) {
-        note.glideFrom = prev.midi;
-      }
-    }
-  }
+  // --- スライド(ポルタメント)指示 --- 付与規則と時間定数の共有規則はglide.ts。
+  if (glidePolicy === 'on') applyGlideMarks(finalMelody, loopStartBeat);
 
   return {
     bpm: opts.bpm,

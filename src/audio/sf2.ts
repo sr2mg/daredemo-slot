@@ -13,6 +13,8 @@
 
 /* eslint-disable no-bitwise */
 
+import { glideDurationSec } from '../core/music/glide.js';
+
 interface Sf2SampleHeader {
   name: string;
   start: number;
@@ -354,10 +356,10 @@ export function renderSf2Stems(
     const noteSendWeight = sendWeight ? sendWeight(note) : 0;
     const ratio = (zone.sample.rate / sampleRate)
       * 2 ** (((note.midi - zone.rootKey) * zone.scaleTuning + zone.cents) / 1200);
-    // ポルタメント: 開始時は前音の音高、durの半分(最大90ms)かけて目標へ等比で滑る。
+    // ポルタメント: 開始時は前音の音高、共有規則(glide.ts)の時間で目標へ等比で滑る。
     const glideCents = note.glideFromMidi !== undefined ? (note.glideFromMidi - note.midi) * 100 : 0;
     const glideSamples = glideCents !== 0
-      ? Math.max(1, Math.floor(Math.min(0.09, note.durSec * 0.5) * sampleRate))
+      ? Math.max(1, Math.floor(glideDurationSec(note.durSec) * sampleRate))
       : 0;
     let currentRatio = glideSamples > 0 ? ratio * 2 ** (glideCents / 1200) : ratio;
     // EMU互換: initialAttenuationは実測0.4倍で効く(fluidsynth互換。GeneralUser前提)。
