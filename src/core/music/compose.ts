@@ -385,6 +385,11 @@ export interface ArrangementSectionPlan {
   ostinatoPeak: PhraseFunction | null;
   /** 連符レイヤーの分割数。nullは基準グリッド。密度1=1小節div等分、密度2=半小節div等分。 */
   ostinatoTuplet: TupletDivision | null;
+  /**
+   * 主旋律の音色パレット番号(0=看板)。音色でフォームを分節する管弦楽法の基本:
+   * 新しいセクション=新しい色。実音色は各レンダラのパレットが解決する。
+   */
+  leadColor: number;
 }
 
 export interface ArrangementPlan {

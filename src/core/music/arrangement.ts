@@ -6,7 +6,7 @@ import type {
   TupletDivision,
   TupletOverlayChoice,
 } from './compose.js';
-import type { SongPlan } from './song-plan.js';
+import type { SectionRole, SongPlan } from './song-plan.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS } from './theory.js';
@@ -41,7 +41,21 @@ const section = (
   ostinatoDensity: device === 'arp1' ? 1 : device === 'arp2' ? 2 : 0,
   ostinatoPeak: null,
   ostinatoTuplet: null,
+  leadColor: 0,
 });
+
+/**
+ * 旋律の受け渡し(音色によるフォーム分節)。役割→パレット番号の固定写像:
+ * hook/return/finaleは看板の色0で帰ってきて、developmentが第2、reliefが第3の色。
+ * パレットが1色しかないレンダラ/スタイルでは全区間同じ音になる(後方互換)。
+ */
+const LEAD_COLOR_BY_ROLE: Record<SectionRole, number> = {
+  hook: 0,
+  development: 1,
+  relief: 2,
+  return: 0,
+  finale: 0,
+};
 
 /** 帰還区間の前進感を、曲全体で選ばれたテクスチャ戦略の主役から導く。 */
 function returnDeviceFor(
@@ -298,6 +312,9 @@ function planArrangement(
       }
     }
     const plannedSections = withTransitions(sections, energies, seed);
+    plannedSections.forEach((section, index) => {
+      section.leadColor = LEAD_COLOR_BY_ROLE[songPlan?.form.sections[index]?.role ?? 'hook'];
+    });
     if (arrangementPolicy?.emphasizeReturn) {
       if (absenceIndex >= 0) plannedSections[absenceIndex]!.exitFill = 'full';
       if (returnIndex >= 0) plannedSections[returnIndex]!.entrance = 'cymbal';
@@ -354,6 +371,9 @@ function planArrangement(
     sections[high] = section('full', 'sectionB', 'arp1');
   } else sections[low] = section('sparse', 'base', 'counter1');
   const plannedSections = withTransitions(sections, energies, seed);
+  plannedSections.forEach((section, index) => {
+    section.leadColor = LEAD_COLOR_BY_ROLE[songPlan?.form.sections[index]?.role ?? 'hook'];
+  });
   return {
     arc, counterRole, textureStrategy, bassRole,
     sectionA: plannedSections[0]!, sectionB: plannedSections[1]!, sections: plannedSections,

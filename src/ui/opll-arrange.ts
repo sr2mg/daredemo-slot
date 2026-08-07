@@ -35,6 +35,11 @@ export interface StyleVoices {
   ostinato: number;
   /** バッキングの刻み: offbeat = 裏打ち 8 分 / half = 2 分音符サステイン */
   backingPattern: 'offbeat' | 'half';
+  /**
+   * 主旋律の音色パレット(セクションのleadColorが添字)。省略時は[lead]=全区間同色。
+   * ユーザーが音色を上書きした場合はパレットより上書きが勝つ(全区間固定)。
+   */
+  leadPalette?: readonly number[];
 }
 
 /** YM2413の音色0番へ書き込める、曲単位のユーザー音色。 */
@@ -60,8 +65,10 @@ const STYLE_VOICES: Record<string, StyleVoices> = {
     lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'offbeat',
   },
   // カラートーンを持続和音で聴かせたいので、裏打ちでなくハーフのパッド型。
+  // 受け渡しパレット: 看板4(フルート系)→展開1(バイオリン系)→安息3(クラリネット系)。
   kmmo: {
     lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'half',
+    leadPalette: [4, 1, 3],
   },
 };
 const DEFAULT_VOICES: StyleVoices = STYLE_VOICES['eurobeat']!;
@@ -233,10 +240,17 @@ export function arrangePiece(
   const selectedPatch = OPLL_USER_PATCHES.find((patch) => patch.id === userPatchId) ?? OPLL_USER_PATCHES[0]!;
   selectedPatch.regs.forEach((value, reg) => b.raw(reg, value, 0));
 
+  // 受け渡し: ユーザー上書きが無ければ、セクションのleadColorでパレットから音色を選ぶ。
+  const leadPalette = override?.lead !== undefined || !voices.leadPalette || voices.leadPalette.length === 0
+    ? [voices.lead]
+    : voices.leadPalette;
+  const leadVoiceAt = (beat: number): number =>
+    leadPalette[(arrangementSectionFor(piece, beat).leadColor ?? 0) % leadPalette.length]!;
+
   const candidates: Candidate[] = [];
   for (const note of piece.melody) {
     const strong = note.beat % 4 === 0 || note.beat % 4 === 2;
-    candidates.push(noteCandidate('lead', note, voices.lead, strong ? 2 : 4));
+    candidates.push(noteCandidate('lead', note, leadVoiceAt(note.beat), strong ? 2 : 4));
     const section = arrangementSectionFor(piece, note.beat);
     if (note.beat >= piece.loopStartBeat && section.echo && note.role !== 'ornament') {
       const delay = piece.grooveFeel === 'bounce' ? 2 / 3 : 1 / 2;
@@ -245,7 +259,7 @@ export function arrangePiece(
       const dur = Math.min(note.dur, piece.beats - beat);
       if (dur >= 0.08) {
         candidates.push({
-          ...noteCandidate('doubling', { ...note, beat, dur }, voices.lead, 8),
+          ...noteCandidate('doubling', { ...note, beat, dur }, leadVoiceAt(note.beat), 8),
           volume: Math.max(7, volumeFor(note, 4) + 3),
         });
       }
@@ -254,8 +268,8 @@ export function arrangePiece(
   for (const note of piece.bass) candidates.push(noteCandidate('bass', note, voices.bass, 2));
   for (const note of piece.counterMelody) candidates.push(noteCandidate('counter', note, voices.counter, 5));
   for (const note of piece.ostinato ?? []) candidates.push(noteCandidate('ostinato', note, voices.ostinato, 7));
-  // ハモリはリードと同じ音色で一段控えめに。優先度45なので混雑時は自然に消える。
-  for (const note of piece.duet ?? []) candidates.push(noteCandidate('duet', note, voices.lead, 7));
+  // ハモリはその区間のリードと同じ音色で一段控えめに。優先度45なので混雑時は自然に消える。
+  for (const note of piece.duet ?? []) candidates.push(noteCandidate('duet', note, leadVoiceAt(note.beat), 7));
 
   // コードの中央声部を単音リフとして刻む。独立声部が多い瞬間だけアロケータが先に落とす。
   for (const chord of piece.chords) {

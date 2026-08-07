@@ -5,8 +5,8 @@
  * - picked:  ファイル選択。IndexedDBへ保存し、次回以降も使える
  */
 
-import { parseSf2 } from './sf2.js';
-import type { Sf2Font } from './sf2.js';
+import { parseSf2 } from '../audio/sf2.js';
+import type { Sf2Font } from '../audio/sf2.js';
 
 export type SoundFontSource = 'bundled' | 'local' | 'picked';
 

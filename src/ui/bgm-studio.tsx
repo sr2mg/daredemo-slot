@@ -2,8 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { BgmComposerPanel } from './bgm-composer.js';
 import type { BgmPcmRenderer } from './bgm-audio.js';
-import { PCM_PART_LABELS } from './pcm-arrange.js';
-import type { PcmPart, PcmVoiceOverride } from './pcm-arrange.js';
+import { PCM_PART_LABELS } from '../audio/pcm-arrange.js';
+import type { PcmPart, PcmVoiceOverride } from '../audio/pcm-arrange.js';
 import { loadStored, saveStored } from './persist.js';
 import { SfxPlayer } from './sfx-player.js';
 import type { ActiveSoundFont, SoundFontSource } from './soundfont-store.js';
@@ -110,7 +110,7 @@ export function BgmStudio() {
     return {
       id: `sf2:${activeFont.id}:${JSON.stringify(pcmVoices)}`,
       render: async (piece) => {
-        const { renderSf2Bgm } = await import('./pcm-arrange.js');
+        const { renderSf2Bgm } = await import('../audio/pcm-arrange.js');
         return renderSf2Bgm(piece, activeFont.font, pcmVoices);
       },
     };
