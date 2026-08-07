@@ -237,6 +237,9 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
     const previous = piece.chords[index - 1];
     if (!previous || previous.beat < bodyStart && chord.beat >= bodyStart) continue;
+    // テンションで声部数が和音ごとに変わると固定インデックスは別声部を比べてしまう。
+    // 同数のときだけ声部対応が取れているとみなして測る。
+    if (chord.midis.length !== previous.midis.length) continue;
     for (const voice of [1, 2]) {
       if (chord.midis[voice] === undefined || previous.midis[voice] === undefined) continue;
       if (Math.abs(chord.midis[voice]! - previous.midis[voice]!) > 7) {
@@ -262,10 +265,12 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   if (loopChords.length > 1) {
     const firstChord = loopChords[0]!;
     const lastChord = loopChords.at(-1)!;
-    for (const voice of [1, 2]) {
-      if (firstChord.midis[voice] === undefined || lastChord.midis[voice] === undefined) continue;
-      if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > 7) {
-        add('voiceLeading', 'warning', lastChord.beat, lastChord.midis[voice]!, '伴奏のループ境界が7半音を超える');
+    if (firstChord.midis.length === lastChord.midis.length) {
+      for (const voice of [1, 2]) {
+        if (firstChord.midis[voice] === undefined || lastChord.midis[voice] === undefined) continue;
+        if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > 7) {
+          add('voiceLeading', 'warning', lastChord.beat, lastChord.midis[voice]!, '伴奏のループ境界が7半音を超える');
+        }
       }
     }
     const directedTransitions = loopChords.filter((from, index) => {

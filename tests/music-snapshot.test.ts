@@ -45,6 +45,12 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
       seed: 11, tupletOverlay: 'auto',
     },
   },
+  {
+    name: '韓国MMO風16小節 / vi軌道 / lush+rich',
+    options: {
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+    },
+  },
   ...(['current', 'memoryArc', 'premiseArc'] as const).map((strategy) => ({
     name: `BIG風40小節 / ${strategy}`,
     options: {

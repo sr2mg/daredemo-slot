@@ -4,3 +4,5 @@ coverage/
 *.log
 .DS_Store
 tmp/
+# 音楽リファレンス分析(著作権のある音源・研究ツールをOSSに含めない)
+analysis/

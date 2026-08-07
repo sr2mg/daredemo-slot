@@ -280,6 +280,40 @@ export const PROGRESSIONS: ProgressionDef[] = [
     ],
   },
   {
+    id: 'relative-orbit',
+    name: 'vi軌道ループ',
+    feel: '寂しげだが開ける・00年代ネトゲ',
+    usage: '夜フィールド・ゲームBGM向き',
+    tonality: 'major',
+    // 平行短調の主和音(vi)から出発し、長調の機能衛星(IV→I→V)を巡回して開ける。
+    // 「短調ではなく、長調のviを第二の主音として往復する」のが寂しげ×開放感の正体
+    // (ESTi系実測: 四千年はBm(vi)開始→Em→A→D(I)の衛星軌道)。
+    realizations: {
+      // 相対短調読みでは i を出発点にした i→VI→III→VII の巡回になる。
+      minor: {
+        slots: [
+          [['i'], ['i7']],
+          [['VI'], ['VImaj7'], ['iiDim']],
+          [['III'], ['v7'], ['III', 'VII']],
+          [['VII'], ['VI', 'VII'], ['V7m']],
+        ],
+      },
+    },
+    slots: [
+      [['vi'], ['vi7']],
+      [['IV'], ['IVM7'], ['ii7']],
+      [['I'], ['iii7'], ['I', 'V']],
+      [['V'], ['IV', 'V'], ['iii7', 'vi7']],
+    ],
+    defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [1, 1, 0, 0], // vi7 → IVM7 → I → V（カラートーンで浮かせる）
+      [0, 2, 1, 0], // vi → ii7 → iii7 → V（上行の衛星巡回）
+      [1, 0, 2, 1], // vi7 → IV → I・V → IV・V（和声リズムで押す）
+      [0, 1, 0, 2], // vi → IVM7 → I → iii7・vi7（viへ回帰して閉じる）
+    ],
+  },
+  {
     id: 'minor-drive',
     name: '短調ドライブ',
     feel: '暗い疾走・回帰感',
@@ -405,6 +439,10 @@ export interface StyleDef {
   };
   /** フレーズ終端で次コードへ接続するベースの作法。 */
   bassCadence: 'chromatic' | 'chordTone' | 'diatonicPickup';
+  /** スタイル既定のテンション方針(tension.ts)。省略はoff=素の和音。 */
+  tension?: 'soft' | 'lush';
+  /** スタイル既定のディミニューション密度(diminution.ts)。省略はoff。 */
+  diminution?: 'light' | 'rich';
 }
 
 export const STYLES: StyleDef[] = [
@@ -449,6 +487,33 @@ export const STYLES: StyleDef[] = [
       stepwisePercent: 62,
     },
     bassCadence: 'chordTone',
+  },
+  {
+    id: 'kmmo',
+    name: '韓国MMO風',
+    feel: '寂しげ×疾走・00年代ネトゲ',
+    // 中庸テンポの8ビート+16分ハットの推進。疾走感はBPMでなく細分密度で作る
+    // (ESTi系実測: BPM96-103で音符の6割超が16分)。
+    kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+    hat: [1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1],
+    sectionB: {
+      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0],
+      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+      hat: [1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0],
+    },
+    bass: 'root8',
+    melody: {
+      // 表裏の重みを平滑にし、ラン(ディミニューション)が均等に流れる下地を作る。
+      onsetWeights: [100, 64, 58, 70, 100, 62, 60, 74],
+      density: [5, 6],
+      gate: 0.7,
+      // 実測の旋律語彙は+2/+3セルの順次優勢(P4/P5は彩り)。
+      stepwisePercent: 80,
+    },
+    bassCadence: 'diatonicPickup',
+    tension: 'lush',
+    diminution: 'rich',
   },
   {
     id: 'ska',
