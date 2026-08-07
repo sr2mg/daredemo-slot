@@ -193,6 +193,14 @@ describe('PCM編曲(Piece→GMノート)', () => {
     expect(notes.every((n) => n.durSec > 0)).toBe(true);
   });
 
+  it('パート別上書きが主旋律のプリセットを差し替える(バンク指定込み)', () => {
+    const notes = arrangeSf2Notes(piece, { lead: { bank: 8, program: 107 } });
+    expect(notes.some((n) => n.bank === 8 && n.program === 107)).toBe(true);
+    expect(notes.some((n) => n.program === 110 && n.bank === 0)).toBe(false); // 既定リードは消える
+    // 他パート(伴奏=48)は既定のまま
+    expect(notes.some((n) => n.program === 48 && n.bank === 0)).toBe(true);
+  });
+
   it('同梱GeneralUser GSで実際に音が出る(統合)', () => {
     const buffer = readFileSync('public/soundfonts/GeneralUser-GS.sf2');
     const font = parseSf2(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));

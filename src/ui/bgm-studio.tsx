@@ -2,6 +2,9 @@ import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { BgmComposerPanel } from './bgm-composer.js';
 import type { BgmPcmRenderer } from './bgm-audio.js';
+import { PCM_PART_LABELS } from './pcm-arrange.js';
+import type { PcmPart, PcmVoiceOverride } from './pcm-arrange.js';
+import { loadStored, saveStored } from './persist.js';
 import { SfxPlayer } from './sfx-player.js';
 import type { ActiveSoundFont, SoundFontSource } from './soundfont-store.js';
 
@@ -21,6 +24,25 @@ const SOURCE_OPTIONS: readonly { id: SoundFontSource; label: string }[] = [
   { id: 'picked', label: '保存済みの選択ファイル' },
 ];
 
+const PCM_PARTS: readonly PcmPart[] = ['lead', 'counter', 'ostinato', 'backing', 'bass', 'drums'];
+const PCM_VOICES_KEY = 'daredemo.pcmVoices.v1';
+
+function loadPcmVoices(): PcmVoiceOverride {
+  return loadStored<PcmVoiceOverride>(
+    PCM_VOICES_KEY,
+    {},
+    (value): value is PcmVoiceOverride => value !== null
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && Object.entries(value as Record<string, unknown>).every(([part, ref]) => (
+        (PCM_PARTS as readonly string[]).includes(part)
+        && ref !== null && typeof ref === 'object'
+        && Number.isInteger((ref as { bank?: unknown }).bank)
+        && Number.isInteger((ref as { program?: unknown }).program)
+      )),
+  );
+}
+
 export function BgmStudio() {
   const playerRef = useRef<SfxPlayer | null>(null);
   if (playerRef.current === null) playerRef.current = new SfxPlayer();
@@ -29,6 +51,19 @@ export function BgmStudio() {
   const [fontSource, setFontSource] = useState<SoundFontSource>('bundled');
   const [activeFont, setActiveFont] = useState<ActiveSoundFont | null>(null);
   const [fontStatus, setFontStatus] = useState('');
+  const [pcmVoices, setPcmVoices] = useState<PcmVoiceOverride>(loadPcmVoices);
+
+  const updatePcmVoice = (part: PcmPart, encoded: string) => {
+    const next: PcmVoiceOverride = { ...pcmVoices };
+    if (encoded === 'auto') {
+      delete next[part];
+    } else {
+      const [bank, program] = encoded.split(':').map(Number);
+      next[part] = { bank: bank!, program: program! };
+    }
+    setPcmVoices(next);
+    saveStored(PCM_VOICES_KEY, next);
+  };
 
   const loadFont = async (source: SoundFontSource) => {
     setFontStatus('SoundFont読み込み中…（同梱フォントは約31MB、初回のみ）');
@@ -71,14 +106,26 @@ export function BgmStudio() {
 
   const pcmRenderer = useMemo<BgmPcmRenderer | null>(() => {
     if (rendererMode !== 'pcm' || !activeFont) return null;
+    // 音色上書きは波形を変えるので、キャッシュキー(id)へ必ず含める。
     return {
-      id: `sf2:${activeFont.id}`,
+      id: `sf2:${activeFont.id}:${JSON.stringify(pcmVoices)}`,
       render: async (piece) => {
         const { renderSf2Bgm } = await import('./pcm-arrange.js');
-        return renderSf2Bgm(piece, activeFont.font);
+        return renderSf2Bgm(piece, activeFont.font, pcmVoices);
       },
     };
-  }, [rendererMode, activeFont]);
+  }, [rendererMode, activeFont, pcmVoices]);
+
+  // 読み込んだフォントの実プリセット一覧(バンク・番号順)。GSバリエーション音色もここに出る。
+  const presetOptions = useMemo(() => {
+    if (!activeFont) return [];
+    return [...activeFont.font.presets]
+      .sort((a, b) => a.bank - b.bank || a.program - b.program)
+      .map((preset) => ({
+        value: `${preset.bank}:${preset.program}`,
+        label: `${preset.bank}:${String(preset.program).padStart(3, '0')} ${preset.name}`,
+      }));
+  }, [activeFont]);
 
   return (
     <div className="app bgm-studio">
@@ -130,6 +177,29 @@ export function BgmStudio() {
             ? ' — フォント読み込み完了までチップ音源で鳴ります'
             : ''}
         </p>
+      )}
+      {rendererMode === 'pcm' && activeFont && (
+        <div className="panel-controls studio-voices">
+          {PCM_PARTS.map((part) => {
+            const current = pcmVoices[part];
+            return (
+              <select
+                key={part}
+                value={current ? `${current.bank}:${current.program}` : 'auto'}
+                onChange={(e) => updatePcmVoice(part, e.target.value)}
+                data-testid={`studio-pcm-voice-${part}`}
+                title="フォントの実プリセット一覧。GSバリエーションバンクの音色(中華系など)もここから選べます"
+              >
+                <option value="auto">{PCM_PART_LABELS[part]}: スタイル既定</option>
+                {presetOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {PCM_PART_LABELS[part]}: {option.label}
+                  </option>
+                ))}
+              </select>
+            );
+          })}
+        </div>
       )}
       <BgmComposerPanel player={playerRef.current!} pcmRenderer={pcmRenderer} />
       <p className="panel-note credit-note">

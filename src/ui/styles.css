@@ -1974,3 +1974,14 @@ button:disabled {
   margin: 0;
   font-size: 1.1rem;
 }
+
+.studio-voices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.studio-voices select {
+  max-width: 240px;
+}
