@@ -288,8 +288,13 @@ export class SfxPlayer {
     try {
       const ctx = this.ensureCtx();
       const sampleRate = isPcmBgm(def) ? def.sampleRate : OPLL_RATE;
-      const buffer = ctx.createBuffer(1, wave.length, sampleRate);
+      // PCM defが右チャンネルを持てばステレオ(SoundFontレンダラ)。チップ音源はモノ。
+      const rightWave = isPcmBgm(def) && def.waveRight && def.waveRight.length === wave.length
+        ? def.waveRight
+        : null;
+      const buffer = ctx.createBuffer(rightWave ? 2 : 1, wave.length, sampleRate);
       buffer.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
+      if (rightWave) buffer.copyToChannel(rightWave as Float32Array<ArrayBuffer>, 1);
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.loop = opts.loop ?? true;

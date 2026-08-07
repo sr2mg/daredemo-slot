@@ -10,6 +10,14 @@ import type { Piece } from '../core/music/compose.js';
 import type { PcmBgmDef } from './bgm-audio.js';
 import { renderSf2 } from './sf2.js';
 import type { Sf2Font, Sf2Note } from './sf2.js';
+import {
+  panGains,
+  pingPongDelay,
+  ROLE_PROFILES,
+  stereoChorus,
+  stereoReverb,
+  withEchoTracks,
+} from './sound-design.js';
 
 export const SF2_SAMPLE_RATE = 44100;
 
@@ -59,53 +67,45 @@ const DRUM_KEYS: Record<string, { key: number; velocity: number }> = {
 const velocityOf = (value: number | undefined): number =>
   Math.max(1, Math.min(127, Math.round(30 + (value ?? 0.75) * 97)));
 
-export function arrangeSf2Notes(piece: Piece, overrides: PcmVoiceOverride = {}): Sf2Note[] {
+/** パート別のノート列。音響プロファイル(パン・センド・エコー)をロール単位で適用するための形。 */
+export function arrangeSf2Parts(
+  piece: Piece,
+  overrides: PcmVoiceOverride = {},
+): Record<PcmPart, Sf2Note[]> {
   const programs = STYLE_PROGRAMS[piece.styleId] ?? DEFAULT_PROGRAMS;
   const refFor = (part: Exclude<PcmPart, 'drums'>): PcmPresetRef =>
     overrides[part] ?? { bank: 0, program: programs[part] };
   const drumRef = overrides.drums ?? { bank: 128, program: 0 };
   const spb = 60 / piece.bpm;
-  const notes: Sf2Note[] = [];
-  const pushPart = (
+  const partFor = (
     events: readonly { beat: number; dur: number; midi: number; velocity?: number }[],
     ref: PcmPresetRef,
     gain: number,
-  ): void => {
-    for (const event of events) {
-      notes.push({
-        program: ref.program,
-        bank: ref.bank,
-        midi: event.midi,
-        velocity: velocityOf(event.velocity),
-        startSec: event.beat * spb,
-        durSec: Math.max(0.03, event.dur * spb),
-        gain,
-      });
-    }
-  };
-  pushPart(piece.melody, refFor('lead'), 1.0);
-  pushPart(piece.counterMelody, refFor('counter'), 0.65);
-  pushPart(piece.ostinato, refFor('ostinato'), 0.6);
-  pushPart(piece.bass, refFor('bass'), 0.9);
+  ): Sf2Note[] => events.map((event) => ({
+    program: ref.program,
+    bank: ref.bank,
+    midi: event.midi,
+    velocity: velocityOf(event.velocity),
+    startSec: event.beat * spb,
+    durSec: Math.max(0.03, event.dur * spb),
+    gain,
+  }));
   // バッキング: ボイシング全声部を持続和音で。PCMでは出し引きより響きの厚みを優先する。
   const backing = refFor('backing');
-  for (const chord of piece.chords) {
-    for (const midi of chord.midis) {
-      notes.push({
-        program: backing.program,
-        bank: backing.bank,
-        midi,
-        velocity: 68,
-        startSec: chord.beat * spb,
-        durSec: Math.max(0.05, chord.dur * spb * 0.97),
-        gain: 0.5,
-      });
-    }
-  }
+  const backingNotes: Sf2Note[] = piece.chords.flatMap((chord) => chord.midis.map((midi) => ({
+    program: backing.program,
+    bank: backing.bank,
+    midi,
+    velocity: 68,
+    startSec: chord.beat * spb,
+    durSec: Math.max(0.05, chord.dur * spb * 0.97),
+    gain: 0.5,
+  })));
+  const drumNotes: Sf2Note[] = [];
   for (const drum of piece.drums) {
     const mapped = DRUM_KEYS[drum.inst];
     if (!mapped) continue;
-    notes.push({
+    drumNotes.push({
       program: drumRef.program,
       bank: drumRef.bank,
       midi: mapped.key,
@@ -115,49 +115,27 @@ export function arrangeSf2Notes(piece: Piece, overrides: PcmVoiceOverride = {}):
       gain: 0.9,
     });
   }
-  return notes;
+  return {
+    lead: partFor(piece.melody, refFor('lead'), 1.0),
+    counter: partFor(piece.counterMelody, refFor('counter'), 0.65),
+    ostinato: partFor(piece.ostinato, refFor('ostinato'), 0.6),
+    backing: backingNotes,
+    bass: partFor(piece.bass, refFor('bass'), 0.9),
+    drums: drumNotes,
+  };
+}
+
+export function arrangeSf2Notes(piece: Piece, overrides: PcmVoiceOverride = {}): Sf2Note[] {
+  return Object.values(arrangeSf2Parts(piece, overrides)).flat();
 }
 
 /**
- * Schroeder型のモノラルリバーブ。素のGMサンプルを無響で鳴らすと必ず安っぽくなる
- * (SC-88系の「らしさ」の相当部分は内蔵リバーブ)ため、控えめなホール残響を常時掛ける。
- * コム4本+オールパス2本の古典構成。オフラインなので素直な実装でよい。
+ * PieceをSoundFontで合成し、既存プレイヤーのPCM BGM形式(ステレオ)で返す。
+ *
+ * ミキサーはSC-88+VS世代のバス構造を写す: パート別にドライ合成し、ロール別
+ * プロファイル(sound-design.ts)でパン/リバーブ/コーラス/ディレイの各バスへ送る。
+ * エコートラック(MIDI段)とフィードバックディレイ(オーディオ段)の二重時間軸。
  */
-function applyReverb(wave: Float32Array, sampleRate: number, wet = 0.24): void {
-  const combDelaysMs = [29.7, 37.1, 41.1, 43.7];
-  const combFeedback = 0.76;
-  const allpassDelaysMs = [5.0, 1.7];
-  const allpassGain = 0.7;
-  const combBuffers = combDelaysMs.map((ms) => new Float32Array(Math.round(ms * sampleRate / 1000)));
-  const combIndices = combDelaysMs.map(() => 0);
-  const allpassBuffers = allpassDelaysMs.map((ms) => new Float32Array(Math.round(ms * sampleRate / 1000)));
-  const allpassIndices = allpassDelaysMs.map(() => 0);
-  for (let i = 0; i < wave.length; i++) {
-    const dry = wave[i]!;
-    let combSum = 0;
-    for (let c = 0; c < combBuffers.length; c++) {
-      const buffer = combBuffers[c]!;
-      const index = combIndices[c]!;
-      const delayed = buffer[index]!;
-      buffer[index] = dry + delayed * combFeedback;
-      combIndices[c] = (index + 1) % buffer.length;
-      combSum += delayed;
-    }
-    let wetSample = combSum / combBuffers.length;
-    for (let a = 0; a < allpassBuffers.length; a++) {
-      const buffer = allpassBuffers[a]!;
-      const index = allpassIndices[a]!;
-      const delayed = buffer[index]!;
-      const input = wetSample;
-      wetSample = -input * allpassGain + delayed;
-      buffer[index] = input + delayed * allpassGain;
-      allpassIndices[a] = (index + 1) % buffer.length;
-    }
-    wave[i] = Math.tanh(dry + wetSample * wet);
-  }
-}
-
-/** PieceをSoundFontで合成し、既存プレイヤーのPCM BGM形式で返す。 */
 export function renderSf2Bgm(
   piece: Piece,
   font: Sf2Font,
@@ -165,11 +143,45 @@ export function renderSf2Bgm(
 ): PcmBgmDef {
   const spb = 60 / piece.bpm;
   const loopEnd = piece.beats * spb;
-  const wave = renderSf2(font, arrangeSf2Notes(piece, overrides), SF2_SAMPLE_RATE, loopEnd + 1.2);
-  applyReverb(wave, SF2_SAMPLE_RATE);
+  const totalSec = loopEnd + 1.6;
+  const length = Math.ceil(totalSec * SF2_SAMPLE_RATE);
+  const dryLeft = new Float32Array(length);
+  const dryRight = new Float32Array(length);
+  const reverbBus = new Float32Array(length);
+  const chorusBus = new Float32Array(length);
+  const delayBus = new Float32Array(length);
+
+  const parts = arrangeSf2Parts(piece, overrides);
+  for (const [part, baseNotes] of Object.entries(parts) as [PcmPart, Sf2Note[]][]) {
+    const profile = ROLE_PROFILES[part]!;
+    const notes = profile.echo ? withEchoTracks(baseNotes, profile.echo, spb) : baseNotes;
+    if (notes.length === 0) continue;
+    const wave = renderSf2(font, notes, SF2_SAMPLE_RATE, totalSec);
+    const [gainLeft, gainRight] = panGains(profile.pan);
+    for (let i = 0; i < length; i++) {
+      const sample = wave[i]!;
+      dryLeft[i] = dryLeft[i]! + sample * gainLeft;
+      dryRight[i] = dryRight[i]! + sample * gainRight;
+      if (profile.reverbSend > 0) reverbBus[i] = reverbBus[i]! + sample * profile.reverbSend;
+      if (profile.chorusSend > 0) chorusBus[i] = chorusBus[i]! + sample * profile.chorusSend;
+      if (profile.delaySend > 0) delayBus[i] = delayBus[i]! + sample * profile.delaySend;
+    }
+  }
+
+  const reverb = stereoReverb(reverbBus, SF2_SAMPLE_RATE);
+  const chorus = stereoChorus(chorusBus, SF2_SAMPLE_RATE);
+  // ディレイは付点8分をテンポ同期で。フィードバック量が残響の伸びを決める(harakami則)。
+  const delay = pingPongDelay(delayBus, SF2_SAMPLE_RATE, 0.75 * spb, 0.45);
+  const left = new Float32Array(length);
+  const right = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    left[i] = Math.tanh(dryLeft[i]! + reverb.left[i]! + chorus.left[i]! + delay.left[i]!);
+    right[i] = Math.tanh(dryRight[i]! + reverb.right[i]! + chorus.right[i]! + delay.right[i]!);
+  }
   return {
     kind: 'pcm',
-    wave,
+    wave: left,
+    waveRight: right,
     sampleRate: SF2_SAMPLE_RATE,
     loopStart: piece.loopStartBeat * spb,
     loopEnd,
