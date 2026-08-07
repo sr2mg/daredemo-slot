@@ -549,6 +549,33 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   ) {
     add('texture', 'error', bodyStart, -1, '2A03の声部予算を超える独立分散和音が計画されている');
   }
+  if (
+    textureSections.some((section) => section.ostinatoTuplet !== null)
+    && piece.grooveFeel === 'tripletOverlay'
+  ) {
+    add('rhythm', 'error', bodyStart, -1, '三連オーバーレイと連符レイヤーが同一曲へ計画されている');
+  }
+  textureSections.forEach((section, sectionIndex) => {
+    const sectionStart = bodyStart + sectionIndex * (piece.bars === 40 ? 8 : piece.bars === 16 ? 8 : piece.bars) * 4;
+    const sectionEnd = sectionStart + (piece.bars === 40 || piece.bars === 16 ? 8 : piece.bars) * 4;
+    for (const note of piece.ostinato) {
+      if (note.beat < sectionStart || note.beat >= sectionEnd) continue;
+      const offsetInBar = (note.beat - bodyStart) % 4;
+      if (section.ostinatoTuplet !== null) {
+        // 連符レイヤーの打点は宣言グリッド（半小節をdiv等分）へ正確に乗る。
+        const steps = offsetInBar * section.ostinatoTuplet / 2;
+        if (Math.abs(steps - Math.round(steps)) > 1e-6) {
+          add('rhythm', 'error', note.beat, -1, '連符レイヤーの打点が宣言グリッドから外れている');
+        }
+      } else {
+        // 基準面は8分/16分（bounceの2/3含む）から動かない。連符化の漏れ出しを検出する。
+        const steps = offsetInBar * 12;
+        if (Math.abs(steps - Math.round(steps)) > 1e-6) {
+          add('rhythm', 'error', note.beat, -1, '分散和音の打点が基準グリッドから外れている');
+        }
+      }
+    }
+  });
 
   if (piece.phrasePlan.bars.length !== piece.bars) {
     add('form', 'error', bodyStart, -1, 'PhrasePlanと曲の小節数が一致しない');

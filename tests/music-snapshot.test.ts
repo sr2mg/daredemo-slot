@@ -38,6 +38,13 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
       choice: variedChoiceFor(jttou, 16, 3),
     },
   },
+  {
+    name: 'ゲームBGM風16小節 / 連符レイヤーauto',
+    options: {
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      seed: 11, tupletOverlay: 'auto',
+    },
+  },
   ...(['current', 'memoryArc', 'premiseArc'] as const).map((strategy) => ({
     name: `BIG風40小節 / ${strategy}`,
     options: {
