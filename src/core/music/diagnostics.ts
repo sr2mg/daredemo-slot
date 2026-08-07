@@ -1,5 +1,5 @@
 import { capabilitiesFor } from './sound-capabilities.js';
-import { CHORDS, MAJOR_SCALE, NATURAL_MINOR_SCALE } from './theory.js';
+import { CHORDS } from './theory.js';
 import { grooveBeat } from './timing.js';
 import { melodicSectionSimilarities } from './diversity.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './compose.js';
@@ -60,11 +60,13 @@ function melodicDirection(from: number, to: number): -1 | 0 | 1 {
   return to === from ? 0 : to > from ? 1 : -1;
 }
 
-/** 五音音階では3～4半音も音階上の隣になり得るため、半音数だけで判定しない。 */
+/** 五音系の音組織では3～4半音も音階上の隣になり得るため、半音数だけで判定しない。 */
 function isMelodicStep(piece: Piece, from: number, to: number): boolean {
   if (from === to) return false;
   if (Math.abs(to - from) <= 2) return true;
-  const collection = piece.japanesePlan?.scalePcs;
+  // 旋律語彙はPieceが一元管理する(標準=ダイアトニック、和風/五音=各音組織)。
+  // ダイアトニックでは隣接音級が常に2半音以下なので、この経路は五音系だけで効く。
+  const collection = piece.melodicScalePcs;
   if (!collection?.includes(((from % 12) + 12) % 12)) return false;
   const direction = melodicDirection(from, to);
   let cursor = from + direction;
@@ -179,9 +181,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const sameContext = (motifGroups.get(`${plan.motifSourceBar}:${step}`) ?? [])
       .filter((entry) => entry.position !== position && contextSignature(entry.position) === signature)
       .map((entry) => entry.beat);
-    const pitchLanguage = piece.japanesePlan?.scalePcs
-      ?? (piece.tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE)
-        .map((interval) => (piece.keyRoot + interval) % 12);
+    const pitchLanguage = piece.melodicScalePcs;
     return step !== 0 && step !== 4 && pitchLanguage.includes(note.midi % 12) ? sameContext : [];
   };
 
@@ -769,9 +769,7 @@ export function suggestCompositionRepair(
     const inBar = ((relative % 4) + 4) % 4;
     const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
     const chord = chordAtInPiece(piece, target.beat);
-    const collection = piece.japanesePlan?.scalePcs
-      ?? (piece.tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE)
-        .map((interval) => (piece.keyRoot + interval) % 12);
+    const collection = piece.melodicScalePcs;
     const allowedPcs = strong ? chord.pcs : collection;
     for (const midi of midiCandidates(allowedPcs, target.midi)) {
       if (Math.abs(midi - before.note.midi) > 9) continue;

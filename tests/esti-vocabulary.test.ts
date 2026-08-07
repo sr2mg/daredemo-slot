@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import type { ComposeOptions } from '../src/core/music/compose.js';
+import type { ComposeOptions, NoteEvent } from '../src/core/music/compose.js';
 import { diagnosePiece } from '../src/core/music/diagnostics.js';
+import { applyDiminution } from '../src/core/music/diminution.js';
 import { availableTensionPcs, selectTensionPcs } from '../src/core/music/tension.js';
-import { MAJOR_SCALE } from '../src/core/music/theory.js';
+import {
+  MAJOR_PENTATONIC_SCALE, MAJOR_SCALE, MINOR_PENTATONIC_SCALE,
+} from '../src/core/music/theory.js';
 
 /**
  * ESTi/SoundTeMP系実測から導入した3語彙の検証:
@@ -75,7 +78,7 @@ describe('ディミニューション(縮小変奏)', () => {
     expect(compose({ ...base, diminution: 'off' })).toEqual(compose(base));
   });
 
-  it('骨格(structural)の位置と音高は不変で、挿入は経過音のみ', () => {
+  it('骨格(structural)の位置と音高は不変で、挿入は縮小変奏フィギュアのみ', () => {
     const plain = compose(base);
     const rich = compose({ ...base, diminution: 'rich' });
     const skeleton = (piece: typeof plain) => piece.melody
@@ -84,7 +87,8 @@ describe('ディミニューション(縮小変奏)', () => {
     expect(skeleton(rich)).toEqual(skeleton(plain));
     const inserted = rich.melody.filter((note) => note.role === 'ornament');
     expect(inserted.length).toBeGreaterThan(plain.melody.filter((n) => n.role === 'ornament').length);
-    // 挿入音は隣接する骨格音の間に真に挟まれる(経過音の定義)。
+    // 挿入音は骨格対に対する古典フィギュアに限る:
+    // 異音対→両端に真に挟まれる(経過音・走句)、同音対→隣接音組織音(刺繍音)。
     const structural = rich.melody
       .filter((note) => note.role !== 'ornament')
       .sort((a, b) => a.beat - b.beat);
@@ -92,11 +96,12 @@ describe('ディミニューション(縮小変奏)', () => {
       const before = [...structural].reverse().find((s) => s.beat < note.beat);
       const after = structural.find((s) => s.beat > note.beat);
       if (!before || !after) continue;
-      const lo = Math.min(before.midi, after.midi);
-      const hi = Math.max(before.midi, after.midi);
-      if (Math.abs(note.beat - (before.beat + after.beat) / 2) < 0.01) {
-        expect(note.midi).toBeGreaterThan(lo);
-        expect(note.midi).toBeLessThan(hi);
+      if (before.midi === after.midi) {
+        expect(note.midi).not.toBe(before.midi);
+        expect(Math.abs(note.midi - before.midi)).toBeLessThanOrEqual(4);
+      } else {
+        expect(note.midi).toBeGreaterThan(Math.min(before.midi, after.midi));
+        expect(note.midi).toBeLessThan(Math.max(before.midi, after.midi));
       }
     }
   });
@@ -123,7 +128,7 @@ describe('ディミニューション(縮小変奏)', () => {
       const before = [...structural].reverse().find((s) => s.beat < note.beat);
       const after = structural.find((s) => s.beat > note.beat);
       if (!before || !after) continue;
-      if (Math.abs(note.beat - (before.beat + after.beat) / 2) >= 0.01) continue;
+      if (before.midi === after.midi) continue; // 刺繍音は両端の間に挟まれない
       expect(note.midi).toBeGreaterThan(Math.min(before.midi, after.midi));
       expect(note.midi).toBeLessThan(Math.max(before.midi, after.midi));
     }
@@ -154,5 +159,166 @@ describe('vi軌道進行と韓国MMO風スタイル', () => {
   it('既存スタイルの既定は変わらない(テンション・細分ともoff)', () => {
     const piece = compose(base);
     expect(piece.chords.every((c) => (c.colorPcs ?? []).length === 0)).toBe(true);
+  });
+});
+
+describe('五音ペンタ語法(pentatonic): 五音語彙とカラートーン装置の共存', () => {
+  const kmmoPenta: ComposeOptions = {
+    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 103, bars: 16, seed: 8,
+    melodicLanguage: 'pentatonic',
+  };
+
+  it('長調はメジャーペンタ、短調はマイナーペンタが旋律語彙になる', () => {
+    const major = compose(kmmoPenta);
+    expect(new Set(major.melodicScalePcs))
+      .toEqual(new Set(MAJOR_PENTATONIC_SCALE.map((t) => (t + 2) % 12)));
+    const minor = compose({ ...kmmoPenta, tonality: 'minor' });
+    expect(new Set(minor.melodicScalePcs))
+      .toEqual(new Set(MINOR_PENTATONIC_SCALE.map((t) => (t + 2) % 12)));
+  });
+
+  it('和風と違い、テンション・ディミニューション等の装置は生きたまま(四千年型の組合せ)', () => {
+    const piece = compose(kmmoPenta);
+    // カラートーン和声(kmmo既定lush)が発火している
+    expect(piece.chords.some((c) => (c.colorPcs ?? []).length > 0)).toBe(true);
+    // ディミニューション(kmmo既定rich)が発火し、挿入音は全て五音語彙から出る
+    const ornaments = piece.melody.filter((n) => n.role === 'ornament');
+    expect(ornaments.length).toBeGreaterThan(0);
+    for (const note of ornaments) {
+      expect(piece.melodicScalePcs).toContain(note.midi % 12);
+    }
+    // 同条件の和風は装置が全てoff(既存挙動の確認)
+    const japanese = compose({ ...kmmoPenta, melodicLanguage: 'japanese' });
+    expect(japanese.chords.every((c) => (c.colorPcs ?? []).length === 0)).toBe(true);
+  });
+
+  it('弱拍の歩みは五音に乗る(強拍のコードトーン規則は保持)', () => {
+    const piece = compose(kmmoPenta);
+    const chordAt = (beat: number) => {
+      let current = piece.chords[0]!;
+      for (const chord of piece.chords) {
+        if (chord.beat <= beat) current = chord;
+        else break;
+      }
+      return current;
+    };
+    const structural = piece.melody.filter(
+      (n) => n.role !== 'ornament' && n.beat >= piece.loopStartBeat,
+    );
+    for (const note of structural) {
+      const inChord = chordAt(note.beat).pcs.includes(note.midi % 12);
+      const inPenta = piece.melodicScalePcs.includes(note.midi % 12);
+      // 全ての旋律音は「五音語彙」か「その拍の和声音」のどちらかに属する
+      expect(inChord || inPenta).toBe(true);
+    }
+    // 大半は五音側(四千年実測: 旋律pc上位5音=五音で54%。和声音経由の逸脱は少数)
+    const pentaRatio = structural.filter(
+      (n) => piece.melodicScalePcs.includes(n.midi % 12),
+    ).length / structural.length;
+    expect(pentaRatio).toBeGreaterThan(0.6);
+  });
+
+  it('診断エラーを出さない(複数シード)', () => {
+    for (const seed of [3, 8, 21]) {
+      for (const tonality of ['major', 'minor'] as const) {
+        const piece = compose({ ...kmmoPenta, seed, tonality });
+        expect(
+          diagnosePiece(piece).issues.filter((i) => i.severity === 'error'),
+          `seed=${seed} ${tonality}`,
+        ).toEqual([]);
+      }
+    }
+  });
+});
+
+describe('ディミニューションの走句・刺繍音フィギュア', () => {
+  const cMajorScale = () => MAJOR_SCALE as readonly number[];
+
+  it('4分対(間隔1拍)は到達側へ寄せた16分走句で埋まる', () => {
+    const melody: NoteEvent[] = [
+      { beat: 0, dur: 1, midi: 76, role: 'structural' },
+      { beat: 1, dur: 1, midi: 83, role: 'structural' },
+    ];
+    applyDiminution(melody, 'rich', cMajorScale, () => 0, { maxGapBeats: 1.0 });
+    const inserted = melody.filter((n) => n.role === 'ornament');
+    // E5→B5の間のCメジャー音(F,G,A)が3音、到達直前の連続16分スロットへ並ぶ
+    expect(inserted.map((n) => n.beat)).toEqual([0.25, 0.5, 0.75]);
+    expect(inserted.map((n) => n.midi)).toEqual([77, 79, 81]);
+  });
+
+  it('既定(maxGap 0.75)では4分対に走句が入らない(bounce系の据え置き)', () => {
+    const melody: NoteEvent[] = [
+      { beat: 0, dur: 1, midi: 76, role: 'structural' },
+      { beat: 1, dur: 1, midi: 83, role: 'structural' },
+    ];
+    applyDiminution(melody, 'rich', cMajorScale, () => 0);
+    expect(melody.filter((n) => n.role === 'ornament')).toEqual([]);
+  });
+
+  it('同音反復対には隣接音組織音の刺繍音が入り、骨格の音域を広げない', () => {
+    const melody: NoteEvent[] = [
+      { beat: 0, dur: 0.5, midi: 76, role: 'structural' },
+      { beat: 0.5, dur: 0.5, midi: 76, role: 'structural' },
+      { beat: 1, dur: 1, midi: 81, role: 'structural' },
+    ];
+    applyDiminution(melody, 'rich', cMajorScale, () => 0, { maxGapBeats: 1.0 });
+    const neighbor = melody.find((n) => n.role === 'ornament' && Math.abs(n.beat - 0.25) < 0.01);
+    expect(neighbor).toBeDefined();
+    expect(neighbor!.midi).not.toBe(76);
+    expect(neighbor!.midi).toBeGreaterThanOrEqual(76); // 上隣(抽選0=上)、かつ音域内
+    expect(neighbor!.midi).toBeLessThanOrEqual(81);
+    expect(cMajorScale().includes(neighbor!.midi % 12)).toBe(true);
+  });
+
+  it('他声部の予約位置(blockedBeats)とは衝突しない', () => {
+    const melody: NoteEvent[] = [
+      { beat: 0, dur: 1, midi: 76, role: 'structural' },
+      { beat: 1, dur: 1, midi: 83, role: 'structural' },
+    ];
+    applyDiminution(melody, 'rich', cMajorScale, () => 0, {
+      maxGapBeats: 1.0, blockedBeats: [0.5],
+    });
+    expect(melody.filter((n) => n.role === 'ornament')).toEqual([]);
+  });
+});
+
+describe('曲間モチーフ流用(externalMotif)', () => {
+  it('Piece.motifはJSONで往復でき、externalMotifへ渡すと同一モチーフが再実現される', () => {
+    const source = compose({ ...base, styleId: 'kmmo', bpm: 103 });
+    expect(source.motif.moves).toHaveLength(16);
+    const carried = JSON.parse(JSON.stringify(source.motif));
+    // 別のキー・調性・語法・スタイルの曲へ移植
+    const target: ComposeOptions = {
+      progressionId: 'relative-orbit', styleId: 'eurobeat', keyRoot: 7, bpm: 170, bars: 16,
+      seed: 99, tonality: 'minor', melodicLanguage: 'pentatonic', externalMotif: carried,
+    };
+    const piece = compose(target);
+    // モチーフは主題区間のジェスチャーとしてそのまま持ち越される(往復不変)
+    expect(piece.motif).toEqual(source.motif);
+    // 移植は決定論的で、モチーフ無しとは異なる旋律になる
+    expect(compose(target)).toEqual(piece);
+    const { externalMotif: _omitted, ...targetWithoutMotif } = target;
+    const without = compose(targetWithoutMotif);
+    expect(piece.melody).not.toEqual(without.melody);
+    // 旋律以外の設計(和声・ドラム)は動かない
+    expect(piece.chords.map((c) => c.token)).toEqual(without.chords.map((c) => c.token));
+    expect(piece.drums).toEqual(without.drums);
+  });
+
+  it('外部モチーフを与えても診断を通る', () => {
+    const source = compose(base);
+    const piece = compose({
+      ...base, seed: 4, keyRoot: 9, externalMotif: source.motif,
+    });
+    expect(diagnosePiece(piece).issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('壊れた保存データでも決定論のまま完走する(正規化)', () => {
+    const piece = compose({
+      ...base,
+      externalMotif: { moves: [{ direction: 3 as unknown as 1, stepwise: 1 as unknown as boolean, leap: 99 }] },
+    });
+    expect(piece.motif.moves).toHaveLength(16);
+    expect(piece.motif.moves[0]!.leap).toBeLessThanOrEqual(7);
   });
 });

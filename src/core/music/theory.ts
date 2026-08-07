@@ -555,6 +555,15 @@ export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11] as const;
 export const NATURAL_MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10] as const;
 /** 陽旋法寄りの五音音階。強拍のコードトーンと組み合わせ、和風の節回しに使う。 */
 export const YO_SCALE = [0, 2, 5, 7, 9] as const;
+/**
+ * 無半音五音音階(anhemitonic pentatonic)。完全五度を4回積む {0,7,2,9,4} が
+ * 「半音間隔を一つも含まない最大の音集合」で、その長旋法回転が長五音、
+ * 短三度始まりの回転(相対短)が短五音。文化圏固有の様式(和風の核音・間)とは
+ * 独立した、機能和声の上でも使える旋律語彙として置く(ESTi系実測: 四千年の
+ * 旋律pc上位5音=Dメジャーペンタで54%、隣接2/3半音セルの上行が最頻)。
+ */
+export const MAJOR_PENTATONIC_SCALE = [0, 2, 4, 7, 9] as const;
+export const MINOR_PENTATONIC_SCALE = [0, 3, 5, 7, 10] as const;
 
 /** サウンドテストで選べるキー（明るいメジャーの定番どころ） */
 export const KEYS: readonly { root: number; label: string }[] = [
