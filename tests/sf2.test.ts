@@ -210,5 +210,16 @@ describe('PCM編曲(Piece→GMノート)', () => {
     expect(def.loopEnd).toBeCloseTo(piece.beats * (60 / piece.bpm), 5);
     expect(rmsOf(def.wave, 0.5, Math.min(def.loopEnd, 5), SF2_SAMPLE_RATE)).toBeGreaterThan(0.01);
     expect(def.wave.some((value) => !Number.isFinite(value))).toBe(false);
+    // ステレオ: 右チャンネルが存在し、同一長・有限で、舞台配置により左右が異なる
+    expect(def.waveRight).toBeDefined();
+    expect(def.waveRight!.length).toBe(def.wave.length);
+    expect(def.waveRight!.some((value) => !Number.isFinite(value))).toBe(false);
+    let differs = false;
+    const from = Math.floor(0.5 * SF2_SAMPLE_RATE);
+    const to = Math.floor(3 * SF2_SAMPLE_RATE);
+    for (let i = from; i < to; i++) {
+      if (Math.abs(def.wave[i]! - def.waveRight![i]!) > 1e-3) { differs = true; break; }
+    }
+    expect(differs).toBe(true);
   });
 });
