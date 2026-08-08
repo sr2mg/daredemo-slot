@@ -92,6 +92,7 @@ import {
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import { arrangeComposedBgm, isPcmBgm } from './bgm-audio.js';
 import type { BgmPcmRenderer, ComposedBgmDef } from './bgm-audio.js';
+import type { PcmVoiceOverride } from '../audio/pcm-arrange.js';
 import { exportMp3 } from '../audio/mp3-export.js';
 import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
@@ -316,7 +317,7 @@ function loadComposerForm(): ComposerForm {
   };
 }
 
-export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange }: {
+export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange, pcmVoices }: {
   player: SfxPlayer;
   /**
    * 作曲スタジオが注入するPCM(SoundFont)レンダラ。曲の音源設定がpcmのときだけ使い、
@@ -326,6 +327,8 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   pcmRenderer?: BgmPcmRenderer | null;
   /** 曲の音源設定がPCMかどうかの通知。スタジオはこれを受けてSoundFontを遅延ロードする。 */
   onPcmNeededChange?: (needed: boolean) => void;
+  /** スタジオのPCM音色上書き。MIDI書き出しを試聴と同じ音色設定で行うために受け取る。 */
+  pcmVoices?: PcmVoiceOverride;
 }) {
   const [initial] = useState(loadComposerForm);
   const [bars, setBars] = useState<ComposeBars>(initial.bars);
@@ -585,6 +588,30 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setExporting(null);
+    }
+  };
+
+  /**
+   * 最後に作曲した曲をGM準拠のSMF(format 1)で保存する。音の決定はPCM編曲と共有
+   * (受け渡し・拍節アクセント・オープンハット・音色上書き込み)。ループ位置はマーカー。
+   * チップの曲も同じGM写像で書き出す(DAW再編集・様式実測との照合用)。
+   */
+  const exportMidiFile = async () => {
+    if (!lastOpts) return;
+    try {
+      setError('');
+      const p = compose(lastOpts);
+      const { pieceToSmf } = await import('../audio/midi-export.js');
+      // 音色上書きはPCMの試聴にだけ効いている設定なので、pcm曲のときだけ反映する。
+      const data = pieceToSmf(p, lastOpts.soundChip === 'pcm' ? pcmVoices ?? {} : {});
+      const url = URL.createObjectURL(new Blob([data.buffer as ArrayBuffer], { type: 'audio/midi' }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `bgm-${lastOpts.styleId}-seed${lastOpts.seed}.mid`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1330,6 +1357,14 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             title="最後に作曲した曲をMP3で保存します(まず作曲して再生してください)"
           >
             💾 MP3書き出し
+          </button>
+          <button
+            onClick={() => void exportMidiFile()}
+            disabled={!lastOpts || progress !== null || exporting !== null}
+            data-testid="st-export-midi"
+            title="最後に作曲した曲をGM準拠のMIDI(SMF)で保存します。音色・受け渡し・拍節アクセント・ループマーカー込み(まず作曲して再生してください)"
+          >
+            🎼 MIDI書き出し
           </button>
         </div>
 
