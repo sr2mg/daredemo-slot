@@ -383,6 +383,11 @@ export interface PhraseBarPlan {
   sustainedEntry: boolean;
   /** このstepの音を次小節の最初の発音まで保続する（2拍以上のロングトーン）。 */
   longToneStep: number | null;
+  /**
+   * 3拍目の再打鍵を省き、直前の8分の発音をアンカー越しに保続する小節（食い/先取音）。
+   * 保続音は跨いだ先(3拍目時点)の和音の構成音へ吸着させる（先取音の定義）。
+   */
+  anchorTie: boolean;
   /** セクション別テッシトゥーラ変位（半音）。旋律の目標高さへ加算する。 */
   registerOffset: number;
 }
@@ -841,6 +846,7 @@ function makePhrasePlan(
   const restRng = new Xoshiro128((featureSeed ^ 0x5245_5354) >>> 0);
   const registerRng = new Xoshiro128((featureSeed ^ 0x5245_4749) >>> 0);
   const leapRng = new Xoshiro128((featureSeed ^ 0x4c45_4150) >>> 0);
+  const tieRng = new Xoshiro128((featureSeed ^ 0x414e_5443) >>> 0);
 
   // セクション別テッシトゥーラ: Aは主題の基準。以降の区間は±4半音まで変位し、対比を作る。
   const sectionCount = opts.bars === 40 ? 5 : opts.bars === 16 ? 2 : 1;
@@ -863,6 +869,7 @@ function makePhrasePlan(
 
   let pendingSustainEntry = false;
   let lastLongToneBar = -8;
+  let lastTieBar = -8;
 
   for (let bar = 0; bar < opts.bars; bar++) {
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
@@ -1039,6 +1046,35 @@ function makePhrasePlan(
       lastLongToneBar = bar;
     }
 
+    // 半小節タイ（食い）: 3拍目の強制リアタックを外し、直前の8分（2拍目/2拍目裏）の
+    // 発音をアンカー越しに保続する。答句の終止は最弱の'open'（到達音は最後の発音に
+    // 付くだけ）に限り共存させ、強い終止・セクション境界・装飾・副旋律・ロングトーン・
+    // クライマックスとは干渉させない。到達音がアンカー後（step5以降）にある小節に限る
+    // ので、タイの後で旋律が動き直して終止機構も保たれる。保続音の和声整合
+    // （先取音=跨いだ先の和音の構成音）は実現側とdiagnostics.tsの検証で保証する。
+    // 頻度・間隔は独立乱数で、骨格の抽選列を乱さない。
+    let anchorTie = false;
+    if (
+      isAnswer
+      && (cadence === null || cadence === 'open')
+      && !sectionBoundary
+      && longToneStep === null
+      && ornamentType === null
+      && counterSteps.length === 0
+      && (rhythm[2] || rhythm[3])
+      && rhythm[4]
+      && targetStep !== null
+      && targetStep >= 5
+      && bar !== climaxBar
+      && bar !== signatureLeapBar
+      && bar - lastTieBar >= 2
+      && tieRng.nextInt(100) < 40
+    ) {
+      rhythm[4] = false;
+      anchorTie = true;
+      lastTieBar = bar;
+    }
+
     const energy = harmonyBar.energy;
     // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
     const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
@@ -1053,7 +1089,7 @@ function makePhrasePlan(
     bars.push({
       bar, section, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
       phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
-      restStart, sustainedEntry, longToneStep,
+      restStart, sustainedEntry, longToneStep, anchorTie,
       registerOffset: registerOffsets[sectionIndex] ?? 0,
     });
   }
@@ -1711,6 +1747,12 @@ export function compose(opts: ComposeOptions): Piece {
         .find((ornamentStep) => ornamentStep > step) ?? 8;
       const boundaryStep = Math.min(nextLeadStep, nextCounterStep, nextOrnamentStep);
       const boundaryBeat = grooveBeat(bar * 4 + boundaryStep * 0.5, grooveFeel);
+      // 半小節タイ: アンカー(3拍目)を跨いで保続する音は、跨いだ先(3拍目時点)の和音の
+      // 構成音を先に取る(先取音)。跨ぎ先が同じ和音なら和声音への吸着と同義。
+      const tiesOverAnchor = barPlan.anchorTie && step < 4 && nextLeadStep > 4;
+      if (tiesOverAnchor) {
+        midi = nearestWithPc(midi, melodyPcsForChord(chordAt(bar * 4 + 2)));
+      }
       // ロングトーン: 到達音を次小節の最初の発音（主旋律・副旋律・装飾のどれか）まで保続する。
       const nextBarPlan = phrasePlan.bars[bar + 1];
       const longToneBoundary = barPlan.longToneStep === step && nextBarPlan !== undefined
@@ -1724,7 +1766,9 @@ export function compose(opts: ComposeOptions): Piece {
             return grooveBeat((bar + 1) * 4 + boundary * 0.5, grooveFeel);
           })()
         : null;
-      const articulation: NoteArticulation = barPlan.targetStep === step
+      const articulation: NoteArticulation = tiesOverAnchor
+        ? 'tenuto'
+        : barPlan.targetStep === step
         ? barPlan.ornamentType === 'shake' ? 'ornament' : 'tenuto'
         : bar === phrasePlan.climaxBar && step === 0
           ? 'accent'
@@ -1745,7 +1789,10 @@ export function compose(opts: ComposeOptions): Piece {
         beat,
         dur: longToneBoundary !== null
           ? Math.max(0.1, longToneBoundary - beat)
-          : Math.max(0.1, (boundaryBeat - beat) * gate),
+          // タイはアンカーを跨いで次の発音まで途切れず保続する(ゲート比を掛けない)。
+          : tiesOverAnchor
+            ? Math.max(0.1, boundaryBeat - beat)
+            : Math.max(0.1, (boundaryBeat - beat) * gate),
         midi,
         velocity,
         articulation,
@@ -2187,7 +2234,14 @@ export function compose(opts: ComposeOptions): Piece {
         // 走句(4分対の16分埋め)は16分格子が有効なストレートのみ。bounce等は従来の8分対まで。
         maxGapBeats: grooveFeel === 'straight' ? 1.0 : 0.75,
         // 走句は8分格子位置にも乗るため、副旋律が予約した発音位置を避ける。
-        blockedBeats: counterMelody.map((note) => note.beat),
+        blockedBeats: [
+          ...counterMelody.map((note) => note.beat),
+          // 半小節タイのアンカー拍。ここへ走句・経過音を挿すとタイ音が短縮されて
+          // 「食い」が消えるため、タイを跨ぐ骨格対にはフィギュアを置かせない。
+          ...phrasePlan.bars
+            .filter((barPlan) => barPlan.anchorTie)
+            .map((barPlan) => loopStartBeat + barPlan.bar * 4 + 2),
+        ],
       },
     );
     finalMelody = [
