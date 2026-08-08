@@ -611,7 +611,21 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       }
     }
     if (!actualSteps.includes(4)) {
-      add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
+      // 半小節タイ(anchorTie)の小節は、直前の発音が3拍目を跨いで保続していれば頭打ち不要。
+      // ただし保続音は先取音の定義どおり、跨いだ先(3拍目時点)の和音の構成音であること。
+      const anchorBeat = bodyStart + barPlan.bar * 4 + 2;
+      const tieNote = barPlan.anchorTie
+        ? piece.melody.find((note) => (
+          note.role !== 'ornament'
+          && note.beat < anchorBeat
+          && note.beat + note.dur >= anchorBeat + 0.25
+        ))
+        : undefined;
+      if (!tieNote) {
+        add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
+      } else if (!chordAt(anchorBeat).pcs.includes(tieNote.midi % 12)) {
+        add('harmony', 'error', anchorBeat, tieNote.midi, `${barPlan.bar + 1}小節目の3拍目を跨ぐタイが和声音でない`);
+      }
     }
     if (barPlan.targetStep === null || barPlan.targetPc === null) continue;
     const targetBeat = bodyStart + grooveBeat(
