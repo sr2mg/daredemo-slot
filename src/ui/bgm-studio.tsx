@@ -276,6 +276,7 @@ export function BgmStudio() {
         player={playerRef.current!}
         pcmRenderer={pcmRenderer}
         onPcmNeededChange={handlePcmNeededChange}
+        pcmVoices={pcmVoices}
       />
       <p className="panel-note credit-note">
         音源コア:{' '}
