@@ -22,7 +22,11 @@ import type { SoundBackendId } from './sound-capabilities.js';
 
 export type HarmonicGoal = 'establish' | 'continue' | 'depart' | 'resolve' | 'turnaround';
 export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale';
-export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast';
+/**
+ * literal は「移調も反転もしない帰還」。実現側はアンカー（フレーズ頭・終止音）だけを
+ * その場の和声へ合わせ、内部の音程・リズムを保存する（フックのリテラル再現）。
+ */
+export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast' | 'literal';
 export type { CompositionPremise } from './composition-strategy.js';
 export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
 export type IntroLeadGesture =
@@ -82,6 +86,15 @@ export interface SongSectionPlan {
   motifSourceSection: PhraseSection | null;
   /** 参照モチーフをそのまま複製せず、区間の役割に応じて変形する。 */
   motifTransform: MotifTransform;
+  /**
+   * 提示・変奏反復・展開・結論の各応答小節が到達する目標「音組織上の度数」
+   * （7音音階では 0=1̂, 1=2̂, 2=3̂, 4=5̂。五音音階では同じ添字がその音組織の対応音度
+   * になり、例えば長ペンタの4は6̂＝ヨナ抜きの常套終止色）。フレーズ終止が毎回
+   * ルートへ落ちる単調さを避け、段階的に主音へ収束する「終止音度の物語」を作る
+   * （旋法的終止階層とシェンカー的下行の折衷。実際の到達音はその小節の和声音から
+   * 目標に円環距離が最も近いものを選ぶ）。
+   */
+  cadenceDegrees: readonly [number, number, number, number];
 }
 
 export interface HarmonyBarPlan {
@@ -203,35 +216,51 @@ function sectionMotifPlanFor(
   | 'externalMotifPhrases'
   | 'motifSourceSection'
   | 'motifTransform'
+  | 'cadenceDegrees'
 > {
+  // SRDCの反復設計: 変奏反復(restatement)は提示と同じリズム族を使い、フックを
+  // リテラルに繰り返す（違いは終止音度だけ＝平行ピリオド）。展開と結論だけ型を替え、
+  // 「同じ2小節を4回貼らない」多様性は展開(variant+2/3)と結論(variant+1)で担保する。
   const phrasePlan = (base: RhythmVariant, salt: number): Pick<
     SongSectionPlan,
-    'rhythmVariant' | 'phraseRhythmVariants' | 'motifSourcePhrases'
+    'rhythmVariant' | 'phraseRhythmVariants' | 'motifSourcePhrases' | 'cadenceDegrees'
   > => {
     const variant = (offset: number): RhythmVariant => ((base + offset) % 5) as RhythmVariant;
     return {
       rhythmVariant: base,
       phraseRhythmVariants: [
         base,
-        ((seed >>> salt) & 1) === 0 ? base : variant(1),
+        base,
         variant(2 + ((seed >>> (salt + 1)) & 1)),
-        ((seed >>> (salt + 2)) & 1) === 0 ? base : variant(1),
+        variant(1),
       ],
-      motifSourcePhrases: [0, 0, 2, ((seed >>> (salt + 3)) & 1) === 0 ? 0 : 1],
+      // 結論は必ず提示フレーズ(フック)を引用して閉じる。
+      motifSourcePhrases: [0, 0, 2, 0],
+      // 3̂ →(5̂|2̂)→ 2̂ → 1̂ の終止音度物語。
+      cadenceDegrees: [2, ((seed >>> (salt + 2)) & 1) === 0 ? 4 : 1, 1, 0],
     };
   };
   if (count === 1) return {
     ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
   };
-  if (count === 2) return index === 0
-    ? {
+  // 16小節: Bの結論フレーズでAのフック（提示テーマ）をリテラルに回収し、
+  // ループ直前に主題を予告してAへ戻す（ループ境界の予告と回収）。回収フレーズは
+  // Aの提示リズム族(0)も継ぎ、音度列だけでなくリズムごとフックを鳴らす。
+  if (count === 2) {
+    if (index === 0) return {
       ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
-    }
-    : {
-      ...phrasePlan(1, 7), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast',
     };
+    const bPlan = phrasePlan(1, 7);
+    return {
+      ...bPlan,
+      phraseRhythmVariants: [
+        bPlan.phraseRhythmVariants[0], bPlan.phraseRhythmVariants[1], bPlan.phraseRhythmVariants[2], 0,
+      ] as const,
+      externalMotifPhrases: [3], motifSourceSection: 'A', motifTransform: 'literal',
+    };
+  }
   const bVariant = (1 + ((seed >>> 3) % 2)) as 1 | 2;
-  const dVariant = ((seed >>> 4) & 1) === 0 ? 0 : 1;
+  const dVariant = (1 + ((seed >>> 4) & 1)) as 1 | 2;
   const eVariant = (3 + ((seed >>> 5) & 1)) as 3 | 4;
   if (policy.motif.returnEvent) {
     const a = phrasePlan(0, 3);
@@ -259,6 +288,7 @@ function sectionMotifPlanFor(
       | 'externalMotifPhrases'
       | 'motifSourceSection'
       | 'motifTransform'
+      | 'cadenceDegrees'
     >> = [
       { ...a, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original' },
       { ...b, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
@@ -291,6 +321,9 @@ function sectionMotifPlanFor(
     }
     return memoryPlans[index]!;
   }
+  // Dは主題のリテラル帰還区間: 提示フレーズだけAのリズム族(0)を継いでフックを
+  // 原形のまま鳴らし、残りのフレーズは自分の型で展開する（区間丸ごとの複製はしない）。
+  const dPlan = phrasePlan(dVariant, 15);
   const plans = [
     {
       ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
@@ -303,8 +336,11 @@ function sectionMotifPlanFor(
       ...phrasePlan(3, 11), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast',
     },
     {
-      ...phrasePlan(dVariant, 15), externalMotifPhrases: [0], motifSourceSection: 'A',
-      motifTransform: ((seed >>> 7) & 1) === 0 ? 'transpose' : 'invert',
+      ...dPlan,
+      phraseRhythmVariants: [
+        0, dPlan.phraseRhythmVariants[1], dPlan.phraseRhythmVariants[2], dPlan.phraseRhythmVariants[3],
+      ] as const,
+      externalMotifPhrases: [0], motifSourceSection: 'A', motifTransform: 'literal',
     },
     {
       ...phrasePlan(eVariant, 19),
@@ -320,6 +356,7 @@ function sectionMotifPlanFor(
     | 'externalMotifPhrases'
     | 'motifSourceSection'
     | 'motifTransform'
+    | 'cadenceDegrees'
   >>;
   return plans[index]!;
 }

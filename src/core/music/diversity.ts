@@ -74,6 +74,19 @@ function profileSimilarity(first: MelodicWindowProfile, second: MelodicWindowPro
     + countScore * 0.15;
 }
 
+/** フレーズ同士の類似度(0..1)。フック反復の下限診断(記憶性の反転診断)に使う。 */
+export function melodicPhraseSimilarity(
+  piece: Piece,
+  firstStartBar: number,
+  secondStartBar: number,
+  bars = 2,
+): number {
+  return profileSimilarity(
+    melodicWindowProfile(piece, firstStartBar, bars),
+    melodicWindowProfile(piece, secondStartBar, bars),
+  );
+}
+
 /** 2小節単位の粗いリズム・輪郭。完全一致より強い「同じ話し方」の回帰テストに使う。 */
 export function melodicPhraseFingerprint(piece: Piece, startBar: number): string {
   const profile = melodicWindowProfile(piece, startBar, 2);

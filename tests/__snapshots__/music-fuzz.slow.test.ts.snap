@@ -3,17 +3,17 @@
 exports[`作曲エンジンの一括ファズ監査 > 表現レンジのプロファイルは意図なく変わらない 1`] = `
 {
   "durMax": 3,
-  "longNotes": 197,
-  "melodyNotes": 42600,
+  "longNotes": 418,
+  "melodyNotes": 42112,
   "offbeat16thRatio": 0,
-  "ornamentNotes": 3257,
+  "ornamentNotes": 4174,
   "pieces": 204,
   "pitchHi": 88,
   "pitchLo": 72,
   "restStartPieces": 36,
-  "stepRatio": 0.775,
+  "stepRatio": 0.629,
   "velocityMax": 1,
   "velocityMin": 0.53,
-  "wideLeapRatio": 0.012,
+  "wideLeapRatio": 0.023,
 }
 `;
