@@ -15,6 +15,7 @@
  * https://sai96i.hateblo.jp/entry/2021/05/10/204035
  */
 
+import { grooveBeat } from '../core/music/compose.js';
 import type { GrooveFeel } from '../core/music/compose.js';
 import type { StageRole } from './stage.js';
 
@@ -25,10 +26,13 @@ export interface NoteStageEcho {
   decay: number;
 }
 
-/** MIDI段エコーの遅延をグルーヴから導出する(OPLLエコー装置と同一の規則)。 */
+/**
+ * MIDI段エコーの遅延をグルーヴから導出する(OPLLエコー装置と同一の規則)。
+ * タップは「8分裏をグルーヴ格子へ写した位置」= grooveBeat(0.5) に置く(スウィング軸に追随)。
+ */
 export function noteStageEchoFor(grooveFeel: GrooveFeel): NoteStageEcho {
   return {
-    delayBeats: grooveFeel === 'bounce' ? 2 / 3 : 0.5,
+    delayBeats: grooveBeat(0.5, grooveFeel),
     taps: 2,
     decay: 0.5,
   };

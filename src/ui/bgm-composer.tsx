@@ -7,7 +7,11 @@ import {
   ARRANGEMENT_ARC_LABELS,
   COUNTER_ROLE_LABELS,
   TEXTURE_STRATEGY_LABELS,
+  DEFAULT_GROOVE_FEEL,
+  GROOVE_FEELS,
   GROOVE_FEEL_LABELS,
+  allowsTupletOverlay,
+  isGrooveFeel,
   TUPLET_OVERLAY_LABELS,
   TENSION_POLICY_LABELS,
   DIMINUTION_POLICY_LABELS,
@@ -171,7 +175,7 @@ function songSummary(options: ComposeOptions): string {
   const melody = melodicLanguage === 'japanese'
     ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
     : melodicLanguage === 'pentatonic' ? ' / 五音ペンタ' : '';
-  const groove = options.grooveFeel && options.grooveFeel !== 'straight'
+  const groove = options.grooveFeel && options.grooveFeel !== DEFAULT_GROOVE_FEEL
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
   const tuplet = options.tupletOverlay && options.tupletOverlay !== 'off'
@@ -269,9 +273,7 @@ function loadComposerForm(): ComposerForm {
     japaneseScale: ['ritsu', 'minyo', 'miyakobushi'].includes(String(raw.japaneseScale))
       ? raw.japaneseScale as JapaneseScaleChoice
       : 'auto',
-    grooveFeel: ['tripletOverlay', 'bounce'].includes(String(raw.grooveFeel))
-      ? raw.grooveFeel as GrooveFeel
-      : 'straight',
+    grooveFeel: isGrooveFeel(raw.grooveFeel) ? raw.grooveFeel : DEFAULT_GROOVE_FEEL,
     tupletOverlay: raw.tupletOverlay === 'auto' || [5, 6, 7].includes(raw.tupletOverlay as number)
       ? raw.tupletOverlay as TupletOverlayChoice
       : 'off',
@@ -484,10 +486,10 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
         melodicLanguage,
         ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
       } : melodicLanguage === 'pentatonic' ? { melodicLanguage } : {}),
-      ...(grooveFeel === 'straight' ? {} : { grooveFeel }),
+      ...(grooveFeel === DEFAULT_GROOVE_FEEL ? {} : { grooveFeel }),
       // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
       ...(capabilitiesFor(soundChip).independentArpeggio
-        && grooveFeel !== 'tripletOverlay' && tupletOverlay !== 'off'
+        && allowsTupletOverlay(grooveFeel) && tupletOverlay !== 'off'
         ? { tupletOverlay }
         : {}),
       // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)
@@ -1071,11 +1073,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             data-testid="st-groove-feel"
             title="旋律様式とは独立。三連は元のハイハット譜を三連位置へ写し、跳ねる8分は裏拍の位置を変えます"
           >
-            {(['straight', 'tripletOverlay', 'bounce'] as const).map((feel) => (
+            {GROOVE_FEELS.map((feel) => (
               <option key={feel} value={feel}>グルーヴ: {GROOVE_FEEL_LABELS[feel]}</option>
             ))}
           </select>
-          {capabilitiesFor(soundChip).independentArpeggio && grooveFeel !== 'tripletOverlay' && (
+          {capabilitiesFor(soundChip).independentArpeggio && allowsTupletOverlay(grooveFeel) && (
             <select
               value={String(tupletOverlay)}
               onChange={(e) => {

@@ -7,6 +7,7 @@ import type {
   TupletOverlayChoice,
 } from './compose.js';
 import type { SectionRole, SongPlan } from './song-plan.js';
+import { allowsTupletOverlay, grooveFor } from './groove.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS } from './theory.js';
@@ -129,8 +130,8 @@ function textureStrategyFor(
     candidates = ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'];
   }
   if (plan.melodyDensity >= 5.75) candidates = candidates.filter((item) => item !== 'hybrid');
-  // 短形式の三連は既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。
-  if (plan.grooveFeel === 'tripletOverlay' && bars >= 16) {
+  // 短形式の細分オーバーレイは既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。
+  if (grooveFor(plan.grooveFeel).subdivisionOverlay !== 'none' && bars >= 16) {
     candidates = candidates.filter((item) => item !== 'arpDrive');
   }
   if (bars < 16) {
@@ -145,7 +146,7 @@ function textureStrategyFor(
   return candidates[(seed >>> 1) % candidates.length]!;
 }
 
-/** 連符レイヤーの発動判定。OPLL以外・三連オーバーレイ併用時は静かに無効へ落とす。 */
+/** 連符レイヤーの発動判定。声部予算のないバックエンド・細分オーバーレイ併用時は静かに無効へ落とす。 */
 function resolveTupletOverlay(
   choice: TupletOverlayChoice,
   songPlan: SongPlan | undefined,
@@ -153,7 +154,7 @@ function resolveTupletOverlay(
   if (choice === 'off' || !songPlan) return null;
   // 連符レイヤーは独立オスティナート声部が担い手。予算のないバックエンドでは畳む。
   if (!capabilitiesFor(songPlan.soundChip).independentArpeggio) return null;
-  if (songPlan.grooveFeel === 'tripletOverlay') return null;
+  if (!allowsTupletOverlay(songPlan.grooveFeel)) return null;
   return choice;
 }
 

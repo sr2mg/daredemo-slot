@@ -23,7 +23,10 @@ import type { HarmonicFunction, StyleDef } from './theory.js';
 import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
 import type { CompositionStrategy } from './composition-strategy.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
-import { grooveBeat } from './timing.js';
+import {
+  DEFAULT_GROOVE_FEEL, grooveBeat, grooveFor, hasStraightSixteenths, tripletHatOffsets,
+} from './groove.js';
+import type { GrooveFeel } from './groove.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
 import { selectTensionPcs } from './tension.js';
 import type { TensionPolicy } from './tension.js';
@@ -64,7 +67,11 @@ export type {
   CompositionStrategyInfo,
   StrategySectionId,
 } from './composition-strategy.js';
-export { grooveBeat } from './timing.js';
+export {
+  DEFAULT_GROOVE_FEEL, GROOVES, GROOVE_FEELS, GROOVE_FEEL_LABELS,
+  allowsTupletOverlay, grooveBeat, grooveFor, hasGrooveDevice, isGrooveFeel,
+} from './groove.js';
+export type { GrooveDef } from './groove.js';
 export {
   createSongPlan,
   legacyMelodyMode,
@@ -113,7 +120,7 @@ export type MelodyMode = 'major' | 'minor' | 'japanese';
 export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
 export type JapaneseScaleChoice = 'auto' | JapaneseScale;
 export type OrnamentType = 'grace' | 'turn' | 'shake';
-export type GrooveFeel = 'straight' | 'tripletOverlay' | 'bounce';
+export type { GrooveFeel } from './groove.js';
 export type TupletDivision = 5 | 6 | 7;
 export type TupletOverlayChoice = 'off' | 'auto' | TupletDivision;
 export type { TensionPolicy } from './tension.js';
@@ -171,12 +178,6 @@ export const ORNAMENT_LABELS: Record<OrnamentType, string> = {
   grace: '前打音',
   turn: '回し',
   shake: '揺り',
-};
-
-export const GROOVE_FEEL_LABELS: Record<GrooveFeel, string> = {
-  straight: 'ストレート',
-  tripletOverlay: '三連オーバーレイ',
-  bounce: '跳ねる8分',
 };
 
 export const TUPLET_OVERLAY_LABELS: Record<'off' | 'auto' | '5' | '6' | '7', string> = {
@@ -750,21 +751,6 @@ export function japanesePlanFor(
     nuclearPcs: [keyRoot, (keyRoot + 5) % 12, (keyRoot + 7) % 12],
   };
 }
-/**
- * 元の16分ハット譜を三連グリッドへ要約する。
- * 1拍を常に3発で埋めず、表拍は表、単独の裏拍は三連の後ろ、
- * 裏が2発以上ある細かい譜だけを三連の中・後ろへ写す。
- */
-function tripletHatOffsets(pattern: readonly number[], quarter: number): number[] {
-  const start = quarter * 4;
-  const offsets: number[] = [];
-  if (pattern[start]) offsets.push(0);
-  const offbeatCount = pattern.slice(start + 1, start + 4).filter(Boolean).length;
-  if (offbeatCount === 1) offsets.push(2 / 3);
-  else if (offbeatCount >= 2) offsets.push(1 / 3, 2 / 3);
-  return offsets;
-}
-
 function withMelodyEdits(notes: readonly NoteEvent[], edits: readonly MelodyEdit[] = []): NoteEvent[] {
   const result = notes.map((note) => ({ ...note }));
   for (const edit of edits) {
@@ -1400,14 +1386,15 @@ function realizeIntro(
     const addDrum = (beat: number, inst: DrumEvent['inst']) => {
       if (beat < endBeat) drums.push({ beat, inst });
     };
+    const hatOverlay = grooveFor(grooveFeel).subdivisionOverlay;
     if (barPlan.drumGesture === 'groove') {
       for (let step = 0; step < 16; step++) {
         const beat = grooveBeat(start + step * 0.25, grooveFeel);
         if (style.kick[step]) addDrum(beat, 'kick');
         if (style.snare[step]) addDrum(beat, 'snare');
-        if (grooveFeel !== 'tripletOverlay' && style.hat[step]) addDrum(beat, 'hat');
+        if (hatOverlay === 'none' && style.hat[step]) addDrum(beat, 'hat');
       }
-      if (grooveFeel === 'tripletOverlay') {
+      if (hatOverlay === 'triplet') {
         for (let quarter = 0; quarter < 4; quarter++) {
           for (const offset of tripletHatOffsets(style.hat, quarter)) addDrum(start + quarter + offset, 'hat');
         }
@@ -1474,7 +1461,7 @@ export function compose(opts: ComposeOptions): Piece {
     if (melodicLanguage !== 'standard') return scalePcs;
     return chordScaleForToken(chord.token, chord.pcs);
   };
-  const grooveFeel = opts.grooveFeel ?? 'straight';
+  const grooveFeel = opts.grooveFeel ?? DEFAULT_GROOVE_FEEL;
   // カラートーンとディミニューションはスタイル既定を土台に上書き。和風五音は
   // 開放五度・間の美学と衝突するため両方とも常にoffへ落とす。
   const resolveDevicePolicy = <T extends string>(
@@ -2387,6 +2374,7 @@ export function compose(opts: ComposeOptions): Piece {
 
   // --- ドラム（16 分グリッドを小節数ぶん敷く） ---
   const drums: DrumEvent[] = [];
+  const hatOverlay = grooveFor(grooveFeel).subdivisionOverlay;
   for (let bar = 0; bar < opts.bars; bar++) {
     const barPlan = phrasePlan.bars[bar]!;
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
@@ -2405,11 +2393,11 @@ export function compose(opts: ComposeOptions): Piece {
           if (s === 12) drums.push({ beat, inst: 'snare' });
           if (s === 14) drums.push({ beat, inst: 'tom' });
           if (s === 15) drums.push({ beat, inst: 'cymbal' });
-          if (grooveFeel !== 'tripletOverlay' && s === 13) drums.push({ beat, inst: 'hat' });
+          if (hatOverlay === 'none' && s === 13) drums.push({ beat, inst: 'hat' });
         } else {
           if (s === 12 && style.kick[s]) drums.push({ beat, inst: 'kick' });
           if (s === 14) drums.push({ beat, inst: 'snare' });
-          if (grooveFeel !== 'tripletOverlay' && (s === 13 || s === 15)) drums.push({ beat, inst: 'hat' });
+          if (hatOverlay === 'none' && (s === 13 || s === 15)) drums.push({ beat, inst: 'hat' });
         }
         continue;
       }
@@ -2418,16 +2406,16 @@ export function compose(opts: ComposeOptions): Piece {
       if (sectionPlan.drum === 'breakdown') {
         if (s === 0 || s === 8) drums.push({ beat, inst: 'kick' });
         if (s === 4 || s === 12) drums.push({ beat, inst: 'snare' });
-        if (grooveFeel !== 'tripletOverlay' && (s === 2 || s === 6 || s === 10 || s === 14)) {
+        if (hatOverlay === 'none' && (s === 2 || s === 6 || s === 10 || s === 14)) {
           drums.push({ beat, inst: 'hat' });
         }
         continue;
       }
       if (pattern.kick[s]) drums.push({ beat, inst: 'kick' });
       if (pattern.snare[s]) drums.push({ beat, inst: 'snare' });
-      if (grooveFeel !== 'tripletOverlay' && pattern.hat[s]) drums.push({ beat, inst: 'hat' });
+      if (hatOverlay === 'none' && pattern.hat[s]) drums.push({ beat, inst: 'hat' });
     }
-    if (grooveFeel === 'tripletOverlay') {
+    if (hatOverlay === 'triplet') {
       // 三連を常時ロールとして足さず、元のスタイル譜を三連位置へ写す。
       // A→Bフィルとループ直前は最終拍のハットを休ませ、スネアと余白を立てる。
       const quarters = barPlan.cadence === 'turnaround'
@@ -2482,8 +2470,8 @@ export function compose(opts: ComposeOptions): Piece {
       (beat) => scaleAt(chordAt(beat - loopStartBeat)),
       (bound) => diminutionRng.nextInt(bound),
       {
-        // 走句(4分対の16分埋め)は16分格子が有効なストレートのみ。bounce等は従来の8分対まで。
-        maxGapBeats: grooveFeel === 'straight' ? 1.0 : 0.75,
+        // 走句(4分対の16分埋め)はストレートな16分格子が有効なグルーヴのみ。他は従来の8分対まで。
+        maxGapBeats: hasStraightSixteenths(grooveFeel) ? 1.0 : 0.75,
         // 走句は8分格子位置にも乗るため、副旋律が予約した発音位置を避ける。
         blockedBeats: [
           ...counterMelody.map((note) => note.beat),
