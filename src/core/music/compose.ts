@@ -37,6 +37,11 @@ import type { DuetPolicy } from './duet.js';
 import { applyGlideMarks } from './glide.js';
 import type { GlidePolicy } from './glide.js';
 import {
+  appoggiaturaRatePercent, fragmentOf, invertTheme, realizeDegree,
+  themeDegreeSpan, themeFromGesture, transposeTheme,
+} from './melodic-theme.js';
+import type { ThemeSpec } from './melodic-theme.js';
+import {
   createSongPlan,
   legacyMelodyMode,
   resolveMelodicLanguage,
@@ -388,6 +393,10 @@ export interface PhraseBarPlan {
    * 保続音は跨いだ先(3拍目時点)の和音の構成音へ吸着させる（先取音の定義）。
    */
   anchorTie: boolean;
+  /** step7 に置く、次フレーズ頭への弱起（アウフタクト）。音高は次フレーズアンカーの2度下。 */
+  anacrusis: boolean;
+  /** 強拍倚音を許可するステップ（現状は3拍目=step4のみ）。実現は2度解決できる場合に限る。 */
+  appoggiaturaStep: number | null;
   /** セクション別テッシトゥーラ変位（半音）。旋律の目標高さへ加算する。 */
   registerOffset: number;
 }
@@ -396,6 +405,8 @@ export interface PhrasePlan {
   climaxBar: number;
   /** 一度だけ許す9半音超の署名跳躍を置く小節（頭拍）。null なら無し。 */
   signatureLeapBar: number | null;
+  /** 5つのリズム変奏族（[問い, 答え]×5）。実音テーマの構築が提示リズムとして参照する。 */
+  rhythmFamilies: ReadonlyArray<readonly [readonly boolean[], readonly boolean[]]>;
   bars: PhraseBarPlan[];
 }
 
@@ -847,6 +858,8 @@ function makePhrasePlan(
   const registerRng = new Xoshiro128((featureSeed ^ 0x5245_4749) >>> 0);
   const leapRng = new Xoshiro128((featureSeed ^ 0x4c45_4150) >>> 0);
   const tieRng = new Xoshiro128((featureSeed ^ 0x414e_5443) >>> 0);
+  const anacrusisRng = new Xoshiro128((featureSeed ^ 0x4143_5255) >>> 0);
+  const appoggRng = new Xoshiro128((featureSeed ^ 0x4150_5047) >>> 0);
 
   // セクション別テッシトゥーラ: Aは主題の基準。以降の区間は±4半音まで変位し、対比を作る。
   const sectionCount = opts.bars === 40 ? 5 : opts.bars === 16 ? 2 : 1;
@@ -870,6 +883,9 @@ function makePhrasePlan(
   let pendingSustainEntry = false;
   let lastLongToneBar = -8;
   let lastTieBar = -8;
+  let lastAnacrusisBar = -8;
+  let lastAppoggiaturaBar = -8;
+  let pendingAnacrusis = false;
 
   for (let bar = 0; bar < opts.bars; bar++) {
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
@@ -913,7 +929,8 @@ function makePhrasePlan(
         && sectionPlan.counterDensity > 0
         && bar !== opts.bars - 1
         // 薄い応答は各区間の中盤に一度。絶対4小節目へ固定するとB区間で鳴らなくなる。
-        && (sectionPlan.counterDensity === 2 || barInSection === (opts.bars === 4 ? 1 : 3))
+        // 変奏反復(restatement)の答句はフックのリテラル反復を担うため空けない。
+        && (sectionPlan.counterDensity === 2 || barInSection === (opts.bars === 4 ? 1 : 5))
       ) {
         for (let step = 5; step < 8; step++) rhythm[step] = false;
         rhythm[4] = true;
@@ -937,10 +954,18 @@ function makePhrasePlan(
         ? targetPcs.filter((pc) => japanesePlan.nuclearPcs.includes(pc))
         : [];
       const cadencePcs = nuclearTargets.length > 0 ? nuclearTargets : targetPcs;
-      if (cadence === 'open') targetPc = cadencePcs.at(-1) ?? rootPc;
-      else if (cadence === 'turnaround' || japanesePlan) {
+      if (cadence === 'turnaround' || japanesePlan) {
         targetPc = closestPcToMidi(startMidi, cadencePcs);
-      } else targetPc = rootPc;
+      } else {
+        // 終止音度の物語（SongSectionPlan.cadenceDegrees）: フレーズ終止を毎回ルートへ
+        // 落とさず、目標音度に円環距離が最短の和声音へ着地して主音へ段階的に収束させる。
+        // 音度→pcは長音階の半音距離(1̂=0,2̂=2,3̂=4,5̂=7)で写す。音組織の添字で引くと
+        // 五音音階では別の音度(短ペンタのindex2=4̂等)になり、物語が語法で化けてしまう。
+        const degreeSemitones = [0, 2, 4, 5, 7, 9, 11] as const;
+        const goalPc = (scalePcs[0]! + degreeSemitones[sectionDesign.cadenceDegrees[phraseIndex]! % 7]!) % 12;
+        const distance = (pc: number): number => Math.min((pc - goalPc + 12) % 12, (goalPc - pc + 12) % 12);
+        targetPc = [...cadencePcs].sort((a, b) => distance(a) - distance(b))[0] ?? rootPc;
+      }
     }
 
     if (
@@ -954,9 +979,11 @@ function makePhrasePlan(
       // 密な区間は主旋律の前半／後半どちらかを3音の短い裏メロへ譲る。
       // 1音ずつ全小節へ散らすより、ひとかたまりの応答として知覚しやすくする。
       const plannedOrnament = ornaments.has(bar) && targetStep !== null;
+      // 区間内で同じ半分を空ける(区間安定パリティ)。提示と変奏反復が別の半分を
+      // 削られるとフックのリテラル反復が壊れるため、小節単位のパリティは使わない。
       const responseStart = plannedOrnament
         ? targetStep! <= 4 ? 5 : 1
-        : (barInSection + opts.seed) % 2 === 0 ? 1 : 5;
+        : (sectionIndex + opts.seed) % 2 === 0 ? 1 : 5;
       const preferred = sectionPlan.counterDensity === 2
         ? [responseStart, responseStart + 1, responseStart + 2]
         : [bar % 2 === 0 ? 6 : 2];
@@ -1020,8 +1047,11 @@ function makePhrasePlan(
     }
 
     // 休符始まり: 展開部の提示側かループ頭で、1拍目を意図した空白にする（伴奏は拍頭を保つ）。
+    // 前小節が弱起で掛かってきた小節は、掛かり先の頭拍を消さない。
+    const anacrusisEntry = pendingAnacrusis;
+    pendingAnacrusis = false;
     let restStart = false;
-    if (!sustainedEntry && bar !== climaxBar && bar !== signatureLeapBar) {
+    if (!sustainedEntry && !anacrusisEntry && bar !== climaxBar && bar !== signatureLeapBar) {
       const departurePrompt = phraseFunction === 'departure' && !isAnswer;
       if (departurePrompt && restRng.nextInt(100) < 30) restStart = true;
       else if (bar === 0 && restRng.nextInt(100) < 20) restStart = true;
@@ -1075,6 +1105,60 @@ function makePhrasePlan(
       lastTieBar = bar;
     }
 
+    // 強拍倚音の許可小節。実現側は、テーマ音が3拍目(step4)で非和声かつ半拍〜1拍後の
+    // 発音で2度の和声音へ解決できるときだけ倚音として保持する(できなければ従来どおり
+    // 和声音へ吸着)。頻度上限はスタイルの順次進行率から導く(melodic-theme.ts)。
+    // 和風は核音・間の体系と衝突するため対象外。ターゲット音を解決音として
+    // 上書きしないよう、解決ステップが終止目標と重なる小節も外す。
+    let appoggiaturaStep: number | null = null;
+    const appoggiaturaResolutionStep = [5, 6].find((step) => rhythm[step]);
+    if (
+      melodicLanguage !== 'japanese'
+      && ['statement', 'restatement', 'departure'].includes(phraseFunction)
+      && rhythm[4]
+      && targetStep !== 4
+      && appoggiaturaResolutionStep !== undefined
+      && appoggiaturaResolutionStep !== targetStep
+      && ornamentType === null
+      && !anchorTie
+      && longToneStep === null
+      && bar !== climaxBar
+      && bar !== signatureLeapBar
+      && bar - lastAppoggiaturaBar >= 2
+      && appoggRng.nextInt(100) < appoggiaturaRatePercent(style.melody.stepwisePercent)
+    ) {
+      appoggiaturaStep = 4;
+      lastAppoggiaturaBar = bar;
+    }
+
+    // 弱起(アウフタクト): 次のフレーズ頭へ2度下から掛かる先行音を答句の末尾(step7)へ
+    // 置き、フレーズが小節線を跨いで息をする重心を作る。終止目標の確定より後に足す
+    // (targetStepが弱起音へ移ってはいけない)。和風は「間」の候補(step7優先)と
+    // 衝突するため対象外。
+    let anacrusis = false;
+    if (
+      melodicLanguage !== 'japanese'
+      && isAnswer
+      && (cadence === null || cadence === 'open')
+      && !sectionBoundary
+      && longToneStep === null
+      && !anchorTie
+      && ornamentType === null
+      && counterSteps.length === 0
+      && !rhythm[7]
+      && targetStep !== null
+      && targetStep <= 5
+      && bar + 1 < opts.bars
+      && bar + 1 !== signatureLeapBar
+      && bar - lastAnacrusisBar >= 4
+      && anacrusisRng.nextInt(100) < 35
+    ) {
+      rhythm[7] = true;
+      anacrusis = true;
+      lastAnacrusisBar = bar;
+      pendingAnacrusis = true;
+    }
+
     const energy = harmonyBar.energy;
     // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
     const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
@@ -1089,11 +1173,11 @@ function makePhrasePlan(
     bars.push({
       bar, section, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
       phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
-      restStart, sustainedEntry, longToneStep, anchorTie,
+      restStart, sustainedEntry, longToneStep, anchorTie, anacrusis, appoggiaturaStep,
       registerOffset: registerOffsets[sectionIndex] ?? 0,
     });
   }
-  return { climaxBar, signatureLeapBar, bars };
+  return { climaxBar, signatureLeapBar, rhythmFamilies, bars };
 }
 
 interface RealizedIntro {
@@ -1184,6 +1268,7 @@ function realizeIntro(
     targetMidi: number,
     velocity: number,
     articulation: NoteArticulation = 'normal',
+    exact = false,
   ) => {
     const beat = grooveBeat(logicalBeat, grooveFeel);
     const available = endBeat - beat;
@@ -1191,9 +1276,11 @@ function realizeIntro(
     const inBar = ((logicalBeat % 4) + 4) % 4;
     const chord = chordAt(logicalBeat);
     const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
-    const midi = strong
-      ? nearestWithPc(targetMidi, melodicPcs(chord))
-      : nearestWithPc(targetMidi, scaleAt(chord));
+    const midi = exact
+      ? targetMidi
+      : strong
+        ? nearestWithPc(targetMidi, melodicPcs(chord))
+        : nearestWithPc(targetMidi, scaleAt(chord));
     melody.push({
       beat,
       dur: Math.min(dur, available),
@@ -1207,9 +1294,19 @@ function realizeIntro(
   for (const barPlan of plan.barPlans) {
     const barStart = barPlan.bar * 4;
     if (barPlan.leadGesture === 'motifFragment') {
-      // Aの冒頭から特徴的な3〜4音だけを同じ音程関係で抜き出し、未完のまま提示する。
-      for (const source of bodyMotif.slice(0, Math.min(4, bodyMotif.length))) {
-        pushLead(source.beat, Math.min(0.65, source.dur * 0.8), source.midi, 0.58);
+      // Aの冒頭から特徴的な3〜4音を実音のまま抜き出し、未完のまま提示する
+      // (フックの予告なので再スナップしない)。末尾が倚音(強拍の非和声音)で終わる
+      // 場合は、解決音なしの宙吊りを置かないようその手前で切る。
+      const quoted = bodyMotif.slice(0, Math.min(4, bodyMotif.length));
+      while (quoted.length > 1) {
+        const last = quoted[quoted.length - 1]!;
+        const inBar = ((last.beat % 4) + 4) % 4;
+        const strongBeat = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
+        if (!strongBeat || chordAt(last.beat).pcs.includes(((last.midi % 12) + 12) % 12)) break;
+        quoted.pop();
+      }
+      for (const source of quoted) {
+        pushLead(source.beat, Math.min(0.65, source.dur * 0.8), source.midi, 0.58, 'normal', true);
       }
     } else if (barPlan.leadGesture === 'motifAnswer') {
       const sources = bodyMotif.slice(0, 3);
@@ -1509,43 +1606,160 @@ export function compose(opts: ComposeOptions): Piece {
     climaxChord.pcs,
   );
 
-  // --- 主旋律（PhrasePlanの目標音へ向かうモチーフ展開） ---
+  // --- 実音テーマ（melodic-theme.ts） ---
+  // 区間ごとに、ジェスチャーと提示リズム族から「音度列×16ステップ」の具体的テーマを
+  // 一度だけ確定する。以後の反復・引用・展開はすべてこの度数列からの決定論的導出で、
+  // 「反復のたびに毎音を和声へ吸着して音程が変異する」従来方式をやめる
+  // （和声へ合わせるのはアンカーと強拍だけ）。
+  const sectionThemes: ThemeSpec[] = songPlan.form.sections.map((section, index) => {
+    const family = phrasePlan.rhythmFamilies[section.phraseRhythmVariants[0]]!;
+    return themeFromGesture(phraseGestures[index]!, family[0], family[1]);
+  });
+  // 借用フレーズが実現するテーマ。literal=原形(フックの帰還)、transpose=全音度移調
+  // (トーナルアンサー)、invert=輪郭反転。フレーズ0が外部借用の区間は、区間全体が
+  // その主題を展開する(提示した主題を変奏反復・展開・結論が受け継ぐSRDCの一貫性)。
+  // 借用元には「その区間で実際に鳴った主題」(activeTheme)を使う。B自身がAを借用して
+  // いる場合、EがBを引用するとき聴いたことのないBの潜在テーマではなく、
+  // 実際に聴こえたAの変形を引き継ぐ(主題の回帰は聴取可能でなければ意味がない)。
+  const borrowedThemes: (ThemeSpec | null)[] = [];
+  const activeThemes: ThemeSpec[] = [];
+  for (const [sectionIndex, section] of songPlan.form.sections.entries()) {
+    let borrowed: ThemeSpec | null = null;
+    const source = section.motifSourceSection === null
+      ? undefined
+      : songPlan.form.sections.find((candidate) => candidate.id === section.motifSourceSection);
+    // 借用元は常に先行区間(A<B<...)なので activeThemes[source.index] は確定済み。
+    const sourceTheme = source ? activeThemes[source.index] : undefined;
+    if (sourceTheme) {
+      if (section.motifTransform === 'invert') borrowed = invertTheme(sourceTheme);
+      else if (section.motifTransform === 'transpose') {
+        const magnitude = ((opts.seed >>> (7 + section.index)) & 1) === 0 ? 1 : 2;
+        const direction = ((opts.seed >>> (11 + section.index)) & 1) === 0 ? 1 : -1;
+        borrowed = transposeTheme(sourceTheme, magnitude * direction);
+      } else borrowed = sourceTheme;
+    }
+    borrowedThemes.push(borrowed);
+    activeThemes.push(
+      section.externalMotifPhrases.includes(0) && borrowed !== null
+        ? borrowed
+        : sectionThemes[sectionIndex]!,
+    );
+  }
+
+  // --- フレーズアンカーの事前計画 ---
+  // テーマは実音の図形なので、音域とクライマックス一意性は「音を潰すクランプ」ではなく
+  // アンカーの置き場所で解決する(テーマの頂点がクライマックス未満へ収まるまでアンカーを
+  // 下げる)。変奏反復は提示のアンカーを継いでフックをリテラルに繰り返し(平行ピリオド)、
+  // リテラル帰還は元フレーズのアンカー(=実音高)を継ぐ。
+  const pairCount = Math.ceil(opts.bars / 2);
+  const climaxPair = phrasePlan.climaxBar >> 1;
+  const phraseAnchors: number[] = [];
+  const sectionStartAnchors: number[] = [];
+  for (let pair = 0; pair < pairCount; pair++) {
+    const pairBar = pair * 2;
+    const pairPlan = phrasePlan.bars[pairBar]!;
+    const pairSection = songPlan.form.sections.find((section) => section.id === pairPlan.section)!;
+    const pairPhraseIndex = (['statement', 'restatement', 'departure', 'conclusion'] as const)
+      .indexOf(pairPlan.phraseFunction) as 0 | 1 | 2 | 3;
+    const pairBorrows = pairSection.externalMotifPhrases.includes(pairPhraseIndex)
+      && borrowedThemes[pairSection.index] !== null;
+    const pairTheme = pairBorrows ? borrowedThemes[pairSection.index]! : activeThemes[pairSection.index]!;
+    const pairChordPcs = melodyPcsForChord(chordAt(pairBar * 4));
+    const returnRegister = songPlan.compositionPolicy.melody.returnRegister;
+    const appliesReturnRegister = pairBorrows
+      && returnRegister !== null
+      && pairSection.id === returnRegister.to
+      && pairSection.motifSourceSection === returnRegister.from;
+    if (pairBorrows && pairSection.motifTransform === 'literal') {
+      const sourcePair = Math.floor(pairPlan.motifSourceBar / 2);
+      let anchor = phraseAnchors[sourcePair] ?? startMidi;
+      if (appliesReturnRegister) anchor = nearestWithPc(anchor + returnRegister!.offset, pairChordPcs);
+      phraseAnchors.push(anchor);
+      // リテラル帰還は元区間と同音で入るのが装置(区間頭記録は重複回避の対象外)。
+      if (pairBar === pairSection.startBar) sectionStartAnchors[pairSection.index] = anchor;
+      continue;
+    }
+    if (pairPlan.phraseFunction === 'restatement' && pair > 0) {
+      phraseAnchors.push(phraseAnchors[pair - 1]!);
+      continue;
+    }
+    // クライマックス区間ではフレーズアンカーを段階的に上げ、頂点へ登る。
+    const containsClimax = phrasePlan.climaxBar >= pairSection.startBar
+      && phrasePlan.climaxBar < pairSection.startBar + pairSection.bars;
+    const lift = containsClimax && pair <= climaxPair ? Math.max(0, 2 - (climaxPair - pair)) : 0;
+    const center = baseCenter + pairPlan.energy - 2 + pairPlan.registerOffset + lift;
+    let anchor = nearestWithPc(center, pairChordPcs);
+    if (appliesReturnRegister) anchor = nearestWithPc(anchor + returnRegister!.offset, pairChordPcs);
+    const span = themeDegreeSpan(pairTheme);
+    const ceiling = pair === climaxPair ? MELODY_HI : climaxMidi - 1;
+    for (let guard = 0; guard < 24; guard++) {
+      if (realizeDegree(anchor, span.max, scalePcs, 0, 127) <= ceiling) break;
+      anchor = stepOnScale(anchor, -1, scalePcs);
+    }
+    for (let guard = 0; guard < 12; guard++) {
+      if (realizeDegree(anchor, span.min, scalePcs, 0, 127) >= MELODY_LO
+        || realizeDegree(anchor, span.max, scalePcs, 0, 127) > ceiling) break;
+      anchor = stepOnScale(anchor, 1, scalePcs);
+    }
+    anchor = nearestWithPc(anchor, pairChordPcs);
+    // 区間頭は直前区間の頭と同音で入らない。区間の入りが同じ音で並ぶとフォームの
+    // 分節と対比が聴こえない(リテラル帰還だけは同音こそが装置なので上の分岐)。
+    // 比較はアンカーでなく「step0が実際に鳴る音」で行う。移調テーマは度数列自体が
+    // シフトされているため、アンカーだけ見ても強拍スナップ後に同音へ戻ることがある。
+    const startDegree = pairTheme.degreeByStep[0] ?? 0;
+    const realizedStartFor = (candidateAnchor: number): number => {
+      const raw = realizeDegree(candidateAnchor, startDegree, scalePcs, MELODY_LO, MELODY_HI);
+      return pairChordPcs.includes(((raw % 12) + 12) % 12) ? raw : nearestWithPc(raw, pairChordPcs);
+    };
+    if (pairBar === pairSection.startBar && pairSection.index > 0) {
+      const previousStart = sectionStartAnchors[pairSection.index - 1];
+      if (previousStart !== undefined && realizedStartFor(anchor) === previousStart) {
+        const direction = pairPlan.registerOffset >= 0 ? 1 : -1;
+        // 音域端では±3半音内に別の和声音がないことがあるため、±5まで広げて探す。
+        const displaced = [3, -3, 5, -5]
+          .map((offset) => nearestWithPc(anchor + direction * offset, pairChordPcs))
+          .find((candidate) => realizedStartFor(candidate) !== previousStart);
+        if (displaced !== undefined) anchor = displaced;
+      }
+    }
+    if (pairBar === pairSection.startBar) {
+      sectionStartAnchors[pairSection.index] = realizedStartFor(anchor);
+    }
+    phraseAnchors.push(anchor);
+  }
+
+  // --- 主旋律（実音テーマの反復・引用・ゼクエンツ展開） ---
   const melody: NoteEvent[] = [];
-  const externalMotifTransformStates = new Map<string, {
-    transpose: number;
-    sourceAnchor: number;
-    targetAnchor: number;
-    transform: MotifTransform;
-  }>();
   let prev = startMidi;
   let prevBeat = 0;
+  let pendingAppoggiaturaResolution: number | null = null;
+  let lastSequenceHead: number | null = null;
   let signatureLeapPending = false;
   let signatureStepBack: 1 | -1 | null = null;
   for (const barPlan of phrasePlan.bars) {
     const { bar } = barPlan;
     const barInSection = opts.bars >= 16 ? bar % 8 : bar;
-    const phraseStepOffset = (barInSection % 2) * 8;
-    const isAnswerVariation = Math.floor(barInSection / 2) % 2 === 1;
+    // 4小節フォームは1小節=1機能のSRDCなので、毎小節テーマの前半(問い)を実現する
+    // (提示→リテラル反復→展開→結論の8ステップ版。フックが4小節で3回聴こえる)。
+    const phraseStepOffset = opts.bars === 4 ? 0 : (barInSection % 2) * 8;
     const center = bar === phrasePlan.climaxBar
       ? MELODY_HI - 2
       : baseCenter + barPlan.energy - 2 + barPlan.registerOffset;
     const onsets: number[] = [];
     barPlan.rhythm.forEach((on, step) => on && onsets.push(step));
     const sectionDesign = songPlan.form.sections.find((section) => section.id === barPlan.section)!;
-    const phraseGesture = phraseGestures[sectionDesign.index]!;
     const borrowsExternalMotif = barPlan.motifSourceBar < sectionDesign.startBar
       || barPlan.motifSourceBar >= sectionDesign.startBar + sectionDesign.bars;
-    const externalTransformKey = borrowsExternalMotif
-      ? `${sectionDesign.id}:${Math.floor(barInSection / 2)}`
-      : null;
-    const persistedTransform = externalTransformKey
-      ? externalMotifTransformStates.get(externalTransformKey)
-      : undefined;
-    let motifTranspose: number | null = persistedTransform?.transpose ?? null;
-    let motifSourceAnchor: number | null = persistedTransform?.sourceAnchor ?? null;
-    let motifTargetAnchor: number | null = persistedTransform?.targetAnchor ?? null;
-    let activeMotifTransform: MotifTransform = persistedTransform?.transform
-      ?? (borrowsExternalMotif ? sectionDesign.motifTransform : 'transpose');
+    const barTheme = borrowsExternalMotif && borrowedThemes[sectionDesign.index] !== null
+      ? borrowedThemes[sectionDesign.index]!
+      : activeThemes[sectionDesign.index]!;
+    const barAnchor = phraseAnchors[bar >> 1] ?? startMidi;
+    // ゼクエンツ用の断片と方向。クライマックスが前方にあれば上行で頂点へ向かう。
+    const sequenceFragment = fragmentOf(barTheme, 'tail');
+    const sequenceAscending = phrasePlan.climaxBar > bar
+      || (phrasePlan.climaxBar < bar && ((opts.seed >>> (5 + sectionDesign.index)) & 1) === 0);
+    pendingAppoggiaturaResolution = null;
+    if (barPlan.phraseFunction !== 'departure' || barInSection % 2 === 0) lastSequenceHead = null;
 
     for (let index = 0; index < onsets.length; index++) {
       const step = onsets[index]!;
@@ -1554,131 +1768,100 @@ export function compose(opts: ComposeOptions): Piece {
       const chord = chordAt(logicalBeat);
       const structuralPcs = melodyPcsForChord(chord);
       const strong = step === 0 || step === 4;
+      const phraseStep = phraseStepOffset + step;
       let midi: number;
+      let resolvedAppoggiatura = false;
       if (bar === phrasePlan.climaxBar && step === 0) {
         midi = climaxMidi;
       } else if (barPlan.targetStep === step && barPlan.targetPc !== null) {
-        // 応答小節は、先に決めた終止音へ実際に到達させる。
+        // 応答小節は、先に決めた終止音（終止音度の物語）へ実際に到達させる。
         if (barPlan.cadence === 'turnaround') {
-          midi = nearestWithPc(startMidi, [barPlan.targetPc]);
+          // ループの渡し先は固定のstartMidiでなく、実際のA冒頭アンカーへ合わせる。
+          midi = nearestWithPc(phraseAnchors[0] ?? startMidi, [barPlan.targetPc]);
         } else if (bar + 1 === phrasePlan.climaxBar) {
           midi = bridgeWithPc(prev, climaxMidi, [barPlan.targetPc], MELODY_LO, climaxMidi - 1);
         } else {
-          midi = nearestWithPc(prev + Math.round((center - prev) / 2), [barPlan.targetPc]);
+          // クライマックス未満で束縛する。天井近くの候補を選んでから後段のクランプで
+          // 1オクターブ落とすと、終止への跳躍が突然11半音級になる。
+          midi = nearestWithPc(
+            prev + Math.round((center - prev) / 2), [barPlan.targetPc], MELODY_LO, climaxMidi - 1,
+          );
         }
-      } else if (!strong && melody.length > 0 && !chordAt(prevBeat).pcs.includes(prev % 12)) {
-        // 弱拍の非和声音は、次の音で順次解決して方向を明確にする。
-        midi = stepOnScale(prev, center >= prev ? 1 : -1, scaleAt(chord));
-      } else if (step === 0 && barInSection % 2 === 0) {
-        midi = nearestWithPc(center, structuralPcs);
-      } else if (strong) {
-        midi = nearestWithPc(prev + Math.round((center - prev) / 3), structuralPcs);
+      } else if (pendingAppoggiaturaResolution !== null) {
+        // 倚音の解決音（強拍で保持した非和声音を2度の和声音で受ける）。
+        midi = pendingAppoggiaturaResolution;
+        resolvedAppoggiatura = true;
+      } else if (bar === phrasePlan.climaxBar && index === 1 && onsets[0] === 0) {
+        // クライマックスの受け: 頂点の直後は反行順次で降りる（均衡跳躍の古典則）。
+        midi = stepOnScale(prev, -1, scaleAt(chord));
+      } else if (barPlan.anacrusis && step === 7) {
+        // 弱起: 次フレーズのアンカー（クライマックス小節なら頂点音）の2度下から掛かる。
+        const nextAnchor = bar + 1 === phrasePlan.climaxBar
+          ? climaxMidi
+          : phraseAnchors[(bar + 1) >> 1] ?? barAnchor;
+        midi = stepOnScale(nextAnchor, -1, scaleAt(chord));
+      } else if (barPlan.phraseFunction === 'departure' && !borrowsExternalMotif) {
+        // ゼクエンツ: テーマ末尾断片を半小節ごとに2度ずつ移して繰り返す
+        // (断片化→反復進行→終止のリキダーションというセンテンス構文の展開)。
+        // 強拍に落ちる断片音は直後の強拍規則で和声へ量子化されるが、弱拍の断片音と
+        // ランプの輪郭が「同じ材料が動いていく」知覚を残す。
+        const groupStart = (step >> 2) << 2;
+        const positionInGroup = onsets.filter(
+          (candidate) => candidate >= groupStart && candidate < step,
+        ).length;
+        const fragmentDegrees = sequenceFragment.relativeDegrees;
+        const degree = (sequenceAscending ? 1 : -1) * (phraseStep >> 2)
+          + (fragmentDegrees[positionInGroup % Math.max(1, fragmentDegrees.length)] ?? 0);
+        midi = realizeDegree(barAnchor, degree, scaleAt(chord), MELODY_LO, MELODY_HI);
+        if (positionInGroup === 0 && strong && lastSequenceHead !== null) {
+          // ゼクエンツの単調性: 断片頭は強拍量子化で前グループと同音へ戻りやすく、
+          // それではランプ(2度ずつの移高)が聴こえない。進行方向にある次の和声音を
+          // 頭に選び、移高の錨を強拍側で保証する。
+          const rampDirection = sequenceAscending ? 1 : -1;
+          let candidate = lastSequenceHead + rampDirection;
+          while (
+            candidate >= MELODY_LO && candidate <= MELODY_HI
+            && !structuralPcs.includes(((candidate % 12) + 12) % 12)
+          ) candidate += rampDirection;
+          if (candidate >= MELODY_LO && candidate <= MELODY_HI) midi = candidate;
+        }
       } else {
-        const move = phraseGesture[phraseStepOffset + step]!;
-        let dir = move.direction;
-        if (isAnswerVariation && phraseStepOffset + step >= 12) dir = dir === 1 ? -1 : 1;
-        if (barPlan.phraseFunction === 'departure') dir = dir === 1 ? -1 : 1;
-        const phraseStep = phraseStepOffset + step;
-        if (melodicLanguage === 'japanese' && phraseStep % 4 === 3 && scalePcs.includes(prev % 12)) {
-          midi = prev;
-        } else if (move.stepwise) {
-          const chordScale = scaleAt(chord);
-          const motionPcs = melodicLanguage !== 'standard' || chordScale.includes(prev % 12) ? chordScale : chord.pcs;
-          midi = stepOnScale(prev, dir, motionPcs);
-        } else {
-          // 跳躍語彙は音組織から導く: 和風は4度枠の5/7半音、五音は「隣接音級2つぶん」
-          // (音組織の並びで1音飛ばし=4〜7半音。実測のP4/P5彩り帯がここから出る)、
-          // 標準は従来の3〜5半音。着地はいずれも和声音へ吸着する。
-          const leap = melodicLanguage === 'japanese'
-            ? (move.leap % 2 === 0 ? 7 : 5)
-            : melodicLanguage === 'pentatonic'
-              ? Math.abs(stepOnScale(stepOnScale(prev, dir, scalePcs), dir, scalePcs) - prev)
-              : move.leap;
-          midi = nearestWithPc(prev + dir * leap, structuralPcs);
-        }
+        // 実音テーマの実現。アンカーからのスケールウォークで内部の音程を保存する。
+        // 提示・変奏反復・結論の引用・リテラル帰還は、すべて同じ度数列のここを通る。
+        // 歩く音組織は小節のコードスケール(変位音がキーの音階を局所上書きした音組織)。
+        // 度数は不変のまま、V7の導音やIV7の♮6のような変位へ旋律が追従する。
+        midi = realizeDegree(barAnchor, barTheme.degreeByStep[phraseStep] ?? 0, scaleAt(chord), MELODY_LO, MELODY_HI);
       }
+      pendingAppoggiaturaResolution = null;
       const nextPlannedStep = index + 1 < onsets.length ? onsets[index + 1]! : null;
+      // 終止接近: 次の発音が終止目標なら、目標へ向けて中間音を橋渡しする。
+      // ターンアラウンドはループ頭へ、他の終止は目標音度の実音へ寄せることで、
+      // 狭い音域の端(単一オクターブしか候補のない音級)への跳躍を半減させる。
       const bridgesToCadence = (
-        barPlan.cadence === 'turnaround'
-        && barPlan.targetPc !== null
+        barPlan.targetPc !== null
         && nextPlannedStep === barPlan.targetStep
+        && step !== barPlan.targetStep
+        // 倚音の解決音は2度解決が契約なので、終止への橋渡しで上書きしない。
+        && !resolvedAppoggiatura
       );
       if (bridgesToCadence) {
-        const loopTarget = nearestWithPc(startMidi, [barPlan.targetPc!]);
-        midi = bridgeWithPc(prev, loopTarget, strong ? chord.pcs : scaleAt(chord));
-      }
-      const repeatsMotif = barPlan.motifSourceBar !== bar && (
-        borrowsExternalMotif
-        || barPlan.phraseFunction === 'restatement'
-        || (barPlan.phraseFunction === 'conclusion' && step < 4)
-      );
-      if (
-        repeatsMotif
-        && !bridgesToCadence
-        && barPlan.targetStep !== step
-        && !(bar === phrasePlan.climaxBar && step === 0)
-      ) {
-        const sourceBeat = grooveBeat(barPlan.motifSourceBar * 4 + step * 0.5, grooveFeel);
-        const source = melody.find((note) => (
-          note.role !== 'ornament' && Math.abs(note.beat - sourceBeat) < 0.001
-        ));
-        if (source) {
-          if (motifTranspose === null) {
-            motifTranspose = midi - source.midi;
-            motifSourceAnchor = source.midi;
-            motifTargetAnchor = midi;
-            const returnRegister = songPlan.compositionPolicy.melody.returnRegister;
-            const appliesReturnRegister = borrowsExternalMotif
-              && returnRegister !== null
-              && sectionDesign.id === returnRegister.to
-              && sectionDesign.motifSourceSection === returnRegister.from;
-            if (appliesReturnRegister) {
-              const lower = returnRegister.offset < 0
-                ? MELODY_LO
-                : Math.min(MELODY_HI, source.midi + 1);
-              const upper = returnRegister.offset < 0
-                ? Math.max(MELODY_LO, source.midi - 1)
-                : MELODY_HI;
-              const displacedAnchor = nearestWithPc(
-                source.midi + returnRegister.offset,
-                structuralPcs,
-                lower,
-                upper,
-              );
-              motifTargetAnchor = displacedAnchor;
-              motifTranspose = displacedAnchor - source.midi;
-            } else if (borrowsExternalMotif && motifTranspose === 0) {
-              // 同じ和声上では移調も反転軸も同じ音に留まりやすい。別コードトーンへ核をずらし、
-              // それも不可能な移調だけは輪郭反転へ切り替えて、名前だけの変奏を避ける。
-              const direction = ((opts.seed >>> ((sectionDesign.index + 3) % 24)) & 1) === 0 ? -1 : 1;
-              const displacedAnchor = nearestWithPc(midi + direction * 4, structuralPcs);
-              if (displacedAnchor !== midi) {
-                motifTargetAnchor = displacedAnchor;
-                motifTranspose = displacedAnchor - source.midi;
-              } else if (activeMotifTransform === 'transpose') {
-                activeMotifTransform = 'invert';
-              }
-            }
-            if (externalTransformKey && motifTranspose !== null) {
-              externalMotifTransformStates.set(externalTransformKey, {
-                transpose: motifTranspose,
-                sourceAnchor: motifSourceAnchor,
-                targetAnchor: motifTargetAnchor,
-                transform: activeMotifTransform,
-              });
-            }
-          }
-          const allowedPcs = strong ? structuralPcs : scaleAt(chord);
-          const transformed = activeMotifTransform === 'invert'
-            ? motifTargetAnchor! - (source.midi - motifSourceAnchor!)
-            : source.midi + motifTranspose;
-          midi = nearestWithPc(transformed, allowedPcs);
-        }
+        // ゴール予測は実際の終止計算と同じくクライマックス未満で束縛する。
+        const goal = barPlan.cadence === 'turnaround'
+          ? nearestWithPc(phraseAnchors[0] ?? startMidi, [barPlan.targetPc!])
+          : nearestWithPc(
+            prev + Math.round((center - prev) / 2), [barPlan.targetPc!], MELODY_LO, climaxMidi - 1,
+          );
+        midi = bridgeWithPc(prev, goal, strong ? chord.pcs : scaleAt(chord));
       }
       // 署名跳躍: 旋律の常用域(中心±数半音)からは9半音超を音域内に収められないため、
       // 展開小節の頭を低い和声音の「踏み切り」にし、2音目で一度だけ上へ跳ぶ。直後は反行順次。
       let isSignatureLeapNote = false;
-      if (bar === phrasePlan.signatureLeapBar && step === 0 && onsets.length >= 3) {
+      // 踏み切りは、跳躍の直後(3音目)が弱拍で受けられる小節だけに置く。受けが不可能だと
+      // 音域最下部の踏み切りだけが残り、そこからの通常旋律が畳めない大跳躍になる。
+      if (
+        bar === phrasePlan.signatureLeapBar && step === 0 && onsets.length >= 3
+        && onsets[2] !== 4
+      ) {
         // 踏み切りは音域最下部の和声音。ここからでないと9半音超をクライマックス未満に収められない。
         midi = nearestWithPc(MELODY_LO + 1, structuralPcs, MELODY_LO, MELODY_LO + 4);
         if (midi >= MELODY_LO) signatureLeapPending = true;
@@ -1698,7 +1881,12 @@ export function compose(opts: ComposeOptions): Piece {
         }
       } else if (signatureStepBack !== null) {
         // 受け音が強拍に当たる場合は和声音で受ける（順次幅は広がるが強拍規則を守る）。
-        midi = stepOnScale(prev, signatureStepBack, strong ? structuralPcs : scaleAt(chord));
+        // コードスケールの増2度(和声的短音階等)で受けが3半音になる場合は素の音組織で
+        // 受け、均衡跳躍の「2度で戻る」定義を守る。
+        const byChordScale = stepOnScale(prev, signatureStepBack, strong ? structuralPcs : scaleAt(chord));
+        midi = strong || Math.abs(byChordScale - prev) <= 2
+          ? byChordScale
+          : stepOnScale(prev, signatureStepBack, scalePcs);
         signatureStepBack = null;
       }
       if (
@@ -1709,14 +1897,61 @@ export function compose(opts: ComposeOptions): Piece {
       ) {
         // 音級は保ちつつ近いオクターブを選び、偶発的な大跳躍を避ける。
         midi = nearestWithPc(prev, [midi % 12]);
+        if (
+          Math.abs(midi - prev) > 9
+          && !(barPlan.targetStep === step && barPlan.targetPc !== null)
+        ) {
+          // 音域端では畳む先のオクターブが範囲外になり得る。その場合は音級を諦め、
+          // 9半音以内の音組織音で受ける(終止目標音は音級が契約なので対象外)。
+          // 目標を6半音先に置くのは、和声音の最大間隔(3度=最大4半音)を足しても
+          // 9半音を超えないため。
+          midi = nearestWithPc(prev + (midi > prev ? 6 : -6), strong ? structuralPcs : scaleAt(chord));
+        }
       }
-      if (opts.bars >= 16 && !(bar === phrasePlan.climaxBar && step === 0) && midi >= climaxMidi) {
+      if (!(bar === phrasePlan.climaxBar && step === 0) && midi >= climaxMidi) {
         const allowedPcs = barPlan.targetStep === step && barPlan.targetPc !== null
           ? [barPlan.targetPc]
           : strong
             ? structuralPcs
             : scaleAt(chord);
         midi = nearestWithPc(climaxMidi - 1, allowedPcs, MELODY_LO, climaxMidi - 1);
+      }
+      // 強拍規則: フレーズ頭(step0)は必ず和声音へ吸着する(アンカー調整)。3拍目(step4)は
+      // 倚音許可小節に限り、半拍〜1拍後の発音で2度の和声音へ解決できる場合だけ
+      // 非和声のまま保持し、次の発音を解決音として予約する(できなければ従来どおり吸着)。
+      if (
+        strong
+        && !(bar === phrasePlan.climaxBar && step === 0)
+        && !(barPlan.targetStep === step && barPlan.targetPc !== null)
+        && !structuralPcs.includes(((midi % 12) + 12) % 12)
+      ) {
+        let keptAsAppoggiatura = false;
+        // 倚音の接近: 直前音が和声音(掛留を含む)か、2度で掛かる場合だけ保持する。
+        // 非和声音からの同音連打・跳躍で入ると、直前音が宙吊りのまま残る。
+        const approachedProperly = chordAt(prevBeat).pcs.includes(((prev % 12) + 12) % 12)
+          || (Math.abs(midi - prev) <= 2 && midi !== prev);
+        if (barPlan.appoggiaturaStep === step && midi < climaxMidi && approachedProperly) {
+          const resolutionStep = [5, 6].find((candidate) => barPlan.rhythm[candidate]);
+          if (resolutionStep !== undefined) {
+            const resolutionPcs = melodyPcsForChord(chordAt(bar * 4 + resolutionStep * 0.5));
+            // 解決音はクライマックスの一意性を壊さない範囲(climaxMidi未満)に限る。
+            // でないと後段のクランプが解決音を動かし、倚音が宙吊りのまま残る。
+            const usable = (candidate: number): boolean => (
+              candidate < climaxMidi && resolutionPcs.includes(((candidate % 12) + 12) % 12)
+            );
+            const below = stepOnScale(midi, -1, scaleAt(chord));
+            const above = stepOnScale(midi, 1, scaleAt(chord));
+            const resolution = usable(below) ? below : usable(above) ? above : null;
+            if (resolution !== null) {
+              pendingAppoggiaturaResolution = resolution;
+              keptAsAppoggiatura = true;
+            }
+          }
+        }
+        if (!keptAsAppoggiatura) midi = nearestWithPc(midi, structuralPcs);
+      }
+      if (barPlan.phraseFunction === 'departure' && !borrowsExternalMotif && strong) {
+        lastSequenceHead = midi;
       }
       const intervalFromPrev = Math.abs(midi - prev);
       const stepwiseFromPrev = (intervalFromPrev >= 1 && intervalFromPrev <= 2)
@@ -1829,6 +2064,22 @@ export function compose(opts: ComposeOptions): Piece {
     }
   }
   melody.sort((a, b) => a.beat - b.beat);
+
+  // 弱起の音高を、次フレーズ頭の「実現音」から確定する(2度下で掛かる契約)。
+  // 前方予測のアンカーは強拍の再吸着等で実現音とずれることがあるため、
+  // 全実音の確定後に逆算で合わせる。
+  for (const barPlan of phrasePlan.bars) {
+    if (!barPlan.anacrusis) continue;
+    const pickupBeat = grooveBeat(barPlan.bar * 4 + 3.5, grooveFeel);
+    const pickup = melody.find((note) => (
+      note.role !== 'ornament' && Math.abs(note.beat - pickupBeat) < 0.001
+    ));
+    const head = melody.find((note) => (
+      note.role !== 'ornament' && note.beat >= (barPlan.bar + 1) * 4
+    ));
+    if (!pickup || !head) continue;
+    pickup.midi = stepOnScale(head.midi, -1, scaleAt(chordAt(barPlan.bar * 4 + 3.5)));
+  }
 
   // --- 副旋律（主旋律と同時に予約した空間へ、反行を優先して返答） ---
   const counterMelody: NoteEvent[] = [];

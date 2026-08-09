@@ -89,8 +89,20 @@ describe('作曲結果の収束防止', () => {
     )));
     expect(converged.length).toBeLessThanOrEqual(8);
 
+    // 記憶性の反転(実音テーマ導入): Dの冒頭2小節はAのフックのリテラル帰還であり、
+    // 和声が同型のシードでは実音まで一致する。一致は欠陥ではなく装置の発火。
+    // ただし区間全体(8小節)の複製は依然として禁止する(帰還はフックだけ、展開は独自)。
     const exactAD = pieces.filter((piece) => sectionNotes(piece, 0) === sectionNotes(piece, 3));
-    expect(exactAD.length).toBe(0);
+    expect(exactAD.length).toBeGreaterThanOrEqual(32);
+    expect(exactAD.length).toBeLessThan(pieces.length);
+    const fullSectionNotes = (piece: Piece, section: number): string => {
+      const start = piece.loopStartBeat + section * 8 * 4;
+      return piece.melody
+        .filter((note) => note.role !== 'ornament' && note.beat >= start && note.beat < start + 32)
+        .map((note) => `${note.beat - start}:${note.midi}`)
+        .join(',');
+    };
+    expect(pieces.filter((piece) => fullSectionNotes(piece, 0) === fullSectionNotes(piece, 3)).length).toBe(0);
     expect(pieces.filter((piece) => {
       const starts = [0, 1, 2, 3, 4].map((section) => {
         const beat = piece.loopStartBeat + section * 8 * 4;

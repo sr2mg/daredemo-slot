@@ -218,6 +218,54 @@ export const COMPOSITION_HYPOTHESES: readonly CompositionHypothesis[] = [
     experimentIds: [],
     nextComparison: 'externalMotifを共有した2曲ペアと独立シードの2曲ペアを聴かせ、「同じ世界の曲はどちらか」を当てさせる。',
   },
+  {
+    id: 'HYP-013',
+    title: '実音テーマとリテラル反復',
+    status: 'untested',
+    proposition: 'モチーフを抽象ジェスチャーでなく実音の音度列(melodic-theme.ts)として固定し、'
+      + '提示→変奏反復をリテラル反復(平行ピリオド)、Dをフックのリテラル帰還にすると、'
+      + '毎音を和声へ吸着し直す従来方式より記憶性と総合評価が上がる。'
+      + '根拠はMargulisの反復研究(リテラル反復が記憶の主エンジン)とHYP-003の未検証論点。',
+    assessment: '装置は実装済み(区間ごとの音度列テーマ・アンカーのみ和声調整・literal変形・'
+      + 'フック反復下限の診断)。HYP-003はこの装置でようやく検証可能になった。効果は未聴取。'
+      + 'シンボリック実測: 提示vs変奏反復の実音一致は旧21.8%→68.4%、40小節Dの帰還は92.8%一致。'
+      + '差分の主因は別和音下の強拍調整(変応)と、対の片側だけに当たる表現デバイス。'
+      + 'なお和風語法も核音保持イディオムからテーマウォークへ置換されており(同音連続率31.8%→26.8%)、'
+      + 'これは未聴取の様式変更としてブラインド比較の対象に含めること。',
+    experimentIds: [],
+    nextComparison: '同一シードで実音テーマ方式と旧ジェスチャー方式(コミット差分)をブラインド比較する。',
+  },
+  {
+    id: 'HYP-014',
+    title: 'ゼクエンツによる展開',
+    status: 'untested',
+    proposition: '展開(departure)をテーマ末尾断片の2度ずつの反復進行(センテンス構文の断片化→'
+      + 'リキダーション)にすると、方向反転の再ウォークより「意味のある展開」として聴こえる。',
+    assessment: '装置は実装済み(fragmentOf+度数ランプ。強拍は既存規則で和声へ量子化)。効果は未聴取。',
+    experimentIds: [],
+    nextComparison: '同一シードでゼクエンツの入切だけを変えてブラインド比較する。',
+  },
+  {
+    id: 'HYP-015',
+    title: '強拍倚音',
+    status: 'untested',
+    proposition: '強拍のテーマ音が非和声のとき、2度で解決できる場合に限り倚音として保持すると、'
+      + '常に和声音へ吸着するより「切なさ」系の情感と表現の幅が上がる。'
+      + '頻度はスタイルの順次進行率から導出し、上限25%。',
+    assessment: '装置は実装済み(計画小節×条件判定。診断は1拍以内の順次解決を免責)。効果は未聴取。',
+    experimentIds: [],
+    nextComparison: '同一シードで倚音の入切だけを変え、情感の標的質問付きでブラインド比較する。',
+  },
+  {
+    id: 'HYP-016',
+    title: '終止音度の物語と弱起',
+    status: 'untested',
+    proposition: 'フレーズ終止を3̂→(5̂|2̂)→2̂→1̂と計画し(cadenceDegrees)、答句末尾へ次フレーズ頭の'
+      + '2度下の弱起を置くと、毎回ルート終止・毎小節頭拍開始よりフレーズの方向性と呼吸が生まれる。',
+    assessment: '装置は実装済み(SongSectionPlan.cadenceDegrees / PhraseBarPlan.anacrusis)。効果は未聴取。',
+    experimentIds: [],
+    nextComparison: '終止音度固定(全てルート)と物語あり、弱起の入切を独立に切り替えて比較する。',
+  },
 ] as const;
 
 export const COMPOSITION_HYPOTHESIS_STATUS_LABELS: Record<CompositionHypothesisStatus, string> = {

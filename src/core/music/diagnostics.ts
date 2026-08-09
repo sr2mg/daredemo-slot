@@ -1,7 +1,7 @@
 import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS } from './theory.js';
 import { grooveBeat } from './timing.js';
-import { melodicSectionSimilarities } from './diversity.js';
+import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './compose.js';
 
 const MELODY_LO = 72;
@@ -141,7 +141,30 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if ((inBar === 0 || inBar === 2) && note.role !== 'ornament') {
       const chord = chordAt(note.beat);
       if (!chord.pcs.includes(note.midi % 12)) {
-        add('harmony', 'error', note.beat, note.midi, `強拍が ${chord.name} のコードトーン外`);
+        // 倚音: 強拍の非和声音でも、1拍以内の次の構造音へ順次進行で解決し、
+        // 解決先がその時点の和声音なら誤りではなく表現（アクセントされた非和声音）。
+        // 生成側は3拍目(inBar===2)にだけ倚音を置くため、免責もそこに限る
+        // （フレーズ頭や編集起因の非和声音まで偶然の条件一致で隠さない）。
+        let resolution: NoteEvent | undefined;
+        for (const candidate of piece.melody) {
+          if (candidate.role === 'ornament' || candidate.beat <= note.beat + 0.001) continue;
+          if (!resolution || candidate.beat < resolution.beat) resolution = candidate;
+        }
+        const resolves = inBar === 2
+          && resolution !== undefined
+          && resolution.beat - note.beat <= 1.001
+          && isMelodicStep(piece, note.midi, resolution.midi)
+          && chordAt(resolution.beat).pcs.includes(resolution.midi % 12);
+        if (resolves) {
+          observations.push({
+            beat: note.beat,
+            kind: 'embellishment',
+            description: '強拍の倚音として解決',
+            relatedBeats: [resolution!.beat],
+          });
+        } else {
+          add('harmony', 'error', note.beat, note.midi, `強拍が ${chord.name} のコードトーン外`);
+        }
       }
     }
   }
@@ -456,9 +479,22 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('form', 'warning', bodyStart + section.startBar * 4, -1, `${section.id}の全フレーズが同じリズム型へ固定されている`);
     }
   }
-  const excessiveMelodicCopies = melodicSectionSimilarities(piece).filter((comparison) => (
-    comparison.similarPhrases >= 3 || comparison.average >= 0.88
-  ));
+  // リテラル帰還(literal)のペアは、フレーズ0の類似が装置そのものなので除外して測る。
+  const literalReturnPairs = new Set(piece.songPlan.form.sections
+    .filter((section) => section.motifTransform === 'literal' && section.motifSourceSection !== null)
+    .map((section) => {
+      const source = piece.songPlan.form.sections.find(
+        (candidate) => candidate.id === section.motifSourceSection,
+      );
+      return source ? `${source.index}:${section.index}` : '';
+    }));
+  const excessiveMelodicCopies = melodicSectionSimilarities(piece).filter((comparison) => {
+    const scores = literalReturnPairs.has(`${comparison.firstSection}:${comparison.secondSection}`)
+      ? comparison.phraseScores.slice(1)
+      : comparison.phraseScores;
+    const average = scores.reduce((sum, score) => sum + score, 0) / Math.max(1, scores.length);
+    return scores.filter((score) => score >= 0.84).length >= 3 || average >= 0.88;
+  });
   for (const comparison of excessiveMelodicCopies) {
     const first = piece.songPlan.form.sections[comparison.firstSection]?.id ?? comparison.firstSection + 1;
     const second = piece.songPlan.form.sections[comparison.secondSection]?.id ?? comparison.secondSection + 1;
@@ -469,6 +505,67 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       -1,
       `${first}と${second}の旋律が、完全一致ではないがリズムと輪郭の似たフレーズへ収束している`,
     );
+  }
+  // フック反復の下限（記憶性の反転診断）: 記憶性はリテラル反復が担う。提示(フレーズ0)と
+  // 変奏反復(フレーズ1)、およびリテラル帰還は、同じ実音図形として聴こえる程度に
+  // 似ていなければならない。表現デバイスが意図してリズムを変えた小節は対象外。
+  const phraseModifiedByDevice = (startBar: number, bars = 2): boolean => (
+    piece.phrasePlan.bars.slice(startBar, startBar + bars).some((plan) => (
+      plan.counterSteps.length > 0
+      || plan.longToneStep !== null
+      || plan.anchorTie
+      || plan.anacrusis
+      || plan.restStart
+      || plan.sustainedEntry
+      || plan.ornamentType !== null
+      || plan.cadence === 'turnaround'
+      || plan.bar === piece.phrasePlan.climaxBar
+      || plan.bar === piece.phrasePlan.signatureLeapBar
+    ))
+  );
+  if (piece.bars >= 8) {
+    for (const section of piece.songPlan.form.sections) {
+      if (section.bars < 8) continue;
+      // 提示が外部借用(リテラル帰還等でリズム族が異なる)区間は、区間内の反復類似を要求しない。
+      if (section.externalMotifPhrases.includes(0)) continue;
+      // デバイスが答句だけを変えた場合は問い小節1小節で比較する(2小節要求のままだと
+      // 免責が広すぎて検査がほとんど眠る)。問い側まで変えられていたら対象外。
+      const fullClean = !phraseModifiedByDevice(section.startBar)
+        && !phraseModifiedByDevice(section.startBar + 2);
+      const promptClean = !phraseModifiedByDevice(section.startBar, 1)
+        && !phraseModifiedByDevice(section.startBar + 2, 1);
+      if (!fullClean && !promptClean) continue;
+      const hookWindow = fullClean ? 2 : 1;
+      if (melodicPhraseSimilarity(piece, section.startBar, section.startBar + 2, hookWindow) < 0.6) {
+        add(
+          'melody', 'warning', bodyStart + (section.startBar + 2) * 4, -1,
+          `${section.id}の変奏反復が提示のフックを反復として聴かせていない`,
+        );
+      }
+    }
+    for (const section of piece.songPlan.form.sections) {
+      if (section.motifTransform !== 'literal' || section.motifSourceSection === null) continue;
+      const source = piece.songPlan.form.sections.find(
+        (candidate) => candidate.id === section.motifSourceSection,
+      );
+      const returnPhrase = section.externalMotifPhrases[0];
+      if (!source || returnPhrase === undefined) continue;
+      const returnBar = section.startBar + returnPhrase * 2;
+      // 回収フレーズの答句がターンアラウンド(16小節Bの結論等)なら、ループ渡しが
+      // 優先されるため問い小節1小節だけで帰還を測る(2小節要求だと常に免責されて
+      // 検査がデッドコードになる)。
+      const windowBars = piece.phrasePlan.bars[returnBar + 1]?.cadence === 'turnaround' ? 1 : 2;
+      if (
+        phraseModifiedByDevice(source.startBar, windowBars)
+        || phraseModifiedByDevice(returnBar, windowBars)
+      ) continue;
+      if (melodicPhraseSimilarity(piece, source.startBar, returnBar, windowBars) < 0.5) {
+        add(
+          'form', 'warning', bodyStart + returnBar * 4, -1,
+          `${section.id}の主題帰還が${source.id}のフックとして聴こえない`,
+        );
+      }
+    }
   }
   const climaxSection = piece.songPlan.form.sections.find((section) => (
     piece.phrasePlan.climaxBar >= section.startBar
