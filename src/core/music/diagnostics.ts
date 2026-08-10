@@ -1,6 +1,6 @@
 import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS } from './theory.js';
-import { grooveBeat } from './timing.js';
+import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './compose.js';
 
@@ -654,7 +654,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   }
   if (
     textureSections.some((section) => section.ostinatoTuplet !== null)
-    && piece.grooveFeel === 'tripletOverlay'
+    && !allowsTupletOverlay(piece.grooveFeel)
   ) {
     add('rhythm', 'error', bodyStart, -1, '三連オーバーレイと連符レイヤーが同一曲へ計画されている');
   }
@@ -757,7 +757,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : bodyStart;
     const nextChord = chordAt(nextChordBeat);
     const nextRootPc = (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
-    const pickupPosition = piece.grooveFeel === 'bounce' ? 2 / 3 : 0.5;
+    // ピックアップの正位置は「8分裏をグルーヴ格子へ写した位置」(スウィング軸に追随)。
+    const pickupPosition = grooveBeat(0.5, piece.grooveFeel);
     if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextRootPc) {
       add('harmony', 'warning', note.beat, note.midi, 'ベースの経過音が弱拍から次コードの根音へ解決していない');
     }

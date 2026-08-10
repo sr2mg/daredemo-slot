@@ -9,6 +9,7 @@ import type {
   PhraseSection,
   Tonality,
 } from './compose.js';
+import { hasGrooveDevice } from './groove.js';
 import { resolveCompositionPolicy } from './composition-strategy.js';
 import type {
   CompositionPolicy,
@@ -472,7 +473,7 @@ function introRoleFor(
   }
   const density = (options.style.melody.density[0] + options.style.melody.density[1]) / 2;
   const candidates: IntroRole[] = [];
-  if (options.grooveFeel !== 'straight' || options.style.id === 'ska') candidates.push('groove');
+  if (hasGrooveDevice(options.grooveFeel) || options.style.id === 'ska') candidates.push('groove');
   if (options.style.id === 'rock') candidates.push('fanfare');
   if (options.style.id === 'eurobeat' || entryFunction === 'dominant') candidates.push('runup');
   if (options.melodicLanguage === 'japanese' || harmonicActivity > 0 || density <= 5.5) candidates.push('motif');
