@@ -566,23 +566,12 @@ export const MAJOR_PENTATONIC_SCALE = [0, 2, 4, 7, 9] as const;
 export const MINOR_PENTATONIC_SCALE = [0, 3, 5, 7, 10] as const;
 
 /**
- * 選べるキー(全12)。黒鍵は調号の少ない側の異名で表記
- * (D♭=5♭ vs C♯=7♯ など。F♯/G♭のみ同数6つで、慣用の多いF♯を採る)。
+ * 選べるキー(全12)。表記はNOTE_NAMESから導出し、和音チップ・音名表示
+ * (chordName/noteName)と必ず同じ綴りになるようにする。キーに応じた
+ * 異名同音の選択(D♭ vs C#等)は表示側の将来課題。
  */
-export const KEYS: readonly { root: number; label: string }[] = [
-  { root: 0, label: 'C' },
-  { root: 1, label: 'D♭' },
-  { root: 2, label: 'D' },
-  { root: 3, label: 'E♭' },
-  { root: 4, label: 'E' },
-  { root: 5, label: 'F' },
-  { root: 6, label: 'F♯' },
-  { root: 7, label: 'G' },
-  { root: 8, label: 'A♭' },
-  { root: 9, label: 'A' },
-  { root: 10, label: 'B♭' },
-  { root: 11, label: 'B' },
-];
+export const KEYS: readonly { root: number; label: string }[] =
+  NOTE_NAMES.map((label, root) => ({ root, label }));
 
 /**
  * 声部のテッシトゥーラ(単一ソース)。生成(compose)と検査(diagnostics)が同じ値を

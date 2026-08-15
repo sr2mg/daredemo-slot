@@ -480,9 +480,10 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       bars: targetBars,
       seed: nextSeed,
       choice: [...targetChoice],
-      // 現行リビジョンを常に焼く。旧曲(engineRev欠落=rev0)を編集して再保存すると
-      // 現行へ引き上がるが、試聴も同じoptionsで行うため聴いた音と保存される音は一致する。
-      engineRev: CURRENT_ENGINE_REV,
+      // rev0 の間は入れない(欠落=0 なのでキャッシュキー同一性を保つ)。最初の
+      // rev ゲート分岐が入って CURRENT が上がった時点から焼き始める。旧曲を編集して
+      // 再保存すると現行へ引き上がるが、試聴も同じ options なので聴いた音=保存される音。
+      ...(CURRENT_ENGINE_REV > 0 ? { engineRev: CURRENT_ENGINE_REV } : {}),
       soundChip,
       ...(intro ? {} : { intro: false }),
       ...(tonality === 'minor' ? { tonality } : {}),

@@ -303,13 +303,18 @@ export interface ComposeOptions {
 }
 
 /**
- * 現行エンジンのリビジョン。音を変える生成器変更を入れるときに +1 し、
- * compose() 内の該当分岐を `engineRevOf(opts) >= N` でゲートする。
+ * 現行エンジンのリビジョン。最初に音を変える生成器変更を入れるときに 1 へ上げ、
+ * compose() 内の該当分岐を `engineRevOf(opts) >= 1` でゲートする(以後も同様に+1)。
  * リビジョン間の挙動差は必ず分岐箇所のコメントで「何がどう変わるか」を残すこと。
+ * 0 の間は UI も保存 JSON へ engineRev を入れない(キャッシュキー同一性の維持)。
  */
-export const CURRENT_ENGINE_REV = 1;
+export const CURRENT_ENGINE_REV = 0;
 
-/** 保存データの engineRev を既知の範囲へ正規化(未指定=0、未来の値=現行へクランプ)。 */
+/**
+ * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。
+ * 未来のリビジョン(新しいビルドで保存された曲)は再現不能なので現行へクランプして
+ * ベストエフォートで鳴らす。非整数は壊れたデータとして 0 扱い。
+ */
 export function engineRevOf(opts: Pick<ComposeOptions, 'engineRev'>): number {
   const raw = opts.engineRev ?? 0;
   return Number.isInteger(raw) ? Math.max(0, Math.min(CURRENT_ENGINE_REV, raw)) : 0;
@@ -467,8 +472,6 @@ export interface ArrangementPlan {
 
 export interface Piece {
   bpm: number;
-  /** この曲を生成したエンジンリビジョン(正規化済み)。表示・診断向けの記録。 */
-  engineRev: number;
   styleId: string;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
@@ -2522,7 +2525,6 @@ export function compose(opts: ComposeOptions): Piece {
 
   return {
     bpm: opts.bpm,
-    engineRev: engineRevOf(opts),
     styleId: style.id,
     tonality,
     melodicLanguage,
