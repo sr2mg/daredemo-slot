@@ -14,8 +14,8 @@
 import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import {
-  CHORDS, MAJOR_PENTATONIC_SCALE, MAJOR_SCALE, MINOR_PENTATONIC_SCALE,
-  NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
+  CHORDS, COUNTER_HI, COUNTER_LO, MAJOR_PENTATONIC_SCALE, MAJOR_SCALE, MELODY_HI, MELODY_LO,
+  MINOR_PENTATONIC_SCALE, NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
   chordScalePcs, harmonicFunctionForToken, progressionForTonality,
 } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
@@ -273,6 +273,12 @@ export interface ComposeOptions {
   externalMotif?: MelodicMotif;
   /** 診断の局所修正。シード生成後に一致する音だけへ再適用する。 */
   melodyEdits?: readonly MelodyEdit[];
+  /**
+   * この曲を生成したエンジンのリビジョン。音を変える生成器変更はこの値でゲートし、
+   * 旧リビジョンの保存曲は旧挙動のまま再現する(一点式バージョニング)。
+   * 省略 = 0(engineRev導入前の全保存曲)。UIは保存時に CURRENT_ENGINE_REV を焼く。
+   */
+  engineRev?: number;
   seed: number;
   /** 全小節ぶんのスロット選択。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
   choice?: readonly number[];
@@ -294,6 +300,19 @@ export interface ComposeOptions {
   soundChip?: SoundBackendId;
   /** ファミコン 2A03 モード固有の音色パラメータ。 */
   nes?: NesVoiceOptions;
+}
+
+/**
+ * 現行エンジンのリビジョン。音を変える生成器変更を入れるときに +1 し、
+ * compose() 内の該当分岐を `engineRevOf(opts) >= N` でゲートする。
+ * リビジョン間の挙動差は必ず分岐箇所のコメントで「何がどう変わるか」を残すこと。
+ */
+export const CURRENT_ENGINE_REV = 1;
+
+/** 保存データの engineRev を既知の範囲へ正規化(未指定=0、未来の値=現行へクランプ)。 */
+export function engineRevOf(opts: Pick<ComposeOptions, 'engineRev'>): number {
+  const raw = opts.engineRev ?? 0;
+  return Number.isInteger(raw) ? Math.max(0, Math.min(CURRENT_ENGINE_REV, raw)) : 0;
 }
 
 export interface NesVoiceOptions {
@@ -448,6 +467,8 @@ export interface ArrangementPlan {
 
 export interface Piece {
   bpm: number;
+  /** この曲を生成したエンジンリビジョン(正規化済み)。表示・診断向けの記録。 */
+  engineRev: number;
   styleId: string;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
@@ -498,11 +519,6 @@ export interface Piece {
   barChordNames: string[];
 }
 
-/** メロディ音域: C5..E6 */
-const MELODY_LO = 72;
-const MELODY_HI = 88;
-const COUNTER_LO = 60;
-const COUNTER_HI = 76;
 
 /** target に最も近い、pcs に含まれる MIDI ノート（音域内） */
 function nearestWithPc(target: number, pcs: readonly number[], lo = MELODY_LO, hi = MELODY_HI): number {
@@ -2506,6 +2522,7 @@ export function compose(opts: ComposeOptions): Piece {
 
   return {
     bpm: opts.bpm,
+    engineRev: engineRevOf(opts),
     styleId: style.id,
     tonality,
     melodicLanguage,

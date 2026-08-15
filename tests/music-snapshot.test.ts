@@ -51,6 +51,15 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
       progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
     },
   },
+  {
+    // pcm曲の生成そのものを固定する回帰アンカー。現時点ではPiece層はopllと同一
+    // (差は編曲層に住む)のが設計で、その不変条件は下の専用テストが守る。
+    name: '韓国MMO風16小節 / vi軌道 / pcm音源',
+    options: {
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+      soundChip: 'pcm',
+    },
+  },
   ...(['current', 'memoryArc', 'premiseArc'] as const).map((strategy) => ({
     name: `BIG風40小節 / ${strategy}`,
     options: {
@@ -67,4 +76,15 @@ describe('作曲エンジンの音イベントは意図なく変わらない', (
       expect(digestPiece(compose(options))).toMatchSnapshot();
     });
   }
+
+  // 「豊かに書いて編曲層で劣化」の原則により、opllとpcmは作曲能力が同等で
+  // Piece層の出力は一致する(差はopll-arrange/pcm-arrangeが持つ)。
+  // compose内でpcm専用の生成分岐を意図して入れるときは、このテストを更新すること。
+  it('Piece層はopllとpcmで同一(能力差は編曲層に住む)', () => {
+    const base = {
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+    } as const;
+    expect(digestPiece(compose({ ...base, soundChip: 'pcm' })))
+      .toEqual(digestPiece(compose({ ...base })));
+  });
 });

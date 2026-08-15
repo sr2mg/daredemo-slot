@@ -18,6 +18,7 @@ import {
   JAPANESE_SCALE_LABELS,
   ORNAMENT_LABELS,
   PHRASE_FUNCTION_LABELS,
+  CURRENT_ENGINE_REV,
   checkPieceStructure,
   defaultChoiceFor,
   hasVariedChoiceFor,
@@ -479,6 +480,9 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       bars: targetBars,
       seed: nextSeed,
       choice: [...targetChoice],
+      // 現行リビジョンを常に焼く。旧曲(engineRev欠落=rev0)を編集して再保存すると
+      // 現行へ引き上がるが、試聴も同じoptionsで行うため聴いた音と保存される音は一致する。
+      engineRev: CURRENT_ENGINE_REV,
       soundChip,
       ...(intro ? {} : { intro: false }),
       ...(tonality === 'minor' ? { tonality } : {}),
