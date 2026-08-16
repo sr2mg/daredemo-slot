@@ -565,16 +565,22 @@ export const YO_SCALE = [0, 2, 5, 7, 9] as const;
 export const MAJOR_PENTATONIC_SCALE = [0, 2, 4, 7, 9] as const;
 export const MINOR_PENTATONIC_SCALE = [0, 3, 5, 7, 10] as const;
 
-/** サウンドテストで選べるキー（明るいメジャーの定番どころ） */
-export const KEYS: readonly { root: number; label: string }[] = [
-  { root: 0, label: 'C' },
-  { root: 2, label: 'D' },
-  { root: 4, label: 'E' },
-  { root: 5, label: 'F' },
-  { root: 7, label: 'G' },
-  { root: 9, label: 'A' },
-  { root: 10, label: 'B♭' },
-];
+/**
+ * 選べるキー(全12)。表記はNOTE_NAMESから導出し、和音チップ・音名表示
+ * (chordName/noteName)と必ず同じ綴りになるようにする。キーに応じた
+ * 異名同音の選択(D♭ vs C#等)は表示側の将来課題。
+ */
+export const KEYS: readonly { root: number; label: string }[] =
+  NOTE_NAMES.map((label, root) => ({ root, label }));
+
+/**
+ * 声部のテッシトゥーラ(単一ソース)。生成(compose)と検査(diagnostics)が同じ値を
+ * 参照する。主旋律 C5..E6、副旋律はその1オクターブ下。
+ */
+export const MELODY_LO = 72;
+export const MELODY_HI = 88;
+export const COUNTER_LO = 60;
+export const COUNTER_HI = 76;
 
 /** トークン + キー → 表示名（例: 'IVM7', キー C → 'FM7'） */
 export function chordName(token: string, keyRoot: number): string {
