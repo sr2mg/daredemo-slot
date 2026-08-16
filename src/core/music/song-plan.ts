@@ -17,7 +17,7 @@ import type {
   CompositionStrategy,
   StrategySectionId,
 } from './composition-strategy.js';
-import { harmonicFunctionForToken } from './theory.js';
+import { CHORDS, harmonicFunctionForToken } from './theory.js';
 import type { HarmonicFunction, ProgressionDef, StyleDef } from './theory.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 
@@ -107,6 +107,12 @@ export interface HarmonyBarPlan {
   tokens: readonly string[];
   /** tokens と同じ順。コード変化位置はフレーズ目的とコード機能から決める。 */
   durations: readonly number[];
+  /**
+   * tokens と同じ順の分数コード指定（キー主音からの相対半音）。null はルートポジション。
+   * コードトーン外の音も許す（半音経過ベース）。省略 = 全てルートポジション。
+   * ベースライン生成器（ステップ2）が書き、ベース声部と ChordEvent.bassPc が読む。
+   */
+  bassDegrees?: readonly (number | null)[];
   /** 上位戦略がこの小節の和声選択へ与えた意味。 */
   strategyRole: 'base' | 'absence' | 'return';
   entryFunction: HarmonicFunction;
@@ -481,14 +487,18 @@ function introRoleFor(
   return compatible[((options.seed ^ 0x494e_5452) >>> 0) % compatible.length]!;
 }
 
-function approachTokenFor(entryToken: string, tonality: Tonality): string {
+/** イントロがA冒頭のコードへ受け渡すための接近和音。exportはテストの等価性固定用。 */
+export function approachTokenFor(entryToken: string, tonality: Tonality): string {
   const entryFunction = harmonicFunctionForToken(entryToken);
   if (entryFunction === 'tonic') return tonality === 'minor' ? 'V7m' : 'V';
   if (entryFunction === 'dominant') return tonality === 'minor' ? 'iv' : 'IV';
   if (entryFunction === 'predominant') {
-    if (tonality === 'major' && ['IV', 'IVM7'].includes(entryToken)) return 'I7';
-    if (tonality === 'major' && ['ii', 'ii7'].includes(entryToken)) return 'vi';
-    if (tonality === 'minor' && entryToken === 'iiDim') return 'VI';
+    // 接近はトークン名でなく度数メタデータで決める（IVadd9 等の新語彙にもそのまま効く）。
+    // IV系(root=5)はそのセカンダリードミナントI7(V/IV)、ii系(root=2)は五度上のvi/VIから入る。
+    const entryRoot = CHORDS[entryToken]?.root;
+    if (tonality === 'major' && entryRoot === 5) return 'I7';
+    if (tonality === 'major' && entryRoot === 2) return 'vi';
+    if (tonality === 'minor' && entryRoot === 2) return 'VI';
     return tonality === 'minor' ? 'i' : 'I';
   }
   return tonality === 'minor' ? 'V7m' : 'V';

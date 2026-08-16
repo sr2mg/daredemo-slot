@@ -10,55 +10,157 @@
 import type { DuetPolicy } from './duet.js';
 import type { GlidePolicy } from './glide.js';
 
-export interface ChordDef {
-  /** キー主音からの相対ルート（半音） */
-  root: number;
-  /** 表示用クオリティ（root=5, quality='M7', キー C → FM7） */
-  quality: string;
-  /** キー主音からの相対ピッチクラス集合 */
-  tones: readonly number[];
-}
-
 export type HarmonicFunction = 'tonic' | 'predominant' | 'dominant' | 'colour';
 
-export const CHORDS: Record<string, ChordDef> = {
-  I: { root: 0, quality: '', tones: [0, 4, 7] },
-  ii: { root: 2, quality: 'm', tones: [2, 5, 9] },
-  iii: { root: 4, quality: 'm', tones: [4, 7, 11] },
-  IV: { root: 5, quality: '', tones: [5, 9, 0] },
-  V: { root: 7, quality: '', tones: [7, 11, 2] },
-  vi: { root: 9, quality: 'm', tones: [9, 0, 4] },
-  IVM7: { root: 5, quality: 'M7', tones: [5, 9, 0, 4] },
-  III7: { root: 4, quality: '7', tones: [4, 8, 11, 2] },
-  ii7: { root: 2, quality: 'm7', tones: [2, 5, 9, 0] },
-  iii7: { root: 4, quality: 'm7', tones: [4, 7, 11, 2] },
-  vi7: { root: 9, quality: 'm7', tones: [9, 0, 4, 7] },
-  v7: { root: 7, quality: 'm7', tones: [7, 10, 2, 5] },
-  I7: { root: 0, quality: '7', tones: [0, 4, 7, 10] },
-  // 短調。大文字/小文字は主音から見た機能を明示し、keyRoot は常に主音として扱う。
-  i: { root: 0, quality: 'm', tones: [0, 3, 7] },
-  i7: { root: 0, quality: 'm7', tones: [0, 3, 7, 10] },
-  iiDim: { root: 2, quality: 'dim', tones: [2, 5, 8] },
-  III: { root: 3, quality: '', tones: [3, 7, 10] },
-  III7m: { root: 3, quality: '7', tones: [3, 7, 10, 1] },
-  iv: { root: 5, quality: 'm', tones: [5, 8, 0] },
-  iv7: { root: 5, quality: 'm7', tones: [5, 8, 0, 3] },
-  /** ドリアンの♮6を3度に持つIV7（短調のF7）。iv系と選択制で使う。 */
-  IV7m: { root: 5, quality: '7', tones: [5, 9, 0, 3] },
-  v: { root: 7, quality: 'm', tones: [7, 10, 2] },
-  V7m: { root: 7, quality: '7', tones: [7, 11, 2, 5] },
-  VI: { root: 8, quality: '', tones: [8, 0, 3] },
-  VImaj7: { root: 8, quality: 'M7', tones: [8, 0, 3, 7] },
-  VII: { root: 10, quality: '', tones: [10, 2, 5] },
-  VIIm7: { root: 10, quality: 'm7', tones: [10, 1, 5, 8] },
+/**
+ * コード品質。文字列は chordName() の表示接尾辞であり、同時に tones の導出キー。
+ */
+export type ChordQuality = '' | 'm' | 'dim' | '7' | 'm7' | 'M7' | '6' | 'sus4' | 'add9';
+
+/**
+ * 品質 → ルートからの相対音程（半音）。tones は root とこの表から導出する。
+ * 並びは3度堆積順（add9 の 9th は最後）。ChordEvent.pcs はこの並びを引き継ぎ
+ * ボイシングの基準順になるため、既存トークンの並びは変えないこと。
+ */
+const QUALITY_INTERVALS: Record<ChordQuality, readonly number[]> = {
+  '': [0, 4, 7],
+  m: [0, 3, 7],
+  dim: [0, 3, 6],
+  '7': [0, 4, 7, 10],
+  m7: [0, 3, 7, 10],
+  M7: [0, 4, 7, 11],
+  '6': [0, 4, 7, 9],
+  sus4: [0, 5, 7],
+  add9: [0, 4, 7, 2],
 };
 
-/** ローマ数字トークンを、フォーム設計で使う大まかな和声機能へ写す。 */
+export interface ChordDef {
+  /** キー主音からの相対ルート（半音）。変位度数（♭III=3, ♭VII=10 等）もこの値で表す。 */
+  root: number;
+  /** クオリティ（表示接尾辞 = tones の導出キー） */
+  quality: ChordQuality;
+  /** キー主音からの相対ピッチクラス集合（root + QUALITY_INTERVALS から導出） */
+  tones: readonly number[];
+  /**
+   * 機能和声上の大まかな役割（リーマン流 T/S/D + 機能進行に属さない colour）。
+   * 進行スロット設計・2コード小節の変化位置・イントロの接近和音が参照する。
+   */
+  function: HarmonicFunction;
+}
+
+const chord = (
+  root: number,
+  quality: ChordQuality,
+  harmonicFunction: HarmonicFunction,
+): ChordDef => ({
+  root,
+  quality,
+  tones: QUALITY_INTERVALS[quality].map((interval) => (root + interval) % 12),
+  function: harmonicFunction,
+});
+
+export const CHORDS: Record<string, ChordDef> = {
+  I: chord(0, '', 'tonic'),
+  ii: chord(2, 'm', 'predominant'),
+  iii: chord(4, 'm', 'tonic'),
+  IV: chord(5, '', 'predominant'),
+  V: chord(7, '', 'dominant'),
+  vi: chord(9, 'm', 'tonic'),
+  IVM7: chord(5, 'M7', 'predominant'),
+  III7: chord(4, '7', 'dominant'),
+  ii7: chord(2, 'm7', 'predominant'),
+  iii7: chord(4, 'm7', 'tonic'),
+  vi7: chord(9, 'm7', 'tonic'),
+  v7: chord(7, 'm7', 'dominant'),
+  I7: chord(0, '7', 'dominant'),
+  // 短調。大文字/小文字は主音から見た機能を明示し、keyRoot は常に主音として扱う。
+  i: chord(0, 'm', 'tonic'),
+  i7: chord(0, 'm7', 'tonic'),
+  iiDim: chord(2, 'dim', 'predominant'),
+  III: chord(3, '', 'tonic'),
+  III7m: chord(3, '7', 'dominant'),
+  iv: chord(5, 'm', 'predominant'),
+  iv7: chord(5, 'm7', 'predominant'),
+  /** ドリアンの♮6を3度に持つIV7（短調のF7）。iv系と選択制で使う。 */
+  IV7m: chord(5, '7', 'predominant'),
+  v: chord(7, 'm', 'dominant'),
+  V7m: chord(7, '7', 'dominant'),
+  VI: chord(8, '', 'predominant'),
+  VImaj7: chord(8, 'M7', 'predominant'),
+  VII: chord(10, '', 'dominant'),
+  VIIm7: chord(10, 'm7', 'predominant'),
+  // --- カラーコード（M7/6th/add9/sus4）と借用和音。7thチェーン・順次ベース様式の語彙。 ---
+  // 借用元は列挙せず chordOriginsFor() が旋法照合で導出する。既存進行カタログは
+  // まだ使わないため追加しても音は変わらない（進行への供給はステップ3の生成器から）。
+  IM7: chord(0, 'M7', 'tonic'),
+  I6: chord(0, '6', 'tonic'),
+  Iadd9: chord(0, 'add9', 'tonic'),
+  IVadd9: chord(5, 'add9', 'predominant'),
+  /** 4-3掛留。第3音を持たないため長短両調で使える。 */
+  Vsus4: chord(7, 'sus4', 'dominant'),
+  /** 長調では♭VIIM7（ミクソリディア借用のバックドア）、短調ではドリアの♮6を含むVIIM7。 */
+  VIIM7: chord(10, 'M7', 'dominant'),
+  /** 短調のダイアトニックIII△7。長調では♭IIIM7（同主短調からの借用）。 */
+  IIIM7: chord(3, 'M7', 'tonic'),
+  /** ♭VIIm（フリギア借用）。機能進行に属さない旋法的色彩。 */
+  vii: chord(10, 'm', 'colour'),
+};
+
+/** ローマ数字トークンの和声機能。カタログのメタデータを引く（未知トークンは colour）。 */
 export function harmonicFunctionForToken(token: string): HarmonicFunction {
-  if (['I', 'vi', 'vi7', 'iii', 'iii7', 'i', 'i7', 'III'].includes(token)) return 'tonic';
-  if (['IV', 'IVM7', 'ii', 'ii7', 'iv', 'iv7', 'IV7m', 'iiDim', 'VI', 'VImaj7', 'VIIm7'].includes(token)) return 'predominant';
-  if (['V', 'III7', 'I7', 'V7m', 'v', 'v7', 'VII', 'III7m'].includes(token)) return 'dominant';
-  return 'colour';
+  return CHORDS[token]?.function ?? 'colour';
+}
+
+/** 同主音上の音組織（教会旋法 + 和声的短音階）。借用判定の導出元。 */
+export type ModalSource =
+  | 'ionian' | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'aeolian' | 'harmonicMinor';
+
+const MODAL_SCALES: Record<ModalSource, readonly number[]> = {
+  ionian: [0, 2, 4, 5, 7, 9, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  phrygian: [0, 1, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  aeolian: [0, 2, 3, 5, 7, 8, 10],
+  harmonicMinor: [0, 2, 3, 5, 7, 8, 11],
+};
+
+/**
+ * トークンの出自解釈。同じ和音が複数の導出を持ちうる（例: 短調のIV7mは
+ * ドリアン借用ともV/VIIとも読める）ため、単一ラベルに丸めず候補を全て返し、
+ * どの解釈を採るかは文脈（進行・解決先）を知る呼び出し側に委ねる。
+ */
+export interface ChordOrigins {
+  /**
+   * 全構成音がその調性のダイアトニック音階（長調=長音階、短調=自然短音階）に収まる。
+   * 注意: 短調の主要ドミナントV7mは和声的短音階由来なので false になるが借用ではない
+   * （modes に harmonicMinor が入ることで判別できる）。false を即「借用」と読まないこと。
+   */
+  diatonic: boolean;
+  /**
+   * ドミナント7thとして五度下のダイアトニック度数 x へ解決しうる場合、その x の root。
+   * 主和音への解決（x=0）は主要ドミナントでありセカンダリーとは呼ばないため除く。
+   */
+  secondaryDominantOf: number | null;
+  /** 同主音の旋法・和声的短音階のうち全構成音を含むもの（旋法的借用の候補）。 */
+  modes: readonly ModalSource[];
+}
+
+export function chordOriginsFor(
+  token: string,
+  tonality: ProgressionTonality,
+): ChordOrigins | null {
+  const def = CHORDS[token];
+  if (!def) return null;
+  const scale: readonly number[] = tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE;
+  const diatonic = def.tones.every((pc) => scale.includes(pc));
+  const target = (def.root + 5) % 12;
+  const secondaryDominantOf = def.quality === '7' && !diatonic && target !== 0 && scale.includes(target)
+    ? target
+    : null;
+  const modes = (Object.keys(MODAL_SCALES) as ModalSource[])
+    .filter((mode) => def.tones.every((pc) => MODAL_SCALES[mode].includes(pc)));
+  return { diatonic, secondaryDominantOf, modes };
 }
 
 /** 1 スロット選択肢 = その小節で鳴らすコード列（2 つなら半小節ずつ） */

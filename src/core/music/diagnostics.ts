@@ -292,13 +292,13 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         }
       }
     }
+    // セカンダリードミナントの解決(III7→vi等)はトークン照合で列挙しない。両端とも
+    // dominant→tonic/predominantの機能遷移として2行目が既に数えている。
     const directedTransitions = loopChords.filter((from, index) => {
       const to = loopChords[(index + 1) % loopChords.length]!;
       if (from.function === 'predominant' && to.function === 'dominant') return true;
       if (from.function === 'dominant' && (to.function === 'tonic' || to.function === 'predominant')) return true;
-      if (from.function === 'tonic' && (to.function === 'predominant' || to.function === 'dominant')) return true;
-      return (from.token === 'III7' && ['vi', 'vi7'].includes(to.token))
-        || (from.token === 'I7' && ['IV', 'IVM7'].includes(to.token));
+      return from.function === 'tonic' && (to.function === 'predominant' || to.function === 'dominant');
     }).length;
     if (directedTransitions === 0) {
       add('harmony', 'warning', firstChord.beat, -1, 'コード機能の方向づけが見えない');

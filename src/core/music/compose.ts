@@ -293,6 +293,13 @@ export interface ComposeOptions {
   /** OPLLの音色0番へ書き込む1曲1個のユーザー音色。 */
   opllUserPatch?: OpllUserPatchId;
   /**
+   * パート別のPCM音色上書き。compose() 自体は使わないPCM編曲層のパラメータだが、
+   * voices と同じ理由（曲の保存単位・キャッシュキー = ComposeOptions の JSON）で
+   * ここに持たせ、pcm の曲が ComposeOptions だけで完全再現できるようにする。
+   * 未指定の旧保存曲は再生環境のグローバル設定で鳴る（従来挙動）。
+   */
+  pcmVoices?: PcmVoiceOverride;
+  /**
    * 作曲対象のバックエンド。省略時は従来どおり OPLL(保存済み v1 曲との後方互換)。
    * 'pcm' は制約の少ない作曲対象(広い編成・テンション等)で、チップでの再生時は
    * 各編曲層が能力に応じて劣化させる(sound-capabilities.ts)。
@@ -336,6 +343,30 @@ export interface VoiceOverride {
   ostinato?: number;
 }
 
+/**
+ * PCMのパート語彙。編曲層の役割語彙(audio/stage.ts の StageRole)と同一で、
+ * pcm-arrange.ts が両者の一致をコンパイル時に検証する。
+ */
+export type PcmPart = 'lead' | 'duet' | 'counter' | 'ostinato' | 'backing' | 'bass' | 'drums';
+
+/** SoundFontのプリセット参照(GMバンク/プログラム)。 */
+export interface PcmPresetRef {
+  bank: number;
+  program: number;
+}
+
+/** 主旋律の受け渡し色(arrangement.tsのleadColor)。0=看板(hook) 1=展開(development) 2=緩急(relief)。 */
+export type LeadColorSlot = 0 | 1 | 2;
+
+/**
+ * パート別のPCM音色上書き。未指定パートはスタイル既定のGMプログラム。
+ * 主旋律はleadColorVoicesで受け渡し色ごとに上書きできる(A=ピアノ、B=ギター等)。
+ * 優先順: leadColorVoices[色] > lead(全区間固定) > スタイル既定パレット。
+ */
+export interface PcmVoiceOverride extends Partial<Record<PcmPart, PcmPresetRef>> {
+  leadColorVoices?: Partial<Record<LeadColorSlot, PcmPresetRef>>;
+}
+
 export type OpllUserPatchId = 'brightLead' | 'metalBell' | 'punchBass';
 
 export interface NoteEvent {
@@ -367,6 +398,12 @@ export interface ChordEvent {
   midis: number[];
   /** テンション方針で声部へ足したカラートーン(絶対pc)。機能はpcsのまま。 */
   colorPcs?: number[];
+  /**
+   * 分数コードのベース音(絶対pc)。省略=ルートポジション=ベース声部がrootを弾く
+   * (伴奏ボイシングmidisは従来どおり転回を許す密集配置で、このフィールドと無関係)。
+   * HarmonyBarPlan.bassDegrees から確定する。コードトーン外の経過ベースも許す。
+   */
+  bassPc?: number;
 }
 
 export interface DrumEvent {
@@ -1533,6 +1570,11 @@ export function compose(opts: ComposeOptions): Piece {
   const chords: ChordEvent[] = [];
   let previousVoicing: number[] | null = null;
   barTokens.forEach((tokens, bar) => {
+    const barBassDegrees = songPlan.harmony[bar]!.bassDegrees;
+    if (barBassDegrees && barBassDegrees.length !== tokens.length) {
+      // 生成器のオフバイワンを無音のルートポジション扱いですり抜けさせない。
+      throw new Error(`${bar + 1}小節目のbassDegrees(${barBassDegrees.length})がtokens(${tokens.length})と不一致`);
+    }
     let offset = 0;
     tokens.forEach((token, i) => {
       const dur = barChordDurations[bar]![i]!;
@@ -1546,6 +1588,7 @@ export function compose(opts: ComposeOptions): Piece {
         : selectTensionPcs(pcs, chordScaleForToken(token, pcs), rootPc, tensionPolicy)
       ).slice(0, Math.max(0, 5 - pcs.length)); // 密集配置(≤14半音)が成立する5声まで
       const midis = voiceChord([...pcs, ...colorPcs], previousVoicing, melodicLanguage === 'japanese');
+      const bassDegree = barBassDegrees?.[i] ?? null;
       chords.push({
         beat: bar * 4 + offset,
         dur,
@@ -1555,6 +1598,8 @@ export function compose(opts: ComposeOptions): Piece {
         pcs,
         midis,
         colorPcs,
+        // 半音下行接近を-1と書ける生成器のためにmod 12へ正規化する。
+        ...(bassDegree !== null ? { bassPc: (((bassDegree + keyRoot) % 12) + 12) % 12 } : {}),
       });
       previousVoicing = midis;
       offset += dur;
