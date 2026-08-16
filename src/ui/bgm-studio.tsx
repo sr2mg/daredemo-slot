@@ -4,6 +4,7 @@ import { BgmComposerPanel } from './bgm-composer.js';
 import type { BgmPcmRenderer } from './bgm-audio.js';
 import { PCM_PART_LABELS } from '../audio/pcm-arrange.js';
 import type { LeadColorSlot, PcmPart, PcmPresetRef, PcmVoiceOverride } from '../audio/pcm-arrange.js';
+import type { ComposeOptions } from '../core/music/compose.js';
 import { loadStored, saveStored } from './persist.js';
 import { SfxPlayer } from './sfx-player.js';
 import type { ActiveSoundFont, SoundFontSource } from './soundfont-store.js';
@@ -159,15 +160,16 @@ export function BgmStudio() {
     // 選択フォントが同梱GM以外なら、無いプリセットを同梱GeneralUser GSで補完する
     // (ワークステーション時代の「足りない音は隣のモジュール」のWeb版)。
     const complement = fontSource !== 'bundled';
-    // キャッシュキー要因はフォント・補完・実効音色。実効音色(曲の焼き込み優先、
-    // 無ければグローバル設定)で組むことで、render の音色解決と正確に一致させ、
-    // 焼き込み済みの曲のキャッシュをグローバル設定の変更で無駄に割らない。
+    // 実効音色 = 曲に焼かれた上書き(保存曲の完全再現)が最優先、無い曲はスタジオの
+    // グローバル設定(音色を焼く前の旧保存曲の従来挙動)。idForとrenderの両方が
+    // この唯一の定義を通ることで「キーが同じ⇒波形が同じ」を担保する。
+    const voicesFor = (options: ComposeOptions): PcmVoiceOverride => options.pcmVoices ?? pcmVoices;
+    // キャッシュキー要因はフォント・補完・実効音色。実効音色で組むことで、焼き込み
+    // 済みの曲のキャッシュをグローバル設定の変更で無駄に割らない。
     return {
-      idFor: (options) => `sf2:${activeFont.id}${complement ? '+gu-gs' : ''}:${JSON.stringify(options.pcmVoices ?? pcmVoices)}`,
+      idFor: (options) => `sf2:${activeFont.id}${complement ? '+gu-gs' : ''}:${JSON.stringify(voicesFor(options))}`,
       render: async (piece, options) => {
-        // 曲に焼かれた音色上書き(保存曲の完全再現)が最優先。無い曲はスタジオの
-        // グローバル設定で鳴らす(音色を焼く前の旧保存曲の従来挙動)。
-        const voices = options.pcmVoices ?? pcmVoices;
+        const voices = voicesFor(options);
         const { renderSf2Bgm } = await import('../audio/pcm-arrange.js');
         if (!complement) return renderSf2Bgm(piece, activeFont.font, voices);
         try {
@@ -176,7 +178,8 @@ export function BgmStudio() {
           return renderSf2Bgm(piece, [activeFont.font, bundled.font], voices);
         } catch {
           // 補完フォントが取れない(オフライン等)場合は選択フォント単独で劣化継続。
-          return renderSf2Bgm(piece, activeFont.font, voices);
+          // キー(+gu-gs)が表す構成と波形が一致しないため、キャッシュには残させない。
+          return { ...await renderSf2Bgm(piece, activeFont.font, voices), transient: true };
         }
       },
     };

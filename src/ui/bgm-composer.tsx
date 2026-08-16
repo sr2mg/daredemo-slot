@@ -537,15 +537,18 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   const rendererFor = (opts: ComposeOptions): BgmPcmRenderer | null =>
     opts.soundChip === 'pcm' ? pcmRenderer : null;
 
-  const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
-    const renderer = rendererFor(opts);
-    return renderer ? await renderer.render(p, opts) : arrangeComposedBgm(p, opts);
-  };
-
   /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
   const bgmCacheKey = (opts: ComposeOptions): string => {
     const renderer = rendererFor(opts);
     return renderer ? `${JSON.stringify(opts)}|${renderer.idFor(opts)}` : JSON.stringify(opts);
+  };
+
+  const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
+    const renderer = rendererFor(opts);
+    if (!renderer) return arrangeComposedBgm(p, opts);
+    // 高価なSF2レンダリングはプレイヤーのdefキャッシュ照会を先に行い、ヒット時は丸ごと
+    // 省略する(キーは実効音色で組んであるので、同キー=同波形が保証されている)。
+    return player.getCachedPcmBgm(bgmCacheKey(opts)) ?? await renderer.render(p, opts);
   };
 
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
