@@ -160,18 +160,23 @@ export function BgmStudio() {
     // (ワークステーション時代の「足りない音は隣のモジュール」のWeb版)。
     const complement = fontSource !== 'bundled';
     // 音色上書き・補完の有無は波形を変えるので、キャッシュキー(id)へ必ず含める。
+    // (曲側に音色が焼かれている場合はoptionsのJSONがキーを分けるので、idの
+    // グローバル設定はキャッシュを無駄に分けることはあっても音を間違えない)
     return {
       id: `sf2:${activeFont.id}${complement ? '+gu-gs' : ''}:${JSON.stringify(pcmVoices)}`,
-      render: async (piece) => {
+      render: async (piece, options) => {
+        // 曲に焼かれた音色上書き(保存曲の完全再現)が最優先。無い曲はスタジオの
+        // グローバル設定で鳴らす(音色を焼く前の旧保存曲の従来挙動)。
+        const voices = options.pcmVoices ?? pcmVoices;
         const { renderSf2Bgm } = await import('../audio/pcm-arrange.js');
-        if (!complement) return renderSf2Bgm(piece, activeFont.font, pcmVoices);
+        if (!complement) return renderSf2Bgm(piece, activeFont.font, voices);
         try {
           const store = await import('./soundfont-store.js');
           const bundled = await store.loadSoundFont('bundled');
-          return renderSf2Bgm(piece, [activeFont.font, bundled.font], pcmVoices);
+          return renderSf2Bgm(piece, [activeFont.font, bundled.font], voices);
         } catch {
           // 補完フォントが取れない(オフライン等)場合は選択フォント単独で劣化継続。
-          return renderSf2Bgm(piece, activeFont.font, pcmVoices);
+          return renderSf2Bgm(piece, activeFont.font, voices);
         }
       },
     };
