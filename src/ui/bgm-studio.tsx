@@ -159,11 +159,11 @@ export function BgmStudio() {
     // 選択フォントが同梱GM以外なら、無いプリセットを同梱GeneralUser GSで補完する
     // (ワークステーション時代の「足りない音は隣のモジュール」のWeb版)。
     const complement = fontSource !== 'bundled';
-    // 音色上書き・補完の有無は波形を変えるので、キャッシュキー(id)へ必ず含める。
-    // (曲側に音色が焼かれている場合はoptionsのJSONがキーを分けるので、idの
-    // グローバル設定はキャッシュを無駄に分けることはあっても音を間違えない)
+    // キャッシュキー要因はフォント・補完・実効音色。実効音色(曲の焼き込み優先、
+    // 無ければグローバル設定)で組むことで、render の音色解決と正確に一致させ、
+    // 焼き込み済みの曲のキャッシュをグローバル設定の変更で無駄に割らない。
     return {
-      id: `sf2:${activeFont.id}${complement ? '+gu-gs' : ''}:${JSON.stringify(pcmVoices)}`,
+      idFor: (options) => `sf2:${activeFont.id}${complement ? '+gu-gs' : ''}:${JSON.stringify(options.pcmVoices ?? pcmVoices)}`,
       render: async (piece, options) => {
         // 曲に焼かれた音色上書き(保存曲の完全再現)が最優先。無い曲はスタジオの
         // グローバル設定で鳴らす(音色を焼く前の旧保存曲の従来挙動)。

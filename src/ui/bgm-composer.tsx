@@ -545,7 +545,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
   const bgmCacheKey = (opts: ComposeOptions): string => {
     const renderer = rendererFor(opts);
-    return renderer ? `${JSON.stringify(opts)}|${renderer.id}` : JSON.stringify(opts);
+    return renderer ? `${JSON.stringify(opts)}|${renderer.idFor(opts)}` : JSON.stringify(opts);
   };
 
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
