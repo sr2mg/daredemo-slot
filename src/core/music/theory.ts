@@ -7,6 +7,7 @@
  *   ドミナント等のキー外の音も「正解」にするため。III7 の G# など）
  */
 
+import type { BassLinePolicy } from './bassline.js';
 import type { DuetPolicy } from './duet.js';
 import type { GlidePolicy } from './glide.js';
 
@@ -552,6 +553,8 @@ export interface StyleDef {
   duet?: DuetPolicy;
   /** スタイル既定のスライド(ポルタメント)指示(glide.ts)。省略はoff。 */
   glide?: GlidePolicy;
+  /** スタイル既定のベースライン生成(bassline.ts、分数コード)。省略はoff。 */
+  bassLine?: BassLinePolicy;
 }
 
 export const STYLES: StyleDef[] = [

@@ -747,14 +747,17 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (chord.pcs.includes(note.midi % 12)) continue;
     // 曲全体で低音主導を選んだ場合のペダル低音（主音とその5度）は、意図した保続音であり経過音ではない。
     if (pedalPcs.includes(note.midi % 12)) continue;
+    // 分数コード(bassDegrees→bassPc)のベースは意図した転回・半音経過であり、経過音違反ではない。
+    if (chord.bassPc !== undefined && note.midi % 12 === chord.bassPc) continue;
     const inBar = note.beat % 1;
     const next = piece.bass[index + 1] ?? piece.bass.find((candidate) => candidate.beat >= bodyStart);
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : bodyStart;
     const nextChord = chordAt(nextChordBeat);
-    const nextRootPc = (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
+    // 解決先は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
+    const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
     // ピックアップの正位置は「8分裏をグルーヴ格子へ写した位置」(スウィング軸に追随)。
     const pickupPosition = grooveBeat(0.5, piece.grooveFeel);
-    if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextRootPc) {
+    if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextAnchorPc) {
       add('harmony', 'warning', note.beat, note.midi, 'ベースの経過音が弱拍から次コードの根音へ解決していない');
     }
   }

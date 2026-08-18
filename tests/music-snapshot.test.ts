@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compose, variedChoiceFor } from '../src/core/music/compose.js';
+import { CURRENT_ENGINE_REV, compose, variedChoiceFor } from '../src/core/music/compose.js';
 import type { ComposeOptions } from '../src/core/music/compose.js';
 import { digestPiece } from '../src/core/music/piece-diff.js';
 import { PROGRESSIONS } from '../src/core/music/theory.js';
@@ -49,6 +49,22 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
     name: '韓国MMO風16小節 / vi軌道 / lush+rich',
     options: {
       progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+    },
+  },
+  {
+    // rev1: ベースアンカーの最短連結(rev0ケースとの差はベース声部だけ)。
+    name: 'ゲームBGM風16小節 / engineRev現行',
+    options: {
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      seed: 11, engineRev: CURRENT_ENGINE_REV,
+    },
+  },
+  {
+    // ベースライン装置(bassDegrees→bassPc→転回・半音経過ベース)。
+    name: 'ゲームBGM風16小節 / ベースライン装置on',
+    options: {
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      seed: 11, engineRev: CURRENT_ENGINE_REV, bassLine: 'on',
     },
   },
   ...(['current', 'memoryArc', 'premiseArc'] as const).map((strategy) => ({
