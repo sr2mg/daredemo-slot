@@ -511,24 +511,44 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
         : {}),
       ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
       ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
+      // PCM音色上書きも曲へ焼く(voicesと同じ理由: ComposeOptionsだけで音が完全再現
+      // できる保存単位にする)。上書きが無ければ入れず、既存保存曲とキーを共有する。
+      ...(soundChip === 'pcm' && pcmVoices && Object.keys(pcmVoices).length > 0
+        ? { pcmVoices }
+        : {}),
       ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
       ...(compositionStrategy ? { compositionStrategy } : {}),
     };
+  };
+
+  /**
+   * 編集中の曲の再生し直し(同じメロディで再生・局所修正・Undo)へ、現在のPCM音色
+   * 設定を焼き直す。音色ピッカーは「変更→再生→聴き比べ」の試聴ループの道具なので、
+   * 焼き込み済みの古い値を優先すると一度再生した曲の音色が変更不能になる。
+   * 保存曲・プリセットの再生はこれを通さず、焼かれた音色のまま忠実再現する。
+   */
+  const withCurrentPcmVoices = (opts: ComposeOptions): ComposeOptions => {
+    if (opts.soundChip !== 'pcm') return opts;
+    const { pcmVoices: _stale, ...rest } = opts;
+    return pcmVoices && Object.keys(pcmVoices).length > 0 ? { ...rest, pcmVoices } : rest;
   };
 
   /** その曲の再生に使うレンダラ。曲側の音源設定がpcmのときだけPCMレンダラを使う。 */
   const rendererFor = (opts: ComposeOptions): BgmPcmRenderer | null =>
     opts.soundChip === 'pcm' ? pcmRenderer : null;
 
-  const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
-    const renderer = rendererFor(opts);
-    return renderer ? await renderer.render(p, opts) : arrangeComposedBgm(p, opts);
-  };
-
   /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
   const bgmCacheKey = (opts: ComposeOptions): string => {
     const renderer = rendererFor(opts);
-    return renderer ? `${JSON.stringify(opts)}|${renderer.id}` : JSON.stringify(opts);
+    return renderer ? `${JSON.stringify(opts)}|${renderer.idFor(opts)}` : JSON.stringify(opts);
+  };
+
+  const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
+    const renderer = rendererFor(opts);
+    if (!renderer) return arrangeComposedBgm(p, opts);
+    // 高価なSF2レンダリングはプレイヤーのdefキャッシュ照会を先に行い、ヒット時は丸ごと
+    // 省略する(キーは実効音色で組んであるので、同キー=同波形が保証されている)。
+    return player.getCachedPcmBgm(bgmCacheKey(opts)) ?? await renderer.render(p, opts);
   };
 
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {
@@ -610,7 +630,8 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       const p = compose(lastOpts);
       const { pieceToSmf } = await import('../audio/midi-export.js');
       // 音色上書きはPCMの試聴にだけ効いている設定なので、pcm曲のときだけ反映する。
-      const data = pieceToSmf(p, lastOpts.soundChip === 'pcm' ? pcmVoices ?? {} : {});
+      // 曲に焼かれた音色(保存曲の再現)が最優先、無ければスタジオのグローバル設定。
+      const data = pieceToSmf(p, lastOpts.soundChip === 'pcm' ? lastOpts.pcmVoices ?? pcmVoices ?? {} : {});
       const url = URL.createObjectURL(new Blob([data.buffer as ArrayBuffer], { type: 'audio/midi' }));
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -765,14 +786,14 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       melodyEdits: [...(lastOpts.melodyEdits ?? []), repair.edit],
     };
     setRepairHistory((history) => [...history, lastOpts]);
-    void playOptions(nextOptions, true);
+    void playOptions(withCurrentPcmVoices(nextOptions), true);
   };
 
   const undoRepair = () => {
     const previous = repairHistory.at(-1);
     if (!previous) return;
     setRepairHistory((history) => history.slice(0, -1));
-    void playOptions(previous, true);
+    void playOptions(withCurrentPcmVoices(previous), true);
   };
 
   const deleteSong = (id: string) => {
@@ -1318,7 +1339,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             🎹 コード変化して再生
           </button>
           <button
-            onClick={() => lastOpts && void playOptions(lastOpts, true)}
+            onClick={() => lastOpts && void playOptions(withCurrentPcmVoices(lastOpts), true)}
             disabled={!lastOpts || progress !== null}
             data-testid="st-replay"
           >

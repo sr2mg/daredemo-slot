@@ -14,10 +14,13 @@ export const isPcmBgm = (def: ComposedBgmDef): def is PcmBgmDef =>
 
 /**
  * チップ音源の代わりに使う外部レンダラ(作曲スタジオのPCM/SoundFont等)。
- * idはレンダリングキャッシュのキーへ混ぜるので、音が変わる要因(フォント差替え)を必ず含める。
+ * idForはレンダリングキャッシュのキーへ混ぜるので、その曲の波形を変えるレンダラ側の
+ * 要因(フォント差替え・実効音色)を必ず含める。曲別(options)に受けるのは、グローバル
+ * 音色設定が「焼き込みの無い曲」にだけ効くため — 実効値で組むことで、音色を焼き込み
+ * 済みの曲のキャッシュをグローバル設定の変更で無駄に割らない。
  */
 export interface BgmPcmRenderer {
-  id: string;
+  idFor(options: ComposeOptions): string;
   render(piece: Piece, options: ComposeOptions): Promise<ComposedBgmDef>;
 }
 

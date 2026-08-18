@@ -13,4 +13,9 @@ export interface PcmBgmDef {
   /** 初回は0秒から再生し、2周目以降はこの区間だけをループする。 */
   loopStart: number;
   loopEnd: number;
+  /**
+   * キャッシュ禁止の印。レンダラが意図した構成で鳴らせず劣化した場合(補完フォントの
+   * 取得失敗等)に立て、キャッシュキーが表す構成と波形の不一致を残さない。
+   */
+  transient?: boolean;
 }

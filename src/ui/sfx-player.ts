@@ -1,6 +1,6 @@
 import type { SfxDesign } from '../core/music/sfx-design.js';
 import { isPcmBgm } from './bgm-audio.js';
-import type { ComposedBgmDef } from './bgm-audio.js';
+import type { ComposedBgmDef, PcmBgmDef } from './bgm-audio.js';
 import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
 import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from './opll-core.js';
 import { arrangeSfx } from './sfx-arrange.js';
@@ -44,6 +44,12 @@ export class SfxPlayer {
   private opll = 0;
   /** 自作 BGM（OPLL レンダリング済み波形）のキャッシュ。キーは ComposeOptions の JSON */
   private customBgm = new Map<string, Float32Array>();
+  /**
+   * PCM(SoundFont)のレンダリング済みdef。波形キャッシュと同じキー・同じ上限で管理し、
+   * 再生前の照会(getCachedPcmBgm)で高価なSF2レンダリング自体を省略させる。
+   * 右チャンネルぶん保持は増えるが、SoundFontを積む作曲スタジオ限定なので許容する。
+   */
+  private pcmDefs = new Map<string, PcmBgmDef>();
   /** BGM の世代。stopBgm で進み、レンダリング待ちの再生を無効化する */
   private bgmGen = 0;
   /** BGM 音量 0..1（0.5 = 従来の内蔵 BGM 音量）。localStorage への永続化は呼び出し側 */
@@ -233,11 +239,15 @@ export class SfxPlayer {
     const cached = this.customBgm.get(key);
     if (cached) return Promise.resolve(cached);
     if (isPcmBgm(def)) {
-      this.customBgm.set(key, def.wave);
-      onProgress?.(1);
-      while (this.customBgm.size > CUSTOM_BGM_CACHE_MAX) {
-        this.customBgm.delete(this.customBgm.keys().next().value!);
+      if (def.transient) {
+        // 劣化レンダリング(キーが表す構成と波形が不一致)はキャッシュへ残さない。
+        onProgress?.(1);
+        return Promise.resolve(def.wave);
       }
+      this.customBgm.set(key, def.wave);
+      this.pcmDefs.set(key, def);
+      onProgress?.(1);
+      this.evictCustomBgm();
       return Promise.resolve(def.wave);
     }
     return this.enqueueRender(async () => {
@@ -247,11 +257,26 @@ export class SfxPlayer {
       if (!this.exports) throw new Error('OPLL 未初期化');
       const wave = await renderSequenceAsync(this.exports, this.opll, def, onProgress);
       this.customBgm.set(key, wave);
-      while (this.customBgm.size > CUSTOM_BGM_CACHE_MAX) {
-        this.customBgm.delete(this.customBgm.keys().next().value!);
-      }
+      this.evictCustomBgm();
       return wave;
     }, true);
+  }
+
+  private evictCustomBgm(): void {
+    while (this.customBgm.size > CUSTOM_BGM_CACHE_MAX) {
+      const oldest = this.customBgm.keys().next().value!;
+      this.customBgm.delete(oldest);
+      this.pcmDefs.delete(oldest);
+    }
+  }
+
+  /**
+   * レンダリング済みPCM defのキャッシュ照会。再生・書き出しの前にこれを引き、
+   * ヒットすればSF2レンダリング(BgmPcmRenderer.render)を丸ごと省略できる。
+   * キーの規約は ensureComposedBgm と同じ(呼び出し側のbgmCacheKey)。
+   */
+  getCachedPcmBgm(key: string): PcmBgmDef | null {
+    return this.pcmDefs.get(key) ?? null;
   }
 
   /**

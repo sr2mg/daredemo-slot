@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import type { ComposeOptions } from '../src/core/music/compose.js';
+import type { ComposeOptions, PcmPart } from '../src/core/music/compose.js';
 import { capabilitiesFor, SOUND_CAPABILITIES } from '../src/core/music/sound-capabilities.js';
+import type { StageRole } from '../src/audio/stage.js';
 
 /**
  * 能力プロファイル(sound-capabilities)とIR表現層(ハモリ・スライド)の検証。
  * 原則: 豊かに書いて、能力のないバックエンドでは作曲段階で畳む。
  */
+
+// PcmPart(core: 保存単位のPCM音色語彙)とStageRole(編曲層: 舞台の役割語彙)は同一語彙。
+// 片方にだけ役割を足すとここが型エラーになる(相互代入可能性のコンパイル時検証)。
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+const pcmPartMatchesStageRole: MutuallyAssignable<PcmPart, StageRole> = true;
+void pcmPartMatchesStageRole;
 
 const kmmo: ComposeOptions = {
   progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,

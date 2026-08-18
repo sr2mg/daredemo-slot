@@ -13,13 +13,18 @@
  */
 
 import { arrangementSectionFor } from '../core/music/compose.js';
-import type { Piece } from '../core/music/compose.js';
+import type {
+  LeadColorSlot,
+  PcmPart,
+  PcmPresetRef,
+  PcmVoiceOverride,
+  Piece,
+} from '../core/music/compose.js';
 import { duckWet, onePoleLowpass, pingPongDelay, stereoChorus, stereoReverb } from './effects.js';
 import type { PcmBgmDef } from './pcm-types.js';
 import { renderSf2Stems } from './sf2.js';
 import type { Sf2FontStack, Sf2Note } from './sf2.js';
 import { panGains, ROLE_STAGE, roomFor } from './stage.js';
-import type { StageRole } from './stage.js';
 import {
   AUDIO_STAGE_DELAY_BEATS,
   noteStageEchoFor,
@@ -29,22 +34,12 @@ import {
 
 export const SF2_SAMPLE_RATE = 44100;
 
-/** PCMのパート語彙はミックスの役割語彙(stage.ts)そのもの。 */
-export type PcmPart = StageRole;
-export interface PcmPresetRef {
-  bank: number;
-  program: number;
-}
-/** 主旋律の受け渡し色(arrangement.tsのleadColor)。0=看板(hook) 1=展開(development) 2=緩急(relief)。 */
-export type LeadColorSlot = 0 | 1 | 2;
 /**
- * パート別の音色上書き。未指定パートはスタイル既定のGMプログラム。
- * 主旋律はleadColorVoicesで受け渡し色ごとに上書きできる(A=ピアノ、B=ギター等)。
- * 優先順: leadColorVoices[色] > lead(全区間固定) > スタイル既定パレット。
+ * PCM音色の型は曲の保存単位(ComposeOptions.pcmVoices)と共有するため core(compose.ts)が
+ * 持つ。パート語彙(PcmPart)はミックスの役割語彙(stage.ts の StageRole)と同一で、
+ * 一致はテスト(sound-backends)が型レベルで検証する。
  */
-export interface PcmVoiceOverride extends Partial<Record<PcmPart, PcmPresetRef>> {
-  leadColorVoices?: Partial<Record<LeadColorSlot, PcmPresetRef>>;
-}
+export type { LeadColorSlot, PcmPart, PcmPresetRef, PcmVoiceOverride } from '../core/music/compose.js';
 
 export const PCM_PART_LABELS: Record<PcmPart, string> = {
   lead: '主旋律',
