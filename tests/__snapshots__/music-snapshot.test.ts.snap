@@ -1,5 +1,54 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`作曲エンジンの音イベントは意図なく変わらない > 2ステップ16小節 / シャッフル16分 1`] = `
+{
+  "beats": 72,
+  "bpm": 132,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "dbb547ff",
+        "chords": "053633b5",
+        "counter": "811c9dc5",
+        "drums": "811c9dc5",
+        "melody": "51f3e12f",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "bf9bdc49",
+        "chords": "7d71c1ad",
+        "counter": "811c9dc5",
+        "drums": "d059e874",
+        "melody": "77b286df",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "de2ed3d1",
+        "chords": "afeb67ce",
+        "counter": "956b2029",
+        "drums": "922fd531",
+        "melody": "5b966cd5",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+  ],
+}
+`;
+
 exports[`作曲エンジンの音イベントは意図なく変わらない > BB風8小節 / 短調 / rock 1`] = `
 {
   "beats": 32,
@@ -497,6 +546,55 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
         "counter": "811c9dc5",
         "drums": "30e5c5f9",
         "melody": "0de5e123",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > ドラムンベース16小節 / 2小節ブレイク骨格 1`] = `
+{
+  "beats": 72,
+  "bpm": 174,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "edaa127b",
+        "chords": "b93e7a62",
+        "counter": "811c9dc5",
+        "drums": "811c9dc5",
+        "melody": "e57592a2",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "8c16c8f5",
+        "chords": "0cfae0f9",
+        "counter": "811c9dc5",
+        "drums": "b3eba3f7",
+        "melody": "f92b3c75",
+        "ostinato": "811c9dc5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "2429df74",
+        "chords": "63a3562d",
+        "counter": "e0bf6813",
+        "drums": "0f8d676e",
+        "melody": "95f04764",
         "ostinato": "811c9dc5",
       },
       "section": "B",

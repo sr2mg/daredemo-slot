@@ -67,6 +67,22 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
       seed: 11, engineRev: CURRENT_ENGINE_REV, bassLine: 'on',
     },
   },
+  {
+    // ブレイクビーツ基盤その1: シャッフル16分+ゴースト+2小節キック変化。
+    name: '2ステップ16小節 / シャッフル16分',
+    options: {
+      progressionId: 'royal-pop', styleId: 'garage2step', keyRoot: 7, bpm: 132, bars: 16,
+      grooveFeel: 'shuffle16', seed: 21,
+    },
+  },
+  {
+    // ブレイクビーツ基盤その2: 32ステップのゴースト交替+疾走テンポ。
+    name: 'ドラムンベース16小節 / 2小節ブレイク骨格',
+    options: {
+      progressionId: 'minor-pedal', styleId: 'dnb', keyRoot: 9, bpm: 174, bars: 16,
+      tonality: 'minor', seed: 5, choice: variedChoiceFor(minorPedal, 16, 5),
+    },
+  },
   ...(['current', 'memoryArc', 'premiseArc'] as const).map((strategy) => ({
     name: `BIG風40小節 / ${strategy}`,
     options: {

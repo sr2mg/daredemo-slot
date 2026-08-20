@@ -95,6 +95,9 @@ export const STYLE_ROOMS: Record<string, RoomModel> = {
   rock: room(0.9),
   eurobeat: room(1.4),
   ska: room(1.1),
+  // クラブ系はドラムの輪郭を立てたいので短め。DnBはパッドを泳がせる分だけ広く。
+  garage2step: room(1.0),
+  dnb: room(1.6),
 };
 
 export function roomFor(styleId: string): RoomModel {

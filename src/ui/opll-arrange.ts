@@ -78,6 +78,14 @@ const STYLE_VOICES: Record<string, StyleVoices> = {
     lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'half',
     leadPalette: [4, 1, 3],
   },
+  // クラブ系2種: リードはシンセ10、ベースはシンセベース13。ガラージはスタブ裏打ち、
+  // DnBはパッド持続でドラムとの速度対比を出す。
+  garage2step: {
+    lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'offbeat',
+  },
+  dnb: {
+    lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half',
+  },
 };
 const DEFAULT_VOICES: StyleVoices = STYLE_VOICES['eurobeat']!;
 

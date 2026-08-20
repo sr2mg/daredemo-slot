@@ -16,7 +16,7 @@ import type { Rng } from '../rng.js';
 import {
   CHORDS, COUNTER_HI, COUNTER_LO, MAJOR_PENTATONIC_SCALE, MAJOR_SCALE, MELODY_HI, MELODY_LO,
   MINOR_PENTATONIC_SCALE, NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
-  chordScalePcs, harmonicFunctionForToken, progressionForTonality,
+  chordScalePcs, drumPatternStep, harmonicFunctionForToken, progressionForTonality,
 } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import type { HarmonicFunction, StyleDef } from './theory.js';
@@ -1448,20 +1448,23 @@ function realizeIntro(
   const drums: DrumEvent[] = [];
   for (const barPlan of plan.barPlans) {
     const start = barPlan.bar * 4;
-    const addDrum = (beat: number, inst: DrumEvent['inst']) => {
-      if (beat < endBeat) drums.push({ beat, inst });
+    const addDrum = (beat: number, inst: DrumEvent['inst'], level = 1) => {
+      if (beat >= endBeat || level <= 0) return;
+      drums.push(level < 1 ? { beat, inst, velocity: level } : { beat, inst });
     };
     const hatOverlay = grooveFor(grooveFeel).subdivisionOverlay;
     if (barPlan.drumGesture === 'groove') {
       for (let step = 0; step < 16; step++) {
         const beat = grooveBeat(start + step * 0.25, grooveFeel);
-        if (style.kick[step]) addDrum(beat, 'kick');
-        if (style.snare[step]) addDrum(beat, 'snare');
-        if (hatOverlay === 'none' && style.hat[step]) addDrum(beat, 'hat');
+        addDrum(beat, 'kick', drumPatternStep(style.kick, barPlan.bar, step));
+        addDrum(beat, 'snare', drumPatternStep(style.snare, barPlan.bar, step));
+        if (hatOverlay === 'none') addDrum(beat, 'hat', drumPatternStep(style.hat, barPlan.bar, step));
       }
       if (hatOverlay === 'triplet') {
+        const hatWindowStart = (barPlan.bar * 16) % style.hat.length;
+        const hatWindow = style.hat.slice(hatWindowStart, hatWindowStart + 16);
         for (let quarter = 0; quarter < 4; quarter++) {
-          for (const offset of tripletHatOffsets(style.hat, quarter)) addDrum(start + quarter + offset, 'hat');
+          for (const offset of tripletHatOffsets(hatWindow, quarter)) addDrum(start + quarter + offset, 'hat');
         }
       }
     } else if (barPlan.drumGesture === 'accents') {
@@ -2491,6 +2494,12 @@ export function compose(opts: ComposeOptions): Piece {
   // --- ドラム（16 分グリッドを小節数ぶん敷く） ---
   const drums: DrumEvent[] = [];
   const hatOverlay = grooveFor(grooveFeel).subdivisionOverlay;
+  // スタイル譜の強度(0..1)を発音へ写す。中間値はゴースト=ベロシティとして持たせる
+  // (強度1は従来と同じ形のイベントになり、既存スタイルの音は1ビットも変わらない)。
+  const pushDrum = (beat: number, inst: DrumEvent['inst'], level: number): void => {
+    if (level <= 0) return;
+    drums.push(level < 1 ? { beat, inst, velocity: level } : { beat, inst });
+  };
   for (let bar = 0; bar < opts.bars; bar++) {
     const barPlan = phrasePlan.bars[bar]!;
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
@@ -2505,13 +2514,13 @@ export function compose(opts: ComposeOptions): Piece {
       const beat = grooveBeat(bar * 4 + s * 0.25, grooveFeel);
       if (hasFill && s >= 12) {
         if (sectionPlan.exitFill === 'full') {
-          if (s === 12 && style.kick[s]) drums.push({ beat, inst: 'kick' });
+          if (s === 12 && drumPatternStep(style.kick, bar, s)) drums.push({ beat, inst: 'kick' });
           if (s === 12) drums.push({ beat, inst: 'snare' });
           if (s === 14) drums.push({ beat, inst: 'tom' });
           if (s === 15) drums.push({ beat, inst: 'cymbal' });
           if (hatOverlay === 'none' && s === 13) drums.push({ beat, inst: 'hat' });
         } else {
-          if (s === 12 && style.kick[s]) drums.push({ beat, inst: 'kick' });
+          if (s === 12 && drumPatternStep(style.kick, bar, s)) drums.push({ beat, inst: 'kick' });
           if (s === 14) drums.push({ beat, inst: 'snare' });
           if (hatOverlay === 'none' && (s === 13 || s === 15)) drums.push({ beat, inst: 'hat' });
         }
@@ -2527,21 +2536,23 @@ export function compose(opts: ComposeOptions): Piece {
         }
         continue;
       }
-      if (pattern.kick[s]) drums.push({ beat, inst: 'kick' });
-      if (pattern.snare[s]) drums.push({ beat, inst: 'snare' });
-      if (hatOverlay === 'none' && pattern.hat[s]) drums.push({ beat, inst: 'hat' });
+      pushDrum(beat, 'kick', drumPatternStep(pattern.kick, bar, s));
+      pushDrum(beat, 'snare', drumPatternStep(pattern.snare, bar, s));
+      if (hatOverlay === 'none') pushDrum(beat, 'hat', drumPatternStep(pattern.hat, bar, s));
     }
     if (hatOverlay === 'triplet') {
-      // 三連を常時ロールとして足さず、元のスタイル譜を三連位置へ写す。
+      // 三連を常時ロールとして足さず、元のスタイル譜(この小節の16ステップ窓)を三連位置へ写す。
       // A→Bフィルとループ直前は最終拍のハットを休ませ、スネアと余白を立てる。
       const quarters = barPlan.cadence === 'turnaround'
         || hasFill
         ? 3
         : 4;
+      const hatWindowStart = (bar * 16) % pattern.hat.length;
+      const hatWindow = pattern.hat.slice(hatWindowStart, hatWindowStart + 16);
       for (let quarter = 0; quarter < quarters; quarter++) {
         const offsets = sectionPlan.drum === 'breakdown'
           ? [2 / 3]
-          : tripletHatOffsets(pattern.hat, quarter);
+          : tripletHatOffsets(hatWindow, quarter);
         for (const offset of offsets) drums.push({ beat: bar * 4 + quarter + offset, inst: 'hat' });
       }
     }
