@@ -103,6 +103,7 @@ import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
 import { OPLL_RATE, OPLL_VOICES } from './opll-core.js';
 import { loadStored, saveStored } from './persist.js';
+import { PROGRESSION_USAGE } from './progression-usage.js';
 import type { SfxPlayer } from './sfx-player.js';
 
 /**
@@ -1249,7 +1250,8 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
           <select value={prog.id} onChange={(e) => selectProg(e.target.value)} data-testid="st-prog">
             {progs.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} — {p.feel} / {p.usage}
+                {p.name} — {p.feel}
+                {PROGRESSION_USAGE[p.id] ? ` / ${PROGRESSION_USAGE[p.id]}` : ''}
               </option>
             ))}
           </select>
