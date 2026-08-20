@@ -310,6 +310,104 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > RB
 }
 `;
 
+exports[`作曲エンジンの音イベントは意図なく変わらない > ゲームBGM風16小節 / engineRev現行 1`] = `
+{
+  "beats": 72,
+  "bpm": 170,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "2e3e7aea",
+        "chords": "af0e1465",
+        "counter": "811c9dc5",
+        "drums": "811c9dc5",
+        "melody": "9f2385bf",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "e23daf3a",
+        "chords": "42588934",
+        "counter": "811c9dc5",
+        "drums": "762ed3bf",
+        "melody": "1c344d84",
+        "ostinato": "44fc2fd5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "c91ff5f7",
+        "chords": "4cc977c2",
+        "counter": "811c9dc5",
+        "drums": "30e5c5f9",
+        "melody": "0de5e123",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+  ],
+}
+`;
+
+exports[`作曲エンジンの音イベントは意図なく変わらない > ゲームBGM風16小節 / ベースライン装置on 1`] = `
+{
+  "beats": 72,
+  "bpm": 170,
+  "loopStartBeat": 8,
+  "sections": [
+    {
+      "endBeat": 8,
+      "parts": {
+        "bass": "2e3e7aea",
+        "chords": "af0e1465",
+        "counter": "811c9dc5",
+        "drums": "811c9dc5",
+        "melody": "9f2385bf",
+        "ostinato": "811c9dc5",
+      },
+      "section": "intro",
+      "startBeat": 0,
+    },
+    {
+      "endBeat": 40,
+      "parts": {
+        "bass": "005a3f03",
+        "chords": "42588934",
+        "counter": "811c9dc5",
+        "drums": "762ed3bf",
+        "melody": "1c344d84",
+        "ostinato": "44fc2fd5",
+      },
+      "section": "A",
+      "startBeat": 8,
+    },
+    {
+      "endBeat": 72,
+      "parts": {
+        "bass": "0ce8954b",
+        "chords": "4cc977c2",
+        "counter": "811c9dc5",
+        "drums": "30e5c5f9",
+        "melody": "0de5e123",
+        "ostinato": "811c9dc5",
+      },
+      "section": "B",
+      "startBeat": 40,
+    },
+  ],
+}
+`;
+
 exports[`作曲エンジンの音イベントは意図なく変わらない > ゲームBGM風16小節 / 和風五音 / バウンス 1`] = `
 {
   "beats": 72,

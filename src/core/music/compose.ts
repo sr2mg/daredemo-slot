@@ -33,6 +33,7 @@ import type { TensionPolicy } from './tension.js';
 import { capabilitiesFor } from './sound-capabilities.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 import { applyDiminution } from './diminution.js';
+import type { BassLinePolicy } from './bassline.js';
 import type { DiminutionPolicy } from './diminution.js';
 import { applyDrumArticulation } from './drum-articulation.js';
 import { duetLayerFor } from './duet.js';
@@ -260,6 +261,12 @@ export interface ComposeOptions {
    */
   duet?: 'auto' | DuetPolicy;
   /**
+   * ベースライン生成(bassline.ts)。'on' は和声計画へ分数コード(bassDegrees)を書き、
+   * ベース声部を転回・半音経過込みの順次ラインにする。省略/autoはスタイル既定。
+   * 和風五音は揺り・間の体系と衝突するため常にoff(他デバイスと同じ家内規約)。
+   */
+  bassLine?: 'auto' | BassLinePolicy;
+  /**
    * スライド(ポルタメント)指示の付与(glide.ts)。表現できるバックエンド(glide)のみ。
    * 省略/autoはスタイル既定。和風五音は常にoff(揺り・間の体系と衝突)。
    */
@@ -310,12 +317,14 @@ export interface ComposeOptions {
 }
 
 /**
- * 現行エンジンのリビジョン。最初に音を変える生成器変更を入れるときに 1 へ上げ、
- * compose() 内の該当分岐を `engineRevOf(opts) >= 1` でゲートする(以後も同様に+1)。
+ * 現行エンジンのリビジョン。音を変える生成器変更を入れるたびに +1 し、compose() 内の
+ * 該当分岐を `engineRevOf(opts) >= N` でゲートする。
  * リビジョン間の挙動差は必ず分岐箇所のコメントで「何がどう変わるか」を残すこと。
- * 0 の間は UI も保存 JSON へ engineRev を入れない(キャッシュキー同一性の維持)。
+ *
+ * - rev1: ベースのアンカー音を「ルートpcの固定写像(E2..D#3帯、pc上隣接するE→D#が
+ *   11半音跳ぶ不連続)」から「直前アンカーへの最短連結」へ変更(ベース生成部を参照)。
  */
-export const CURRENT_ENGINE_REV = 0;
+export const CURRENT_ENGINE_REV = 1;
 
 /**
  * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。
@@ -1543,6 +1552,9 @@ export function compose(opts: ComposeOptions): Piece {
   const glidePolicy = backendCaps.glide
     ? resolveDevicePolicy<GlidePolicy>(opts.glide, style.glide)
     : 'off';
+  // ベースラインは全バックエンドで鳴る声部なので能力ゲートは要らない。
+  const bassLinePolicy = resolveDevicePolicy<BassLinePolicy>(opts.bassLine, style.bassLine);
+  const engineRev = engineRevOf(opts);
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
     : defaultChoiceFor(prog, opts.bars));
@@ -1557,6 +1569,7 @@ export function compose(opts: ComposeOptions): Piece {
     style,
     choice,
     intro: opts.intro !== false,
+    bassLine: bassLinePolicy,
     ...(opts.compositionStrategy ? { compositionStrategy: opts.compositionStrategy } : {}),
   });
   const arrangementPlan = arrangementPlanFor(
@@ -2242,19 +2255,28 @@ export function compose(opts: ComposeOptions): Piece {
 
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
   const bass: NoteEvent[] = [];
+  // rev1: アンカーを直前アンカーへの最短連結で選ぶ(固定写像はE/D#間で11半音跳ぶ)。
+  // 分数コードのライン(bassLine)は連結が前提なので、装置onならrevに関わらず連結する。
+  const linkedAnchors = engineRev >= 1 || bassLinePolicy === 'on';
+  let previousAnchor: number | null = null;
   for (const c of chords) {
     // ペダル低音は進行名だけで常設せず、曲全体で低音主導を選んだ場合にだけ使う。
+    // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
     const chordRootPc = (CHORDS[c.token]!.root + keyRoot) % 12;
-    const rootPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : chordRootPc;
-    const root = opts.bars === 40
-      ? nearestWithPc(40, [rootPc], 36, 47) // BIGはC2前後まで下げ、低音の土台を明確にする。
-      : 40 + ((rootPc - 4 + 12) % 12); // 通常フォームは従来のE2..D#3帯。
+    const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : (c.bassPc ?? chordRootPc);
+    const root: number = opts.bars === 40
+      ? nearestWithPc(40, [anchorPc], 36, 47) // BIGはC2前後まで下げ、低音の土台を明確にする。
+      : linkedAnchors
+        ? nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50) // D#2..D3窓で直前へ最短連結。
+        : 40 + ((anchorPc - 4 + 12) % 12); // rev0の通常フォーム: 従来のE2..D#3帯固定写像。
+    previousAnchor = root;
     if (style.bass === 'rootFifth') {
       // 五度は和音の品質に追従する（dimは減5度、augは増5度）。機械的な+7で和声外に落とさない。
+      // アンカーが転回音でも「アンカーの5度圏上にあるコードトーン」を探す同じ規則で拾う。
       const fifthPc = ([7, 6, 8] as const)
-        .map((interval) => (rootPc + interval) % 12)
+        .map((interval) => (anchorPc + interval) % 12)
         .find((pc) => c.pcs.includes(pc));
-      const fifthOffset = fifthPc === undefined ? 7 : (fifthPc - rootPc + 12) % 12;
+      const fifthOffset = fifthPc === undefined ? 7 : (fifthPc - anchorPc + 12) % 12;
       for (let b = 0; b < c.dur; b++) {
         bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
       }
@@ -2280,24 +2302,25 @@ export function compose(opts: ComposeOptions): Piece {
     const endChord = chordAt((bar + 1) * 4 - 0.001);
     const endRootPc = (CHORDS[endChord.token]!.root + keyRoot) % 12;
     const nextChord = bar + 1 < opts.bars ? chordAt((bar + 1) * 4) : chordAt(0);
-    const nextRootPc = (CHORDS[nextChord.token]!.root + keyRoot) % 12;
+    // 接近の目標は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
+    const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + keyRoot) % 12;
     if (barPlan.cadence === 'closed') {
       last.midi = nearestWithPc(last.midi, [endRootPc], 36, 64);
     } else if (barPlan.cadence === 'open') {
       last.midi = nearestWithPc(last.midi, [(endRootPc + 7) % 12], 36, 64);
     } else if (barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') {
       if (melodicLanguage !== 'japanese' && style.bassCadence === 'chromatic') {
-        const approachPc = (nextRootPc + (phraseGesture[15]!.direction === 1 ? 11 : 1)) % 12;
+        const approachPc = (nextAnchorPc + (phraseGesture[15]!.direction === 1 ? 11 : 1)) % 12;
         last.midi = nearestWithPc(last.midi, [approachPc], 36, 64);
       } else if (melodicLanguage !== 'japanese' && style.bassCadence === 'chordTone') {
-        const nextRootMidi = nearestWithPc(last.midi, [nextRootPc], 36, 64);
-        last.midi = nearestWithPc(nextRootMidi, endChord.pcs, 36, 64);
+        const nextAnchorMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
+        last.midi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
       } else {
         const dir = phraseGesture[15]!.direction;
         let distance = 1;
-        let approachPc = nextRootPc;
-        while (distance < 12 && approachPc === nextRootPc) {
-          const candidate = (nextRootPc - dir * distance + 120) % 12;
+        let approachPc = nextAnchorPc;
+        while (distance < 12 && approachPc === nextAnchorPc) {
+          const candidate = (nextAnchorPc - dir * distance + 120) % 12;
           if (scaleAt(endChord).includes(candidate)) approachPc = candidate;
           distance++;
         }
@@ -2311,6 +2334,35 @@ export function compose(opts: ComposeOptions): Piece {
         };
         if (last.beat < pickup.beat) bass.push(pickup);
         else last.midi = pickup.midi;
+      }
+    } else if (bassLinePolicy === 'on' && barPlan.cadence === null) {
+      // 小節内順次進行(装置on時): 終止小節以外でも、次のアンカーへ3半音以上跳ぶなら
+      // 8分裏へ音階上の接近音を1つ挟み、ラインの前進を終止部の外へも広げる。
+      // 接近音の選び方はdiatonicPickupと同じ「目標から進行方向の逆へ音階を辿る」規則。
+      const nextMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
+      const gap = nextMidi - last.midi;
+      if (Math.abs(gap) >= 3) {
+        const dir = gap > 0 ? 1 : -1;
+        let approachPc = nextAnchorPc;
+        let distance = 1;
+        while (distance <= 2 && approachPc === nextAnchorPc) {
+          const candidate = (nextAnchorPc - dir * distance + 24) % 12;
+          if (scaleAt(endChord).includes(candidate)) approachPc = candidate;
+          distance++;
+        }
+        if (approachPc !== nextAnchorPc) {
+          const pickup: NoteEvent = {
+            beat: grooveBeat(bar * 4 + 3.5, grooveFeel),
+            dur: 0.35,
+            midi: nearestWithPc(nextMidi - dir, [approachPc], 36, 64),
+            velocity: Math.max(0.4, barPlan.dynamic - 0.1),
+            articulation: 'staccato',
+            role: 'structural',
+          };
+          // 8分刻みのスタイルは裏拍が既にあるので、増やさず最後の8分を接近音へ差し替える。
+          if (last.beat < pickup.beat) bass.push(pickup);
+          else last.midi = pickup.midi;
+        }
       }
     }
   }

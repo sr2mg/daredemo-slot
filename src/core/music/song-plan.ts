@@ -9,6 +9,8 @@ import type {
   PhraseSection,
   Tonality,
 } from './compose.js';
+import { bassDegreesFor } from './bassline.js';
+import type { BassLinePolicy } from './bassline.js';
 import { hasGrooveDevice } from './groove.js';
 import { resolveCompositionPolicy } from './composition-strategy.js';
 import type {
@@ -462,6 +464,11 @@ export interface CreateSongPlanOptions {
   /** 16/40小節フォームで初回専用イントロを使うか。省略時は有効。 */
   intro?: boolean;
   compositionStrategy?: CompositionStrategy;
+  /**
+   * ベースライン生成器(bassline.ts)のポリシー。'on' は harmony の各小節へ
+   * bassDegrees(分数コード)を書く。composeがスタイル既定とオプションを解決して渡す。
+   */
+  bassLine?: BassLinePolicy;
 }
 
 function uniqueIntroRoles(roles: readonly IntroRole[]): IntroRole[] {
@@ -662,6 +669,14 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       exitFunction,
       cadence: cadenceFor(bar, bars, phraseFunction, exitFunction),
       energy: bar === climaxBar ? 5 : Math.max(1, Math.min(4, section.energy + localEnergy - 1)),
+    });
+  }
+
+  if (options.bassLine === 'on') {
+    // ベースライン生成器はコード列確定後に一括で走らせる(先読みが要る大域最適化のため)。
+    // 乱数は消費しないので、他声部の生成順・シード消費には影響しない。
+    bassDegreesFor(harmony).forEach((bassDegrees, bar) => {
+      if (bassDegrees) harmony[bar] = { ...harmony[bar]!, bassDegrees };
     });
   }
 
