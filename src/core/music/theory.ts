@@ -182,10 +182,15 @@ export type ProgressionRealizationOverride = Pick<ProgressionRealization, 'slots
   & Partial<Pick<ProgressionRealization, 'defaultChoice' | 'variations'>>;
 
 export interface ProgressionDef extends ProgressionRealization {
+  /**
+   * 恒久凍結ID。compose が旋律シードへハッシュ化して混ぜ(音が変わる)、保存曲の
+   * ComposeOptions が参照し、未知IDは throw する。リネーム・削除・再利用は保存曲を
+   * 壊すため禁止。用途ラベル等のクライアント文脈の表示語彙は core に置かず、
+   * このIDをキーにクライアント側(bgm-composer の表引き)が持つ。
+   */
   id: string;
   name: string;
   feel: string;
-  usage: string;
   /** 基準となる調性。和風五音は major カタログを開放五度化して共有する。 */
   tonality: ProgressionTonality;
   /** 同じ進行原理を別の調性で鳴らすための、ローマ数字による実体。 */
@@ -197,7 +202,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'royal-pop',
     name: '王道ポップ',
     feel: '明るく安定',
-    usage: 'RB 向き',
     tonality: 'major',
     // 安定→陰り→助走→帰結という役割を i→VI→iv→V7 へ移す。
     realizations: {
@@ -218,7 +222,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'fanfare',
     name: 'ファンファーレ',
     feel: '祝祭・完結感',
-    usage: '単発ジングル向き（末尾 I で着地）',
     tonality: 'major',
     // 短調でもファンファーレの明確な終止を失わないよう i→iv→V7→i とする。
     realizations: {
@@ -239,7 +242,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'tanaka-manabe',
     name: '田中・真部進行',
     feel: 'アニソン的疾走感・切なさ',
-    usage: 'BB 向き',
     tonality: 'major',
     // C長調の IV→V→vi→I は、相対短調Aでは VI→VII→i→III として同じ引力を保つ。
     realizations: {
@@ -272,7 +274,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'komuro',
     name: '小室進行',
     feel: '疾走感・ドラマチック',
-    usage: 'BPM170 と相性◎',
     tonality: 'major',
     // vi→IV→V→I を短調の i→VI→VII→III として解釈する。
     realizations: {
@@ -293,7 +294,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'canon',
     name: 'カノン風',
     feel: '壮大',
-    usage: 'BB(8小節) 専用',
     tonality: 'major',
     // カノンの下降感と8小節の輪郭を、自然短調＋終端の和声的短音階で保つ。
     realizations: {
@@ -323,7 +323,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'jttou',
     name: 'Just the Two of Us 進行',
     feel: 'シティポップ・浮遊感',
-    usage: 'AT 中/通常時向き',
     tonality: 'major',
     // 相対短調では VImaj7→V7→i7。末尾の借用ii–VはVImaj7へ戻る色彩として残す。
     realizations: {
@@ -344,7 +343,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'minor-pedal',
     name: '短調ペダル・リフ',
     feel: '主音を保ったままリフで押す',
-    usage: '4号機BIG・ゲームボス向き',
     tonality: 'minor',
     slots: [
       [['i']],
@@ -366,7 +364,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'minor-incantation',
     name: '呪文ループ',
     feel: '妖しい浮遊感・半音下行',
-    usage: 'AT前兆・ミステリアス演出向き',
     tonality: 'minor',
     // i7–V7–♭VII–IV7。上声部の最短連結が主音→導音→♭7→♮6の半音下行クリシェを描く。
     // 5度(V7/v7)と4度(IV7/iv7)を選択制にし、和声的短音階⇔自然短音階⇔ドリアンの
@@ -389,7 +386,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'relative-orbit',
     name: 'vi軌道ループ',
     feel: '寂しげだが開ける・00年代ネトゲ',
-    usage: '夜フィールド・ゲームBGM向き',
     tonality: 'major',
     // 平行短調の主和音(vi)から出発し、長調の機能衛星(IV→I→V)を巡回して開ける。
     // 「短調ではなく、長調のviを第二の主音として往復する」のが寂しげ×開放感の正体
@@ -423,7 +419,6 @@ export const PROGRESSIONS: ProgressionDef[] = [
     id: 'minor-drive',
     name: '短調ドライブ',
     feel: '暗い疾走・回帰感',
-    usage: 'BIG・ゲームBGM向き',
     tonality: 'minor',
     slots: [
       [['i']],
