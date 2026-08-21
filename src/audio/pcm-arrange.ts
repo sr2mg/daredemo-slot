@@ -20,6 +20,8 @@ import type {
   PcmVoiceOverride,
   Piece,
 } from '../core/music/compose.js';
+import { applyDrumBusFx } from './bus-fx.js';
+import type { DrumBusFx } from './bus-fx.js';
 import { duckWet, onePoleLowpass, pingPongDelay, stereoChorus, stereoReverb } from './effects.js';
 import type { PcmBgmDef } from './pcm-types.js';
 import { renderSf2Stems } from './sf2.js';
@@ -58,22 +60,55 @@ interface GmProgramMap {
   ostinato: number;
   backing: number;
   bass: number;
+  /** パーカッションバンク(bank128)のキットprogram。省略=0(スタンダードキット)。 */
+  drumKit?: number;
 }
 
-/** スタイル別GMプログラム(0基点)。kmmoのパレットは四千年型の受け渡し(二胡系→笛→弦)。 */
+/**
+ * スタイル別GMプログラム(0基点)。kmmoのパレットは四千年型の受け渡し(二胡系→笛→弦)。
+ * drumKitはGeneralUser GSの実装キット(8=Room/16=Power/24=Electronic/25=808909/26=Dance)
+ * から選ぶ。未指定フォントでもGM/GS準拠なら同系キットへ解決される。
+ */
 const STYLE_PROGRAMS: Record<string, GmProgramMap> = {
   kmmo: { leadPalette: [110, 73, 48], counter: 73, ostinato: 46, backing: 48, bass: 33 },
   eurobeat: { leadPalette: [81, 80], counter: 80, ostinato: 4, backing: 50, bass: 38 },
   rock: { leadPalette: [30, 29], counter: 29, ostinato: 27, backing: 17, bass: 33 },
   ska: { leadPalette: [56, 66], counter: 66, ostinato: 26, backing: 16, bass: 33 },
-  // UKガラージ: ボイスリード+EP/オルガンスタブ+シンセベース。
-  garage2step: { leadPalette: [85, 80], counter: 54, ostinato: 4, backing: 17, bass: 39 },
+  // UKガラージ: ボイスリード+EP/オルガンスタブ+シンセベース。キットはハウス系譜のDance。
+  garage2step: { leadPalette: [85, 80], counter: 54, ostinato: 4, backing: 17, bass: 39, drumKit: 26 },
   // DnB: ソウレフルなリード+ウォームパッド+サブ寄りシンセベース。
-  dnb: { leadPalette: [81, 85], counter: 54, ostinato: 45, backing: 89, bass: 38 },
+  // キットは加工前提のPower(処理鎖=STYLE_DRUM_BUSでブレイクの質感へ潰す)。
+  dnb: { leadPalette: [81, 85], counter: 54, ostinato: 45, backing: 89, bass: 38, drumKit: 16 },
 };
 const DEFAULT_PROGRAMS: GmProgramMap = {
   leadPalette: [0], counter: 73, ostinato: 46, backing: 48, bass: 33,
 };
+
+/**
+ * スタイル別のドラムバス処理(bus-fx.ts)。宣言のないスタイルは素通しで、
+ * 既存スタイルのレンダリング結果は1サンプルも変わらない。
+ * パラメータの導出根拠はbus-fx.tsのモジュールコメントを参照。
+ */
+const STYLE_DRUM_BUS: Record<string, DrumBusFx> = {
+  // UKガラージ: 軽めの3:1バスコンプ+薄いサチュレーション。クラッシュなし
+  // (UKGはMPC/DAT世代でジャングルより録り音が綺麗)。
+  garage2step: {
+    drive: 1.5,
+    comp: { thresholdDbBelowPeak: 9, ratio: 3, attackMs: 8, releaseBeats: 0.25 },
+    crush: null,
+  },
+  // DnB: 4:1で深く潰し、+6dBドライブ、Akai S950相当(12bit/26.04kHz)のサンプラー質感。
+  dnb: {
+    drive: 2,
+    comp: { thresholdDbBelowPeak: 9, ratio: 4, attackMs: 8, releaseBeats: 0.25 },
+    crush: { bits: 12, sampleRate: 26040 },
+  },
+};
+
+/** スタイルのドラムバスFX(なければnull)。テストと描画側の単一参照点。 */
+export function drumBusFxFor(styleId: string): DrumBusFx | null {
+  return STYLE_DRUM_BUS[styleId] ?? null;
+}
 
 /** GMパーカッション(bank128)のキー。ハットはopen指示でクローズ42/オープン46を使い分ける。 */
 const DRUM_KEYS: Record<string, { key: number; velocity: number }> = {
@@ -111,7 +146,7 @@ export function arrangeSf2Parts(
   const programs = STYLE_PROGRAMS[piece.styleId] ?? DEFAULT_PROGRAMS;
   const refFor = (part: Exclude<PcmPart, 'drums' | 'duet' | 'lead'>): PcmPresetRef =>
     overrides[part] ?? { bank: 0, program: programs[part] };
-  const drumRef = overrides.drums ?? { bank: 128, program: 0 };
+  const drumRef = overrides.drums ?? { bank: 128, program: programs.drumKit ?? 0 };
   const spb = 60 / piece.bpm;
   // 主旋律の音色はセクションのleadColorでパレットから選ぶ(受け渡し)。
   // 上書きは色別(leadColorVoices)が最優先で、次に全区間固定(lead)。
@@ -260,6 +295,12 @@ export function renderSf2Bgm(
         ? (note) => baseSend * Math.max(0.25, Math.min(1, note.durSec / spb))
         : undefined,
     );
+    // ドラムバスFX(スタイル宣言があるときだけ)。直接音のみ処理し、リバーブ送りは
+    // クリーンなまま(潰した音を残響へ送るとローファイの粒が空間全体へ滲むため)。
+    if (part === 'drums') {
+      const busFx = drumBusFxFor(piece.styleId);
+      if (busFx) applyDrumBusFx(stems.main, SF2_SAMPLE_RATE, spb, busFx);
+    }
     const [gainLeft, gainRight] = panGains(stage.pan);
     const dryGain = room.dryAt(stage.depth);
     const chorusSend = stage.width * 0.5;
