@@ -28,6 +28,15 @@ const EPS = 1e-3;
 const ACCENT_RATIO = 0.82;
 
 /**
+ * ゴーストノート(スタイル譜が0..1の中間値で書く弱打)の標準強度。
+ * 拍節アクセントの全階層幅(小節頭→16分 = ACCENT_RATIO^3)のさらに1周下
+ * = ACCENT_RATIO^6 ≈ 0.30。ゲイン(ベロシティ二乗)で約-10dBとなり、
+ * 生演奏のゴーストスネア(主打への相対で概ね-10dB以下)の上端に当たる。
+ * ベロシティを持たないチップドラムは主打と同じ音で鳴る(=劣化だが破綻しない)。
+ */
+export const DRUM_GHOST = ACCENT_RATIO ** 6;
+
+/**
  * オープン化する間隙の下限と上限。実例の範囲=付点8分(0.75拍、スカ裏2連の後ろ)〜
  * 裏打ち(1拍)。それを超える間隙はターンアラウンド等が意図した余白なので開けて埋めない。
  */
@@ -78,6 +87,7 @@ export function applyDrumArticulation(
     const gap = gapAfter(drum.beat);
     const open = depth >= 2 && gap >= OPEN_MIN_GAP && gap <= OPEN_MAX_GAP;
     if (open) return { ...drum, open: true };
-    return { ...drum, velocity: ACCENT_RATIO ** depth };
+    // スタイル譜由来のゴースト強度(drum.velocity)があれば、拍節アクセントは乗算で重ねる。
+    return { ...drum, velocity: (drum.velocity ?? 1) * ACCENT_RATIO ** depth };
   });
 }

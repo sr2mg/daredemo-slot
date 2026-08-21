@@ -66,6 +66,10 @@ const STYLE_PROGRAMS: Record<string, GmProgramMap> = {
   eurobeat: { leadPalette: [81, 80], counter: 80, ostinato: 4, backing: 50, bass: 38 },
   rock: { leadPalette: [30, 29], counter: 29, ostinato: 27, backing: 17, bass: 33 },
   ska: { leadPalette: [56, 66], counter: 66, ostinato: 26, backing: 16, bass: 33 },
+  // UKガラージ: ボイスリード+EP/オルガンスタブ+シンセベース。
+  garage2step: { leadPalette: [85, 80], counter: 54, ostinato: 4, backing: 17, bass: 39 },
+  // DnB: ソウレフルなリード+ウォームパッド+サブ寄りシンセベース。
+  dnb: { leadPalette: [81, 85], counter: 54, ostinato: 45, backing: 89, bass: 38 },
 };
 const DEFAULT_PROGRAMS: GmProgramMap = {
   leadPalette: [0], counter: 73, ostinato: 46, backing: 48, bass: 33,

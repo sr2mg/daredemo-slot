@@ -8,6 +8,7 @@
  */
 
 import type { BassLinePolicy } from './bassline.js';
+import { DRUM_GHOST } from './drum-articulation.js';
 import type { DuetPolicy } from './duet.js';
 import type { GlidePolicy } from './glide.js';
 
@@ -516,11 +517,16 @@ export interface StyleDef {
   id: string;
   name: string;
   feel: string;
-  /** 16 分グリッド（1 小節 16 ステップ）の発音フラグ */
+  /**
+   * 16 分グリッドの発音強度。値は 0=休符 / 1=通常打 / 中間値=ゴースト(DRUM_GHOST、
+   * ベロシティとして鳴る)。長さは 16 の倍数: 16=1小節ループ、32=2小節フレーズ
+   * (ブレイクビーツ系の小節間変化)。声部ごとに長さが違ってよく、小節をまたぐ参照は
+   * drumPatternStep() が折り返す。
+   */
   kick: readonly number[];
   snare: readonly number[];
   hat: readonly number[];
-  /** 16 小節曲の B セクション用。バックビートは保ち、密度やシンコペーションだけを変える。 */
+  /** 16 小節曲の B セクション用。バックビート(強度1のスネア位置)は保ち、密度やシンコペーションだけを変える。 */
   sectionB: {
     kick: readonly number[];
     snare: readonly number[];
@@ -647,7 +653,92 @@ export const STYLES: StyleDef[] = [
     },
     bassCadence: 'diatonicPickup',
   },
+  {
+    id: 'garage2step',
+    name: '2ステップ',
+    feel: '跳ねる16分・UKガラージ',
+    // 2小節フレーズ(32ステップ)。骨格は「4つ打ちから3拍目のキックを抜く」変則:
+    // 1小節目=1拍目+3拍裏、2小節目=1拍目+3拍目直前の16分押し込み(s7)。
+    // シャッフル16分グルーヴと合わせると16分位置(s7・ゴースト)だけが跳ねる。
+    kick: [
+      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+      1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    // バックビート(2・4拍=強度1)は2小節とも不変、ゴーストの位置だけが小節間で変わる。
+    snare: [
+      0, 0, 0, 0, 1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 1, 0, 0, 0,
+      0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, DRUM_GHOST,
+    ],
+    // 裏打ち8分+拍4裏の16分足し。16分(s7,s15)がシャッフルの跳ねを聴かせる。
+    hat: [0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1],
+    sectionB: {
+      // Bは4つ打ちへ寄せて持ち上げる(ガラージのハウス的側面)。スネアはAと同一。
+      kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+      snare: [
+        0, 0, 0, 0, 1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, DRUM_GHOST,
+      ],
+      hat: [0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0],
+    },
+    bass: 'root8',
+    melody: {
+      // 裏拍(2拍裏・4拍裏)を押すシンコペーション優位の語彙。
+      onsetWeights: [100, 55, 40, 90, 100, 50, 45, 92],
+      density: [4, 6],
+      gate: 0.6,
+      stepwisePercent: 68,
+    },
+    bassCadence: 'chordTone',
+    // UKガラージの7th/9thボイシングをソフトテンションで近似する。
+    tension: 'soft',
+  },
+  {
+    id: 'dnb',
+    name: 'ドラムンベース',
+    feel: '疾走ブレイクビーツ(BPM170前後)',
+    // ツーステップ・ブレイクの骨格: キックは1拍目+3拍裏の1小節ループ。
+    kick: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+    // 主打(2・4拍=強度1)は不変のまま、ゴーストの位置が2小節で入れ替わり
+    // ブレイクビーツの転がる感じを作る(32ステップ)。
+    snare: [
+      0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, 0,
+      0, 0, 0, 0, 1, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 1, 0, 0, DRUM_GHOST,
+    ],
+    // 拍頭に16分ペアを置くチョップ気味の刻み。
+    hat: [1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0],
+    sectionB: {
+      // Bは2小節目にキックの追い打ちを足して前進させる。スネアはAと同一。
+      kick: [
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+      ],
+      snare: [
+        0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 1, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 1, 0, 0, DRUM_GHOST,
+      ],
+      hat: [1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1],
+    },
+    bass: 'root8',
+    melody: {
+      // 速いテンポの上に長い音価で歌うパッド/リード型(ドラムとの速度対比が様式)。
+      onsetWeights: [100, 30, 55, 45, 100, 35, 60, 50],
+      density: [3, 5],
+      gate: 0.92,
+      stepwisePercent: 60,
+    },
+    bassCadence: 'chordTone',
+    // アトモスフェリックなカラートーン和声(リキッド系)をlushで近似する。
+    tension: 'lush',
+  },
 ];
+
+/**
+ * ドラムパターン配列から「小節barのステップstep」の強度を取る。
+ * 長さ16は毎小節同じ、32は2小節フレーズとして折り返す(声部ごとに長さが違ってよい)。
+ */
+export function drumPatternStep(pattern: readonly number[], bar: number, step: number): number {
+  return pattern[(bar * 16 + step) % pattern.length] ?? 0;
+}
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 

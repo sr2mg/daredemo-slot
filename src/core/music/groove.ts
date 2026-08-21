@@ -19,7 +19,7 @@
  */
 
 /** グルーヴの外部ID。保存曲(JSON)へ書かれる識別子なので値は変えない。 */
-export type GrooveFeel = 'straight' | 'tripletOverlay' | 'bounce';
+export type GrooveFeel = 'straight' | 'tripletOverlay' | 'bounce' | 'shuffle16';
 
 export interface GrooveDef {
   id: GrooveFeel;
@@ -54,6 +54,15 @@ export const GROOVES: Record<GrooveFeel, GrooveDef> = {
     id: 'bounce',
     label: '跳ねる8分',
     swing: { pairSpanBeats: 1, offbeatPosition: 2 / 3 },
+    subdivisionOverlay: 'none',
+  },
+  // 16分スウィング(UKガラージ/2ステップの跳ね)。対の幅が8分(0.5拍)なので
+  // 8分裏は対の先頭に当たり変位しない=旋律・ベースの8分骨格はストレートのまま、
+  // 16分裏(ドラムの16分・装飾音)だけが2:1へ跳ねる。機構はgrooveBeatがそのまま扱う。
+  shuffle16: {
+    id: 'shuffle16',
+    label: 'シャッフル16分',
+    swing: { pairSpanBeats: 0.5, offbeatPosition: 2 / 3 },
     subdivisionOverlay: 'none',
   },
 };

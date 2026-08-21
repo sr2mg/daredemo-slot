@@ -12,6 +12,7 @@ import {
   variedChoiceFor,
 } from '../src/core/music/compose.js';
 import type { ComposeOptions } from '../src/core/music/compose.js';
+import { DRUM_GHOST } from '../src/core/music/drum-articulation.js';
 import {
   CHORDS,
   PROGRESSIONS,
@@ -74,15 +75,37 @@ describe('理論データ', () => {
     }
   });
 
-  it('各スタイルは骨格を保った16ステップのB用ドラムパターンを持つ', () => {
+  it('各スタイルは骨格を保った16/32ステップのドラムパターンを持つ', () => {
+    // 16(1小節ループ)と32(2小節フレーズ)を2小節へ展開して比べる。
+    const fold = (pattern: readonly number[]): number[] =>
+      Array.from({ length: 32 }, (_, index) => pattern[index % pattern.length]!);
+    const fullOnsets = (pattern: readonly number[]): number[] =>
+      fold(pattern).flatMap((level, index) => (level === 1 ? [index] : []));
     for (const style of STYLES) {
-      expect(style.sectionB.kick, `${style.id}/kick`).toHaveLength(16);
-      expect(style.sectionB.snare, `${style.id}/snare`).toHaveLength(16);
-      expect(style.sectionB.hat, `${style.id}/hat`).toHaveLength(16);
-      expect(style.sectionB.snare, `${style.id}/backbeat`).toEqual(style.snare);
+      const voices = [
+        ['kick', style.kick, style.sectionB.kick],
+        ['snare', style.snare, style.sectionB.snare],
+        ['hat', style.hat, style.sectionB.hat],
+      ] as const;
+      for (const [name, patternA, patternB] of voices) {
+        for (const pattern of [patternA, patternB]) {
+          expect([16, 32], `${style.id}/${name}`).toContain(pattern.length);
+          expect(
+            pattern.every((level) => level >= 0 && level <= 1),
+            `${style.id}/${name}/強度は0..1`,
+          ).toBe(true);
+        }
+      }
+      // バックビート契約: 強度1のスネア位置はAとBで一致し、毎小節2・4拍を含む。
+      expect(fullOnsets(style.sectionB.snare), `${style.id}/backbeat`).toEqual(fullOnsets(style.snare));
+      for (const barStart of [0, 16]) {
+        expect(fullOnsets(style.snare), `${style.id}/2・4拍`).toEqual(
+          expect.arrayContaining([barStart + 4, barStart + 12]),
+        );
+      }
       expect(
-        style.sectionB.kick.some((on, step) => on !== style.kick[step])
-          || style.sectionB.hat.some((on, step) => on !== style.hat[step]),
+        fold(style.sectionB.kick).some((level, index) => level !== fold(style.kick)[index])
+          || fold(style.sectionB.hat).some((level, index) => level !== fold(style.hat)[index]),
         style.id,
       ).toBe(true);
       expect(style.melody.onsetWeights).toHaveLength(8);
@@ -291,11 +314,12 @@ describe('compose', () => {
     expect(compose({ ...base, bars: 16, seed: 43 }).phrasePlan.climaxBar).toBe(14);
   });
 
-  it('全進行 × 全スタイル × 全調性対応の旋律語法 × 全グルーヴ × 4/8/16小節で生成検証を通る', () => {
+  // スタイル×グルーヴの成長で5秒を超える網羅スイープなので、明示タイムアウトを持つ。
+  it('全進行 × 全スタイル × 全調性対応の旋律語法 × 全グルーヴ × 4/8/16小節で生成検証を通る', { timeout: 30000 }, () => {
     for (const prog of PROGRESSIONS) {
       for (const style of STYLES) {
         for (const melodicLanguage of ['standard', 'japanese'] as const) {
-          for (const grooveFeel of ['straight', 'tripletOverlay', 'bounce'] as const) {
+          for (const grooveFeel of ['straight', 'tripletOverlay', 'bounce', 'shuffle16'] as const) {
             for (const bars of [4, 8, 16] as const) {
               if (prog.slots.length > bars) continue;
               for (const [seedIndex, seed] of [1, 42, 12345].entries()) {
@@ -1002,6 +1026,44 @@ describe('compose', () => {
       const finalBeat = piece.loopStartBeat + 15 * 4 + 3;
       expect(piece.drums.filter((event) => event.beat >= finalBeat), `${style.id}/最終拍`).toEqual([]);
     }
+  });
+
+  it('シャッフル16分は16分裏だけを2:1へ変位し、8分骨格はストレートに保つ', () => {
+    expect(grooveBeat(0.25, 'shuffle16')).toBeCloseTo(1 / 3, 6);
+    expect(grooveBeat(0.75, 'shuffle16')).toBeCloseTo(5 / 6, 6);
+    expect(grooveBeat(0.5, 'shuffle16')).toBe(0.5);
+    expect(grooveBeat(1, 'shuffle16')).toBe(1);
+    // 2ステップのキック押し込み(2小節目の16分s7=論理1.75拍)がスウィング位置で鳴る。
+    const piece = compose({ ...base, styleId: 'garage2step', grooveFeel: 'shuffle16', bars: 8, seed: 42 });
+    const bar2Kicks = piece.drums
+      .filter((event) => event.inst === 'kick' && event.beat >= 4 && event.beat < 8)
+      .map((event) => event.beat - 4);
+    expect(bar2Kicks.some((beat) => Math.abs(beat - (1 + 5 / 6)) < 1e-6)).toBe(true);
+    expect(validatePiece(piece)).toEqual([]);
+  });
+
+  it('スタイル譜の中間強度はゴースト(弱ベロシティ)として鳴り、主打は従来の形のまま', () => {
+    const piece = compose({ ...base, styleId: 'dnb', bars: 8, seed: 42 });
+    const snares = piece.drums.filter((event) => event.inst === 'snare');
+    const ghosts = snares.filter((event) => event.velocity !== undefined);
+    expect(ghosts.length).toBeGreaterThan(0);
+    for (const ghost of ghosts) expect(ghost.velocity).toBeCloseTo(DRUM_GHOST, 6);
+    // 主打(2・4拍)はベロシティを持たない=既存スタイルと同じイベント形。
+    const full = snares.filter((event) => event.velocity === undefined);
+    expect(full.some((event) => event.beat % 4 === 1)).toBe(true);
+    expect(full.some((event) => event.beat % 4 === 3)).toBe(true);
+  });
+
+  it('32ステップ譜は2小節フレーズとして折り返す(dnbのゴースト位置が小節間で交替)', () => {
+    const piece = compose({ ...base, styleId: 'dnb', bars: 8, seed: 42 });
+    const ghostsIn = (bar: number) => piece.drums
+      .filter((event) => event.inst === 'snare' && event.velocity !== undefined
+        && event.beat >= bar * 4 && event.beat < bar * 4 + 4)
+      .map((event) => event.beat - bar * 4);
+    expect(ghostsIn(0)).toEqual([1.75]);
+    expect(ghostsIn(1)).toEqual([2.25, 3.75]);
+    expect(ghostsIn(2)).toEqual(ghostsIn(0));
+    expect(ghostsIn(3)).toEqual(ghostsIn(1));
   });
 
   it('JTTOU 進行はキー外の音（E7 の G# 等）を正しくコードトーンとして扱う', () => {
