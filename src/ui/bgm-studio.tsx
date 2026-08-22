@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { BgmComposerPanel } from './bgm-composer.js';
-import type { BgmPcmRenderer } from './bgm-audio.js';
+import type { BgmPcmRenderer } from '../audio/render.js';
 import { PCM_PART_LABELS } from '../audio/pcm-arrange.js';
 import type { LeadColorSlot, PcmPart, PcmPresetRef, PcmVoiceOverride } from '../audio/pcm-arrange.js';
-import type { ComposeOptions } from '../core/music/compose.js';
+import type { ComposeOptions } from '../core/music/types.js';
 import { loadStored, saveStored } from './persist.js';
 import { SfxPlayer } from './sfx-player.js';
 import type { ActiveSoundFont, SoundFontSource } from './soundfont-store.js';

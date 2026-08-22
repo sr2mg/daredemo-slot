@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import { arrangeComposedBgm, isPcmBgm } from '../src/ui/bgm-audio.js';
+import { arrangeComposedBgm, isPcmBgm } from '../src/audio/render.js';
 import {
   NES_SAMPLE_RATE,
   pulseFrequencyForTimer,

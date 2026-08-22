@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyDrumArticulation } from '../src/core/music/drum-articulation.js';
-import type { DrumEvent } from '../src/core/music/compose.js';
+import type { DrumEvent } from '../src/core/music/types.js';
 import { compose } from '../src/core/music/compose.js';
 import { arrangeSf2Parts } from '../src/audio/pcm-arrange.js';
 

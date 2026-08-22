@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildSfxEvents, SFX_RECIPES, sfxDuration } from '../src/core/music/sfx-design.js';
-import type { SfxDesign, ToneEvent } from '../src/core/music/sfx-design.js';
+import { buildSfxEvents, SFX_RECIPES, sfxDuration } from '../src/core/sfx/sfx-design.js';
+import type { SfxDesign, ToneEvent } from '../src/core/sfx/sfx-design.js';
 
 const design = (recipeId: string, over: Partial<SfxDesign> = {}): SfxDesign => ({
   recipeId,

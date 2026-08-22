@@ -1,9 +1,10 @@
-import type { SfxDesign } from '../core/music/sfx-design.js';
-import { isPcmBgm } from './bgm-audio.js';
-import type { ComposedBgmDef, PcmBgmDef } from './bgm-audio.js';
-import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
-import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from './opll-core.js';
-import { arrangeSfx } from './sfx-arrange.js';
+import type { SfxDesign } from '../core/sfx/sfx-design.js';
+import { isPcmBgm } from '../audio/render.js';
+import type { ComposedBgmDef, PcmBgmDef } from '../audio/render.js';
+import type { OpllExports, SfxDef } from '../audio/opll-core.js';
+import type { SfxName } from './sfx-names.js';
+import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from '../audio/opll-core.js';
+import { arrangeSfx } from '../audio/sfx-arrange.js';
 import { ASSIGNABLE_SFX, PRESET_SFX, resolveSfxAssign } from './sfx-library.js';
 
 /**
@@ -117,7 +118,7 @@ export class SfxPlayer {
   /** 効果音デザインの試聴（エディタ用なので ON/OFF トグルに関わらず鳴らす） */
   async previewDesign(design: SfxDesign): Promise<boolean> {
     const key = JSON.stringify(design);
-    let wave = this.previewCache.get(key);
+    let wave = this.touchLru(this.previewCache, key);
     if (!wave) {
       try {
         wave = await this.enqueueRender(async () => {
@@ -236,7 +237,7 @@ export class SfxPlayer {
    * key は ComposeOptions の JSON（同じ曲は再レンダリングしない）
    */
   ensureComposedBgm(key: string, def: ComposedBgmDef, onProgress?: (ratio: number) => void): Promise<Float32Array> {
-    const cached = this.customBgm.get(key);
+    const cached = this.touchLru(this.customBgm, key);
     if (cached) return Promise.resolve(cached);
     if (isPcmBgm(def)) {
       if (def.transient) {
@@ -252,7 +253,7 @@ export class SfxPlayer {
     }
     return this.enqueueRender(async () => {
       await this.preload();
-      const again = this.customBgm.get(key);
+      const again = this.touchLru(this.customBgm, key);
       if (again) return again;
       if (!this.exports) throw new Error('OPLL 未初期化');
       const wave = await renderSequenceAsync(this.exports, this.opll, def, onProgress);
@@ -271,12 +272,29 @@ export class SfxPlayer {
   }
 
   /**
+   * MapをLRUとして使う: ヒットしたキーを末尾へ再挿入する。Mapの反復順は挿入順
+   * なので、追い出し(先頭削除)が「最も昔に参照された」ものになる。再挿入しないと
+   * 挿入順=追い出し順のFIFOになり、よく聴く曲が古いという理由で落ちる。
+   */
+  private touchLru<V>(map: Map<string, V>, key: string): V | undefined {
+    const value = map.get(key);
+    if (value !== undefined) {
+      map.delete(key);
+      map.set(key, value);
+    }
+    return value;
+  }
+
+  /**
    * レンダリング済みPCM defのキャッシュ照会。再生・書き出しの前にこれを引き、
    * ヒットすればSF2レンダリング(BgmPcmRenderer.render)を丸ごと省略できる。
    * キーの規約は ensureComposedBgm と同じ(呼び出し側のbgmCacheKey)。
    */
   getCachedPcmBgm(key: string): PcmBgmDef | null {
-    return this.pcmDefs.get(key) ?? null;
+    const def = this.touchLru(this.pcmDefs, key);
+    // 波形と同じ曲を参照したことになるので、追い出し順を共有する波形側も触る。
+    if (def) this.touchLru(this.customBgm, key);
+    return def ?? null;
   }
 
   /**

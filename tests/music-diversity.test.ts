@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { compose } from '../src/core/music/compose.js';
+import { diagnosePiece } from '../src/core/music/diagnostics.js';
 import {
-  compose,
-  diagnosePiece,
   melodicPhraseFingerprint,
   melodicSectionSimilarities,
   summarizeDistribution,
-  variedChoiceFor,
-} from '../src/core/music/compose.js';
-import type { ComposeOptions, Piece } from '../src/core/music/compose.js';
+} from '../src/core/music/diversity.js';
+import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
+import type { ComposeOptions, Piece } from '../src/core/music/types.js';
 import { PROGRESSIONS } from '../src/core/music/theory.js';
 
 const fortyBarBase: ComposeOptions = {

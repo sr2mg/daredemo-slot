@@ -7,6 +7,9 @@
  * 係数・指数の列挙はしない——スタイルが選ぶのは「部屋の大きさ」だけ。
  */
 
+import { styleLookup } from '../core/music/theory.js';
+import type { StyleId } from '../core/music/theory.js';
+
 export interface StereoWave {
   left: Float32Array;
   right: Float32Array;
@@ -90,7 +93,7 @@ export const DEFAULT_ROOM: RoomModel = room(1.3);
  * 名乗っていたが、測定スクリプトも対象音源も本リポジトリに存在しない。
  * 一次資料での測定を成果物としてコミットするまで、実測とは呼ばない。
  */
-export const STYLE_ROOMS: Record<string, RoomModel> = {
+export const STYLE_ROOMS: Record<StyleId, RoomModel> = {
   kmmo: room(2.85),
   rock: room(0.9),
   eurobeat: room(1.4),
@@ -101,7 +104,7 @@ export const STYLE_ROOMS: Record<string, RoomModel> = {
 };
 
 export function roomFor(styleId: string): RoomModel {
-  return STYLE_ROOMS[styleId] ?? DEFAULT_ROOM;
+  return styleLookup(STYLE_ROOMS, styleId, DEFAULT_ROOM);
 }
 
 /** 等パワーパン。 */

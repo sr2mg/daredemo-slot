@@ -1,5 +1,5 @@
-import type { SfxDesign } from '../core/music/sfx-design.js';
-import type { SfxName } from './opll-core.js';
+import type { SfxDesign } from '../core/sfx/sfx-design.js';
+import type { SfxName } from './sfx-names.js';
 
 /**
  * 効果音ライブラリとゲーム内契機への割り当ての永続化層（bgm-library.ts と同じ方針）。

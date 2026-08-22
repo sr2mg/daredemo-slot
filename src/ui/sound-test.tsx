@@ -1,4 +1,4 @@
-import type { SfxName } from './opll-core.js';
+import type { SfxName } from './sfx-names.js';
 import type { SfxPlayer } from './sfx-player.js';
 
 /**

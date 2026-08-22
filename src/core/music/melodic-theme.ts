@@ -23,7 +23,7 @@
  * 決定論的に導出するため、保存曲の交換形式・曲間モチーフ流用はそのまま機能する。
  */
 
-import type { MotifMove } from './compose.js';
+import type { MotifMove } from './types.js';
 
 /** 2小節=8分16ステップの実音テーマ。度数は最初の発音からの音組織上のステップ数。 */
 export interface ThemeSpec {

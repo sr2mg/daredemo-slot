@@ -2,7 +2,7 @@ import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS, COUNTER_HI, COUNTER_LO, MELODY_HI, MELODY_LO } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
-import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './compose.js';
+import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
   beat: number;

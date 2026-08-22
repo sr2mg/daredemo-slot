@@ -5,7 +5,8 @@ import { approachTokenFor } from '../src/core/music/song-plan.js';
 import {
   CHORDS, chordOriginsFor, harmonicFunctionForToken, progressionsForTonality,
 } from '../src/core/music/theory.js';
-import type { HarmonicFunction, ProgressionTonality } from '../src/core/music/theory.js';
+import type { ProgressionTonality } from '../src/core/music/theory.js';
+import type { ComposeOptions, HarmonicFunction } from '../src/core/music/types.js';
 
 /**
  * 和音語彙のメタデータ化(度数root/品質quality/機能function + tonesの品質表導出)の検証。
@@ -161,7 +162,9 @@ describe('pcmVoicesは編曲層のパラメータでcompose()に影響しない'
       progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
       soundChip: 'pcm',
     } as const;
-    expect(digestPiece(compose({ ...base, pcmVoices: { bass: { bank: 0, program: 33 } } })))
-      .toEqual(digestPiece(compose(base)));
+    // 型上も pcmVoices は ComposeInput でなく RenderConfig 側だが、保存データ由来の
+    // ComposeOptions(合成型)がそのまま渡っても Piece が不変であることを実行時にも固定する。
+    const withVoices: ComposeOptions = { ...base, pcmVoices: { bass: { bank: 0, program: 33 } } };
+    expect(digestPiece(compose(withVoices))).toEqual(digestPiece(compose(base)));
   });
 });

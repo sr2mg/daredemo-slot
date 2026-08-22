@@ -5,12 +5,12 @@ import type {
   Piece,
   TupletDivision,
   TupletOverlayChoice,
-} from './compose.js';
-import type { SectionRole, SongPlan } from './song-plan.js';
+} from './types.js';
+import type { SectionRole, SongPlan } from './types.js';
 import { allowsTupletOverlay, grooveFor } from './groove.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';
-import { CHORDS } from './theory.js';
+import { CHORDS, styleForId } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 
 /**
@@ -118,16 +118,13 @@ function textureStrategyFor(
       : ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'] as const;
     return fallback[(seed >>> 1) % fallback.length]!;
   }
+  const style = styleForId(plan.styleId);
   let candidates: ArrangementPlan['textureStrategy'][];
   if (!capabilitiesFor(plan.soundChip).independentArpeggio) {
     // 独立アルペジオの声部予算が無いバックエンドでは、作って後段で捨てない。
-    candidates = plan.styleId === 'ska' ? ['counterDrive', 'classic'] : ['bassDrive', 'classic'];
-  } else if (plan.styleId === 'rock') {
-    candidates = ['bassDrive', 'counterDrive', 'hybrid'];
-  } else if (plan.styleId === 'ska') {
-    candidates = ['counterDrive', 'hybrid'];
+    candidates = [style?.compactTextureStrategy ?? 'bassDrive', 'classic'];
   } else {
-    candidates = ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'];
+    candidates = [...(style?.textureStrategies ?? ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'])];
   }
   if (plan.melodyDensity >= 5.75) candidates = candidates.filter((item) => item !== 'hybrid');
   // 短形式の細分オーバーレイは既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。

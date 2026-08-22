@@ -15,8 +15,8 @@
  * https://sai96i.hateblo.jp/entry/2021/05/10/204035
  */
 
-import { grooveBeat } from '../core/music/compose.js';
-import type { GrooveFeel } from '../core/music/compose.js';
+import { grooveBeat } from '../core/music/groove.js';
+import type { GrooveFeel } from '../core/music/groove.js';
 import type { StageRole } from './stage.js';
 
 export interface NoteStageEcho {

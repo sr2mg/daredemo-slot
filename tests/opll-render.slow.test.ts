@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
 import { PRESET_SONGS } from '../src/ui/bgm-library.js';
-import { arrangePiece } from '../src/ui/opll-arrange.js';
-import type { OpllExports } from '../src/ui/opll-core.js';
-import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence } from '../src/ui/opll-core.js';
+import { arrangePiece } from '../src/audio/opll-arrange.js';
+import type { OpllExports } from '../src/audio/opll-core.js';
+import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence } from '../src/audio/opll-core.js';
 
 /**
  * プリセット BGM の実レンダリング検証（slow 層）。

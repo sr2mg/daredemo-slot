@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import type { ComposeOptions, Piece, TupletDivision } from '../src/core/music/compose.js';
+import type { ComposeOptions, Piece, TupletDivision } from '../src/core/music/types.js';
 import { diagnosePiece } from '../src/core/music/diagnostics.js';
 
 /**

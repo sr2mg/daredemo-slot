@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildSfxEvents, sfxDuration } from '../src/core/music/sfx-design.js';
-import type { SfxDesign } from '../src/core/music/sfx-design.js';
-import { arrangeSfx } from '../src/ui/sfx-arrange.js';
+import { buildSfxEvents, sfxDuration } from '../src/core/sfx/sfx-design.js';
+import type { SfxDesign } from '../src/core/sfx/sfx-design.js';
+import { arrangeSfx } from '../src/audio/sfx-arrange.js';
 import { ASSIGNABLE_SFX, PRESET_SFX } from '../src/ui/sfx-library.js';
 
 /**

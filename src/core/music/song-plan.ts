@@ -1,17 +1,4 @@
-import type {
-  CadenceType,
-  ComposeBars,
-  GrooveFeel,
-  IntroRole,
-  MelodyMode,
-  MelodicLanguage,
-  PhraseFunction,
-  PhraseSection,
-  Tonality,
-} from './compose.js';
 import { bassDegreesFor } from './bassline.js';
-import type { BassLinePolicy } from './bassline.js';
-import { hasGrooveDevice } from './groove.js';
 import { resolveCompositionPolicy } from './composition-strategy.js';
 import type {
   CompositionPolicy,
@@ -19,140 +6,36 @@ import type {
   CompositionStrategy,
   StrategySectionId,
 } from './composition-strategy.js';
-import { CHORDS, harmonicFunctionForToken } from './theory.js';
-import type { HarmonicFunction, ProgressionDef, StyleDef } from './theory.js';
+import { hasGrooveDevice } from './groove.js';
+import type { GrooveFeel } from './groove.js';
 import type { SoundBackendId } from './sound-capabilities.js';
-
-export type HarmonicGoal = 'establish' | 'continue' | 'depart' | 'resolve' | 'turnaround';
-export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale';
-/**
- * literal は「移調も反転もしない帰還」。実現側はアンカー（フレーズ頭・終止音）だけを
- * その場の和声へ合わせ、内部の音程・リズムを保存する（フックのリテラル再現）。
- */
-export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast' | 'literal';
-export type { CompositionPremise } from './composition-strategy.js';
-export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
-export type IntroLeadGesture =
-  | 'motifFragment'
-  | 'motifAnswer'
-  | 'rest'
-  | 'pickup'
-  | 'fanfareCall'
-  | 'fanfareAnswer'
-  | 'heldCall'
-  | 'scaleRun';
-export type IntroBassGesture = 'pedal' | 'groove' | 'stopForLead' | 'hits' | 'pickup';
-export type IntroDrumGesture = 'none' | 'groove' | 'accents' | 'fill' | 'countIn';
-
-export interface IntroBarPlan {
-  bar: 0 | 1;
-  goal: 'identity' | 'transition';
-  tokens: readonly string[];
-  /** 合計が4拍未満なら、残りはAを迎える全パート共通のブレイク。 */
-  durations: readonly number[];
-  leadGesture: IntroLeadGesture;
-  bassGesture: IntroBassGesture;
-  drumGesture: IntroDrumGesture;
-  energy: number;
-}
-
-/** 本編を生成する前に確定する、初回専用の2小節トランジション。 */
-export interface SongIntroPlan {
-  enabled: boolean;
-  bars: 0 | 2;
-  role: IntroRole | null;
-  /** イントロが最終的に受け渡すA冒頭のコード。 */
-  entryToken: string;
-  entryFunction: HarmonicFunction;
-  /** A直前に全声部を止める長さ。役割ごとに0〜1.5拍を使い分ける。 */
-  breakBeats: number;
-  barPlans: readonly IntroBarPlan[];
-}
-
-export interface SongSectionPlan {
-  index: number;
-  id: PhraseSection;
-  startBar: number;
-  bars: number;
-  role: SectionRole;
-  /** 1..5。編成密度ではなく、曲として目指す相対エネルギー。 */
-  energy: number;
-  /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
-  rhythmVariant: RhythmVariant;
-  /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */
-  phraseRhythmVariants: readonly [RhythmVariant, RhythmVariant, RhythmVariant, RhythmVariant];
-  /** 各フレーズが参照する同区間／参照先区間のフレーズ番号。 */
-  motifSourcePhrases: readonly [0 | 1 | 2 | 3, 0 | 1 | 2 | 3, 0 | 1 | 2 | 3, 0 | 1 | 2 | 3];
-  /** 外部区間から借りるフレーズ。1要素=2小節だけに絞り、区間全体の複製を避ける。 */
-  externalMotifPhrases: readonly (0 | 1 | 2 | 3)[];
-  /** externalMotifPhrasesが参照する区間。nullなら全フレーズを区間内で展開する。 */
-  motifSourceSection: PhraseSection | null;
-  /** 参照モチーフをそのまま複製せず、区間の役割に応じて変形する。 */
-  motifTransform: MotifTransform;
-  /**
-   * 提示・変奏反復・展開・結論の各応答小節が到達する目標「音組織上の度数」
-   * （7音音階では 0=1̂, 1=2̂, 2=3̂, 4=5̂。五音音階では同じ添字がその音組織の対応音度
-   * になり、例えば長ペンタの4は6̂＝ヨナ抜きの常套終止色）。フレーズ終止が毎回
-   * ルートへ落ちる単調さを避け、段階的に主音へ収束する「終止音度の物語」を作る
-   * （旋法的終止階層とシェンカー的下行の折衷。実際の到達音はその小節の和声音から
-   * 目標に円環距離が最も近いものを選ぶ）。
-   */
-  cadenceDegrees: readonly [number, number, number, number];
-}
-
-export interface HarmonyBarPlan {
-  bar: number;
-  section: PhraseSection;
-  phraseFunction: PhraseFunction;
-  harmonicGoal: HarmonicGoal;
-  /** ユーザーが選んだ進行レシピを、フォーム上の役割と一緒に確定したもの。 */
-  tokens: readonly string[];
-  /** tokens と同じ順。コード変化位置はフレーズ目的とコード機能から決める。 */
-  durations: readonly number[];
-  /**
-   * tokens と同じ順の分数コード指定（キー主音からの相対半音）。null はルートポジション。
-   * コードトーン外の音も許す（半音経過ベース）。省略 = 全てルートポジション。
-   * ベースライン生成器（ステップ2）が書き、ベース声部と ChordEvent.bassPc が読む。
-   */
-  bassDegrees?: readonly (number | null)[];
-  /** 上位戦略がこの小節の和声選択へ与えた意味。 */
-  strategyRole: 'base' | 'absence' | 'return';
-  entryFunction: HarmonicFunction;
-  exitFunction: HarmonicFunction;
-  cadence: CadenceType | null;
-  energy: number;
-}
-
-export interface SongFormPlan {
-  sections: readonly SongSectionPlan[];
-  climaxBar: number;
-  loopCadence: 'turnaround';
-}
-
-/** 各声部を生成する前に確定する、曲全体の単一の設計図。 */
-export interface SongPlan {
-  /** ブラインド比較用の上位戦略。未指定の保存曲は current として計画する。 */
-  compositionStrategy: CompositionStrategy;
-  /** 戦略名を各層が再解釈しないための、曲全体で共有する実効ポリシー。 */
-  compositionPolicy: CompositionPolicy;
-  /** 条件3で各声部が共有する「前進する表層／帰りたがる内側」という命題。 */
-  premise: CompositionPremise | null;
-  tonality: Tonality;
-  melodicLanguage: MelodicLanguage;
-  grooveFeel: GrooveFeel;
-  styleId: string;
-  progressionId: string;
-  /** 進行カタログ自体の長さ。4小節進行を長尺化した際の反復診断に使う。 */
-  progressionBars: number;
-  soundChip: SoundBackendId;
-  intro: SongIntroPlan;
-  form: SongFormPlan;
-  harmony: readonly HarmonyBarPlan[];
-  /** スタイル固有の主旋律音数。編成が旋律の混み具合を判断するために共有する。 */
-  melodyDensity: number;
-  /** 1小節に複数コードを置く小節の比率。 */
-  harmonicActivity: number;
-}
+import { CHORDS, harmonicFunctionForToken } from './theory.js';
+import type { ProgressionDef, StyleDef } from './theory.js';
+import type {
+  BassLinePolicy,
+  CadenceType,
+  ComposeBars,
+  HarmonicFunction,
+  HarmonicGoal,
+  HarmonyBarPlan,
+  IntroBarPlan,
+  IntroBassGesture,
+  IntroDrumGesture,
+  IntroLeadGesture,
+  IntroRole,
+  MelodicLanguage,
+  MelodyMode,
+  MotifTransform,
+  PhraseFunction,
+  PhraseSection,
+  RhythmVariant,
+  SectionRole,
+  SongFormPlan,
+  SongIntroPlan,
+  SongPlan,
+  SongSectionPlan,
+  Tonality,
+} from './types.js';
 
 export interface TonalOptions {
   tonality?: Tonality;
@@ -486,9 +369,10 @@ function introRoleFor(
   }
   const density = (options.style.melody.density[0] + options.style.melody.density[1]) / 2;
   const candidates: IntroRole[] = [];
-  if (hasGrooveDevice(options.grooveFeel) || options.style.id === 'ska') candidates.push('groove');
-  if (options.style.id === 'rock') candidates.push('fanfare');
-  if (options.style.id === 'eurobeat' || entryFunction === 'dominant') candidates.push('runup');
+  const styleIntroRoles = options.style.introRoles ?? [];
+  if (hasGrooveDevice(options.grooveFeel) || styleIntroRoles.includes('groove')) candidates.push('groove');
+  if (styleIntroRoles.includes('fanfare')) candidates.push('fanfare');
+  if (styleIntroRoles.includes('runup') || entryFunction === 'dominant') candidates.push('runup');
   if (options.melodicLanguage === 'japanese' || harmonicActivity > 0 || density <= 5.5) candidates.push('motif');
   const compatible = uniqueIntroRoles([...candidates, 'motif']);
   return compatible[((options.seed ^ 0x494e_5452) >>> 0) % compatible.length]!;

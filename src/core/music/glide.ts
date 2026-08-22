@@ -9,9 +9,8 @@
  * 前音とほぼ地続き(間隙0.3拍以内)の3〜9半音の移動で、強拍でない着地に限る(決定論)。
  */
 
-import type { NoteEvent } from './compose.js';
+import type { GlidePolicy, NoteEvent } from './types.js';
 
-export type GlidePolicy = 'on' | 'off';
 
 /** グライド時間の共有規則: 音価の半分、最大90ms。 */
 export function glideDurationSec(noteDurSec: number): number {

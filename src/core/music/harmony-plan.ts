@@ -1,5 +1,5 @@
 import { Xoshiro128 } from '../rng.js';
-import type { ComposeBars } from './compose.js';
+import type { ComposeBars } from './types.js';
 import type { ProgressionDef } from './theory.js';
 
 /**

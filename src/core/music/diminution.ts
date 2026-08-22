@@ -13,9 +13,7 @@
  * (scaleAtBeat)から取るため、五音語法では五音の走句・刺繍になる。
  */
 
-import type { NoteEvent } from './compose.js';
-
-export type DiminutionPolicy = 'off' | 'light' | 'rich';
+import type { DiminutionPolicy, NoteEvent } from './types.js';
 
 export const DIMINUTION_POLICY_LABELS: Record<'auto' | DiminutionPolicy, string> = {
   auto: 'スタイル既定',

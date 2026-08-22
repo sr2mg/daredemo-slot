@@ -122,17 +122,19 @@ export const OPLL_VOICES: readonly { id: number; label: string }[] = [
   { id: 15, label: 'エレキギター' },
 ];
 
-export type SfxName =
-  | 'bet'
-  | 'lever'
-  | 'betLever'
-  | 'reelStop'
-  | 'replay'
-  | 'payout'
-  | 'kyuin'
-  | 'fanfare'
-  | 'siren'
-  | 'rush';
+/** リズムモードの初期化（ch6〜8 の fnum/blk 定番値・リズム音量・モード ON）*/
+export function initRhythmMode(b: SeqBuilder): void {
+  b.raw(0x16, 0x20, 0)
+    .raw(0x17, 0x50, 0)
+    .raw(0x18, 0xc0, 0)
+    .raw(0x26, 0x05, 0)
+    .raw(0x27, 0x05, 0)
+    .raw(0x28, 0x01, 0)
+    .raw(0x36, 0x04, 0) //  BD 音量
+    .raw(0x37, 0x24, 0) //  HH(上位) / SD(下位)
+    .raw(0x38, 0x24, 0) //  TOM(上位) / CYM(下位)
+    .raw(0x0e, 0x20, 0);
+}
 
 /**
  * レジスタイベント列を 49716Hz のモノラル波形へレンダリングする。

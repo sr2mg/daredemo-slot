@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { playPerfect } from '../core/sim.js';
@@ -10,12 +10,16 @@ import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
-import { BgmComposerPanel } from './bgm-composer.js';
+// 作曲スタジオ一式(診断・ブラインド比較・研究ログUI込み)は重いのでゲーム側
+// バンドルへ静的リンクしない(vite の main/bgm 2エントリ分離を実質有効に保つ)。
+const BgmComposerPanel = lazy(() =>
+  import('./bgm-composer.js').then((m) => ({ default: m.BgmComposerPanel })),
+);
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
-import { arrangeComposedBgm } from './bgm-audio.js';
+import { bgmCacheKey, renderComposedBgm } from '../audio/render.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
-import type { SfxName } from './opll-core.js';
+import type { SfxName } from './sfx-names.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
 import { loadStored, oneOf, saveStored, usePersistentState } from './persist.js';
@@ -564,13 +568,16 @@ export function App() {
         if (sfx?.enabled) {
           const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
           const song = resolveAssign(slot);
-          try {
-            const piece = compose(song.options);
-            const def = arrangeComposedBgm(piece, song.options);
-            void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
-          } catch {
-            // 保存データ破損等。音は演出なので無音で続行する
-          }
+          void (async () => {
+            try {
+              const piece = compose(song.options);
+              // 2A03等の重い合成はチャンク化された非同期経路で行い、リール操作を固めない。
+              const def = await renderComposedBgm(piece, song.options);
+              void sfx.playComposedBgm(bgmCacheKey(song.options), def, 1.05);
+            } catch {
+              // 保存データ破損等。音は演出なので無音で続行する
+            }
+          })();
         }
       } else if (event.replayWon) playSfx('replay');
       else if (event.payout > 0) playSfx('payout');
@@ -722,8 +729,8 @@ export function App() {
         const song = resolveAssign(slot);
         try {
           const piece = compose(song.options);
-          const def = arrangeComposedBgm(piece, song.options);
-          void sfx.ensureComposedBgm(JSON.stringify(song.options), def);
+          const def = await renderComposedBgm(piece, song.options);
+          void sfx.ensureComposedBgm(bgmCacheKey(song.options), def);
         } catch {
           // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
         }
@@ -1160,7 +1167,9 @@ export function App() {
           </a>
         </div>
         <SoundTestPanel player={sfxRef.current!} />
-        <BgmComposerPanel player={sfxRef.current!} />
+        <Suspense fallback={<p className="panel-note">BGM作曲パネルを読み込み中…</p>}>
+          <BgmComposerPanel player={sfxRef.current!} />
+        </Suspense>
         <SfxDesignerPanel player={sfxRef.current!} />
         <p className="panel-note credit-note">
           音源コア:{' '}

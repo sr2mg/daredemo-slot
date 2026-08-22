@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { compose, arrangementSectionFor } from '../src/core/music/compose.js';
-import type { Piece } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { arrangementSectionFor } from '../src/core/music/arrangement.js';
+import type { Piece } from '../src/core/music/types.js';
 import { arrangeSf2Parts } from '../src/audio/pcm-arrange.js';
 import type { Sf2Note } from '../src/audio/sf2.js';
 

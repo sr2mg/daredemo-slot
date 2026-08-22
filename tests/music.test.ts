@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import { compose } from '../src/core/music/compose.js';
+import { japanesePlanFor } from '../src/core/music/japanese.js';
 import {
-  compose,
   checkPieceStructure,
-  defaultChoiceFor,
   diagnosePiece,
-  grooveBeat,
-  hasVariedChoiceFor,
-  japanesePlanFor,
   suggestCompositionRepair,
   validatePiece,
+} from '../src/core/music/diagnostics.js';
+import { grooveBeat } from '../src/core/music/groove.js';
+import {
+  defaultChoiceFor,
+  hasVariedChoiceFor,
   variedChoiceFor,
-} from '../src/core/music/compose.js';
-import type { ComposeOptions } from '../src/core/music/compose.js';
+} from '../src/core/music/harmony-plan.js';
+import type { ComposeOptions } from '../src/core/music/types.js';
 import { DRUM_GHOST } from '../src/core/music/drum-articulation.js';
 import {
   CHORDS,

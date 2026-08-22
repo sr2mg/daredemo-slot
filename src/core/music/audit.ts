@@ -9,7 +9,7 @@
  * 2026-07 の初回監査（168曲）: 不変条件違反0件。表現レンジの穴として
  * ロングトーン皆無・音域固定・裏拍シンコペ皆無・休符始まり皆無・標準語法の装飾休眠を検出。
  */
-import type { Piece } from './compose.js';
+import type { Piece } from './types.js';
 
 export interface AuditAnomaly {
   kind:
