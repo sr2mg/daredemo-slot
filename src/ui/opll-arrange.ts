@@ -1,7 +1,8 @@
 import type {
   NoteEvent, OpllUserPatchId, Piece, VoiceOverride,
-} from '../core/music/compose.js';
-import { arrangementSectionFor, grooveBeat } from '../core/music/compose.js';
+} from '../core/music/types.js';
+import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { grooveBeat } from '../core/music/groove.js';
 import { initRhythmMode } from './mml.js';
 import { SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';

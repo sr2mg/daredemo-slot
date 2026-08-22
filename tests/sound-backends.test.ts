@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import type { ComposeOptions, PcmPart } from '../src/core/music/compose.js';
+import type { ComposeOptions, PcmPart } from '../src/core/music/types.js';
 import { capabilitiesFor, SOUND_CAPABILITIES } from '../src/core/music/sound-capabilities.js';
 import type { StageRole } from '../src/audio/stage.js';
 

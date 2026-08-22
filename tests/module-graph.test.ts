@@ -120,4 +120,12 @@ describe('モジュールグラフの規約', () => {
     const cycle = findCycle(edges.filter((e) => !e.typeOnly));
     expect(cycle).toBeNull();
   });
+
+  it('core は type import を含めても循環が無い（型の置き場所が正しい証明）', () => {
+    const coreEdges = edges.filter(
+      (e) => e.from.startsWith('core/') && e.to.startsWith('core/'),
+    );
+    const cycle = findCycle(coreEdges);
+    expect(cycle).toBeNull();
+  });
 });

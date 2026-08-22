@@ -1,52 +1,51 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
+import { compose } from '../core/music/compose.js';
 import {
-  compose,
-  COMPOSITION_STRATEGIES,
-  compositionStrategyInfo,
   ARRANGEMENT_ARC_LABELS,
   COUNTER_ROLE_LABELS,
-  TEXTURE_STRATEGY_LABELS,
-  DEFAULT_GROOVE_FEEL,
-  GROOVE_FEELS,
-  GROOVE_FEEL_LABELS,
-  allowsTupletOverlay,
-  isGrooveFeel,
-  TUPLET_OVERLAY_LABELS,
-  TENSION_POLICY_LABELS,
-  DIMINUTION_POLICY_LABELS,
+  CURRENT_ENGINE_REV,
+  INTRO_ROLE_LABELS,
   JAPANESE_SCALE_LABELS,
   ORNAMENT_LABELS,
   PHRASE_FUNCTION_LABELS,
-  CURRENT_ENGINE_REV,
-  checkPieceStructure,
-  defaultChoiceFor,
-  hasVariedChoiceFor,
-  INTRO_ROLE_LABELS,
-  suggestCompositionRepair,
-  variedChoiceFor,
-  resolveMelodicLanguage,
-  resolveTonality,
-} from '../core/music/compose.js';
+  TEXTURE_STRATEGY_LABELS,
+  TUPLET_OVERLAY_LABELS,
+} from '../core/music/types.js';
 import type {
   ComposeBars,
-  CompositionRepair,
-  CompositionStrategy,
   ComposeOptions,
-  DiagnosticCategory,
   DiminutionPolicy,
-  TensionPolicy,
-  GrooveFeel,
   JapaneseScaleChoice,
   MelodicLanguage,
   NesVoiceOptions,
   OpllUserPatchId,
   Piece,
+  TensionPolicy,
   Tonality,
   TupletDivision,
   TupletOverlayChoice,
   VoiceOverride,
-} from '../core/music/compose.js';
+} from '../core/music/types.js';
+import {
+  COMPOSITION_STRATEGIES,
+  compositionStrategyInfo,
+} from '../core/music/composition-strategy.js';
+import type { CompositionStrategy } from '../core/music/composition-strategy.js';
+import {
+  DEFAULT_GROOVE_FEEL,
+  GROOVE_FEELS,
+  GROOVE_FEEL_LABELS,
+  allowsTupletOverlay,
+  isGrooveFeel,
+} from '../core/music/groove.js';
+import type { GrooveFeel } from '../core/music/groove.js';
+import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
+import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
+import { checkPieceStructure, suggestCompositionRepair } from '../core/music/diagnostics.js';
+import type { CompositionRepair, DiagnosticCategory } from '../core/music/diagnostics.js';
+import { defaultChoiceFor, hasVariedChoiceFor, variedChoiceFor } from '../core/music/harmony-plan.js';
+import { resolveMelodicLanguage, resolveTonality } from '../core/music/song-plan.js';
 import { capabilitiesFor } from '../core/music/sound-capabilities.js';
 import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import {

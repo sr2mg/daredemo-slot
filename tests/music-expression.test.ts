@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { compose, validatePiece, variedChoiceFor } from '../src/core/music/compose.js';
-import type { Piece } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { validatePiece } from '../src/core/music/diagnostics.js';
+import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
+import type { Piece } from '../src/core/music/types.js';
 import { PROGRESSIONS } from '../src/core/music/theory.js';
 
 /**

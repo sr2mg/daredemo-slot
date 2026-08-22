@@ -11,9 +11,8 @@
  */
 
 import { CHORDS } from './theory.js';
-import type { CadenceType } from './compose.js';
+import type { BassLinePolicy, CadenceType } from './types.js';
 
-export type BassLinePolicy = 'on' | 'off';
 
 /** 生成器が読む最小限の和声計画。テストが小さな断片で駆動できるよう構造的に絞る。 */
 export interface BassPlanBar {

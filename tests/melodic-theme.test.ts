@@ -8,8 +8,10 @@ import {
   themeFromGesture,
   transposeTheme,
 } from '../src/core/music/melodic-theme.js';
-import { compose, validatePiece, variedChoiceFor } from '../src/core/music/compose.js';
-import type { ComposeOptions, MotifMove, Piece } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { validatePiece } from '../src/core/music/diagnostics.js';
+import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
+import type { ComposeOptions, MotifMove, Piece } from '../src/core/music/types.js';
 import { melodicPhraseSimilarity } from '../src/core/music/diversity.js';
 import { diagnosePiece } from '../src/core/music/diagnostics.js';
 import { MAJOR_SCALE, PROGRESSIONS } from '../src/core/music/theory.js';

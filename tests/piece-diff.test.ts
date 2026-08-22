@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { compose, variedChoiceFor } from '../src/core/music/compose.js';
-import type { ComposeOptions } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
+import type { ComposeOptions } from '../src/core/music/types.js';
 import { diffPieceSections, pieceSectionRanges } from '../src/core/music/piece-diff.js';
 import { PROGRESSIONS } from '../src/core/music/theory.js';
 

@@ -15,7 +15,7 @@
  * - ランニングステータスは使わない(全イベントにステータスバイトを書く)。
  *   サイズより、テスト・外部ツールでのバイト列検査のしやすさを取る
  */
-import type { Piece } from '../core/music/compose.js';
+import type { Piece } from '../core/music/types.js';
 import { arrangeSf2Parts } from './pcm-arrange.js';
 import type { PcmPart, PcmVoiceOverride } from './pcm-arrange.js';
 import { ROLE_STAGE } from './stage.js';

@@ -1,4 +1,4 @@
-import type { ComposeOptions } from '../core/music/compose.js';
+import type { ComposeOptions } from '../core/music/types.js';
 
 /**
  * BGM ライブラリと BB/RB への割り当ての永続化層。

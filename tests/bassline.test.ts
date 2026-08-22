@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bassDegreesFor } from '../src/core/music/bassline.js';
-import { CURRENT_ENGINE_REV, compose } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { CURRENT_ENGINE_REV } from '../src/core/music/types.js';
 import { diagnosePiece } from '../src/core/music/diagnostics.js';
 
 /**

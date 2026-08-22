@@ -16,7 +16,7 @@
  *   強弱を付ける。オープンは持続で目立つ別アーティキュレーションなので減衰しない。
  *   キック/スネアはバックビートの骨格なので一定のまま。
  */
-import type { DrumEvent } from './compose.js';
+import type { DrumEvent } from './types.js';
 
 const EPS = 1e-3;
 

@@ -8,8 +8,10 @@ import {
   summarizeBlindStudyVotes,
 } from '../src/core/music/blind-study.js';
 import type { BlindStudyVote } from '../src/core/music/blind-study.js';
-import { compose, validatePiece, variedChoiceFor } from '../src/core/music/compose.js';
-import type { ComposeOptions } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { validatePiece } from '../src/core/music/diagnostics.js';
+import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
+import type { ComposeOptions } from '../src/core/music/types.js';
 import { PROGRESSIONS, STYLES } from '../src/core/music/theory.js';
 
 const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;

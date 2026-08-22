@@ -13,7 +13,7 @@
  * 機能の変更ではない、という理論上の位置づけをコード上でも保つ。
  */
 
-export type TensionPolicy = 'off' | 'soft' | 'lush';
+import type { TensionPolicy } from './types.js';
 
 export const TENSION_POLICY_LABELS: Record<'auto' | TensionPolicy, string> = {
   auto: 'スタイル既定',

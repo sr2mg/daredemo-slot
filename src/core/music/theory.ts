@@ -7,13 +7,14 @@
  *   ドミナント等のキー外の音も「正解」にするため。III7 の G# など）
  */
 
-import type { BassLinePolicy } from './bassline.js';
 import { DRUM_GHOST } from './drum-articulation.js';
-import type { DuetPolicy } from './duet.js';
-import type { GlidePolicy } from './glide.js';
 import type { GrooveFeel } from './groove.js';
-
-export type HarmonicFunction = 'tonic' | 'predominant' | 'dominant' | 'colour';
+import type {
+  BassLinePolicy,
+  DuetPolicy,
+  GlidePolicy,
+  HarmonicFunction,
+} from './types.js';
 
 /**
  * コード品質。文字列は chordName() の表示接尾辞であり、同時に tones の導出キー。

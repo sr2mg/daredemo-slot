@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { compose, diagnosePiece, validatePiece } from '../src/core/music/compose.js';
-import type { ComposeOptions, Piece } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { diagnosePiece, validatePiece } from '../src/core/music/diagnostics.js';
+import type { ComposeOptions, Piece } from '../src/core/music/types.js';
 import {
   CHORDS, NATURAL_MINOR_SCALE, MAJOR_SCALE, PROGRESSIONS,
   chordScalePcs, progressionsForTonality,

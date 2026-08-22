@@ -1,5 +1,6 @@
-import type { NesVoiceOptions, NoteEvent, Piece } from '../core/music/compose.js';
-import { arrangementSectionFor, grooveBeat } from '../core/music/compose.js';
+import type { NesVoiceOptions, NoteEvent, Piece } from '../core/music/types.js';
+import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { grooveBeat } from '../core/music/groove.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;

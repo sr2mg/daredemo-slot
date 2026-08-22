@@ -9,7 +9,7 @@
  * songPlan や phrasePlan 等の内部設計はダイジェストに含めない。イベント列に現れない
  * 変更は聴こえない変更であり、ここで検出すべきではないため。
  */
-import type { ChordEvent, DrumEvent, NoteEvent, PhraseSection, Piece } from './compose.js';
+import type { ChordEvent, DrumEvent, NoteEvent, PhraseSection, Piece } from './types.js';
 
 export type PieceSectionId = 'intro' | PhraseSection;
 

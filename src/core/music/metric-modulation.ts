@@ -1,4 +1,4 @@
-import type { TupletDivision } from './compose.js';
+import type { TupletDivision } from './types.js';
 
 /**
  * 暗示的メトリック・モジュレーションの理論カタログ（Krebsのgrouping dissonance G(n:4)）。

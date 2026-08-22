@@ -5,8 +5,8 @@ import type {
   Piece,
   TupletDivision,
   TupletOverlayChoice,
-} from './compose.js';
-import type { SectionRole, SongPlan } from './song-plan.js';
+} from './types.js';
+import type { SectionRole, SongPlan } from './types.js';
 import { allowsTupletOverlay, grooveFor } from './groove.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';

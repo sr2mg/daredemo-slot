@@ -12,14 +12,14 @@
  * - 主旋律の音色はセクションのleadColor(音色によるフォーム分節)でパレットから選ぶ
  */
 
-import { arrangementSectionFor } from '../core/music/compose.js';
+import { arrangementSectionFor } from '../core/music/arrangement.js';
 import type {
   LeadColorSlot,
   PcmPart,
   PcmPresetRef,
   PcmVoiceOverride,
   Piece,
-} from '../core/music/compose.js';
+} from '../core/music/types.js';
 import { applyDrumBusFx } from './bus-fx.js';
 import type { DrumBusFx } from './bus-fx.js';
 import { duckWet, onePoleLowpass, pingPongDelay, stereoChorus, stereoReverb } from './effects.js';
@@ -41,7 +41,7 @@ export const SF2_SAMPLE_RATE = 44100;
  * 持つ。パート語彙(PcmPart)はミックスの役割語彙(stage.ts の StageRole)と同一で、
  * 一致はテスト(sound-backends)が型レベルで検証する。
  */
-export type { LeadColorSlot, PcmPart, PcmPresetRef, PcmVoiceOverride } from '../core/music/compose.js';
+export type { LeadColorSlot, PcmPart, PcmPresetRef, PcmVoiceOverride } from '../core/music/types.js';
 
 export const PCM_PART_LABELS: Record<PcmPart, string> = {
   lead: '主旋律',

@@ -5,7 +5,8 @@ import { approachTokenFor } from '../src/core/music/song-plan.js';
 import {
   CHORDS, chordOriginsFor, harmonicFunctionForToken, progressionsForTonality,
 } from '../src/core/music/theory.js';
-import type { HarmonicFunction, ProgressionTonality } from '../src/core/music/theory.js';
+import type { ProgressionTonality } from '../src/core/music/theory.js';
+import type { HarmonicFunction } from '../src/core/music/types.js';
 
 /**
  * 和音語彙のメタデータ化(度数root/品質quality/機能function + tonesの品質表導出)の検証。

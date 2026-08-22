@@ -1,5 +1,5 @@
 import { Xoshiro128 } from '../rng.js';
-import type { ComposeOptions } from './compose.js';
+import type { ComposeOptions } from './types.js';
 import { COMPOSITION_STRATEGIES } from './composition-strategy.js';
 import type { CompositionStrategy } from './composition-strategy.js';
 

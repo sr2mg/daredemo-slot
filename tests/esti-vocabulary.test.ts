@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
-import type { ComposeOptions, NoteEvent } from '../src/core/music/compose.js';
+import type { ComposeOptions, NoteEvent } from '../src/core/music/types.js';
 import { diagnosePiece } from '../src/core/music/diagnostics.js';
 import { applyDiminution } from '../src/core/music/diminution.js';
 import { availableTensionPcs, selectTensionPcs } from '../src/core/music/tension.js';

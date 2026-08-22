@@ -1,4 +1,4 @@
-import type { NoteEvent, Piece } from './compose.js';
+import type { NoteEvent, Piece } from './types.js';
 
 export interface DistributionSummary {
   samples: number;

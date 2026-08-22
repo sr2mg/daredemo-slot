@@ -11,9 +11,8 @@
  * パート間バランスは各ミキサー(PCMのPART_GAINS / OPLLの音量オフセット)が単独で所有する。
  */
 
-import type { ArrangementSectionPlan, NoteEvent } from './compose.js';
+import type { ArrangementSectionPlan, DuetPolicy, NoteEvent } from './types.js';
 
-export type DuetPolicy = 'on' | 'off';
 
 /** ハモリの音域下限(G3)。低すぎる3度は濁るので連れを付けない。 */
 const DUET_FLOOR_MIDI = 55;
