@@ -35,7 +35,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > 2�
     {
       "endBeat": 72,
       "parts": {
-        "bass": "de2ed3d1",
+        "bass": "336fbbd1",
         "chords": "afeb67ce",
         "counter": "956b2029",
         "drums": "922fd531",
@@ -577,7 +577,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
     {
       "endBeat": 40,
       "parts": {
-        "bass": "8c16c8f5",
+        "bass": "5034b117",
         "chords": "0cfae0f9",
         "counter": "811c9dc5",
         "drums": "b3eba3f7",
@@ -590,7 +590,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
     {
       "endBeat": 72,
       "parts": {
-        "bass": "2429df74",
+        "bass": "435c4f60",
         "chords": "63a3562d",
         "counter": "e0bf6813",
         "drums": "0f8d676e",

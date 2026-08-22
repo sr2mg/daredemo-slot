@@ -1066,6 +1066,64 @@ describe('compose', () => {
     expect(ghostsIn(3)).toEqual(ghostsIn(1));
   });
 
+  it('各スタイルはテンポ・グルーヴ既定を持つ(ジャンル=パターン×テンポ×グルーヴの結合)', () => {
+    for (const style of STYLES) {
+      // UIのBPMスライダー範囲(80..220)に収まること。
+      expect(style.defaultBpm, style.id).toBeGreaterThanOrEqual(80);
+      expect(style.defaultBpm, style.id).toBeLessThanOrEqual(220);
+    }
+    // ブレイクビーツ系はスナップショット検証と同じ組(2step=132+shuffle16 / dnb=174)。
+    const garage = STYLES.find((style) => style.id === 'garage2step')!;
+    expect(garage.defaultBpm).toBe(132);
+    expect(garage.defaultGroove).toBe('shuffle16');
+    const dnb = STYLES.find((style) => style.id === 'dnb')!;
+    expect(dnb.defaultBpm).toBe(174);
+    // kmmoはESTi系実測(BPM96-103)の中央値。
+    expect(STYLES.find((style) => style.id === 'kmmo')!.defaultBpm).toBe(100);
+  });
+
+  it('持続サブ(dnb)のベースはコードイベント頭で長く鳴り、終止は最後の8分だけ接近音に割く', () => {
+    const piece = compose({ ...base, styleId: 'dnb', bars: 8, seed: 42 });
+    // 各コードイベントの頭に必ず低音があり、刻み(8分連打)にならない。
+    for (const chord of piece.chords) {
+      const head = piece.bass.find((note) => Math.abs(note.beat - chord.beat) < 1e-6);
+      expect(head, `beat${chord.beat}`).toBeDefined();
+    }
+    expect(piece.bass.some((note) => note.dur >= 1.5)).toBe(true);
+    // 長音はテヌート、終止の接近音(短音)はスタッカート。
+    for (const note of piece.bass) {
+      expect(note.articulation, `beat${note.beat}`).toBe(note.dur >= 0.5 ? 'tenuto' : 'staccato');
+    }
+    // 終止小節(chordTone)では長音を保ったまま4拍裏に接近音を置く。
+    const cadenceBar = piece.phrasePlan.bars.find((plan) =>
+      plan.cadence === 'half' || plan.cadence === 'turnaround')!;
+    const pickup = piece.bass.find((note) => note.beat === cadenceBar.bar * 4 + 3.5)!;
+    expect(pickup.dur).toBeLessThan(0.5);
+    expect(piece.chords.some((chord) => chord.beat <= pickup.beat
+      && pickup.beat < chord.beat + chord.dur
+      && chord.pcs.includes(pickup.midi % 12))).toBe(true);
+    expect(validatePiece(piece)).toEqual([]);
+  });
+
+  it('キック同期(garage2step)のベースはキック骨格と同置し、8分裏で応答する', () => {
+    const piece = compose({ ...base, styleId: 'garage2step', bars: 8, seed: 42 });
+    const kickBeats = new Set(piece.drums.filter((event) => event.inst === 'kick').map((event) => event.beat));
+    const chordHeads = new Set(piece.chords.map((chord) => chord.beat));
+    // 発音位置は「キック位置」「キックの8分裏(応答)」「キック皆無イベントの頭」だけ。
+    for (const note of piece.bass) {
+      const derived = kickBeats.has(note.beat) || kickBeats.has(note.beat - 0.5) || chordHeads.has(note.beat);
+      expect(derived, `beat${note.beat}`).toBe(true);
+    }
+    // 3拍裏のキック(s10=2.5拍)への同置=root8には無いシンコペが鳴っている。
+    expect(piece.bass.some((note) => note.beat % 4 === 2.5)).toBe(true);
+    // 8分連打(小節8発)にはならない。
+    for (let bar = 0; bar < 8; bar++) {
+      const inBar = piece.bass.filter((note) => note.beat >= bar * 4 && note.beat < bar * 4 + 4);
+      expect(inBar.length, `${bar + 1}小節`).toBeLessThanOrEqual(6);
+    }
+    expect(validatePiece(piece)).toEqual([]);
+  });
+
   it('JTTOU 進行はキー外の音（E7 の G# 等）を正しくコードトーンとして扱う', () => {
     const piece = compose({ ...base, progressionId: 'jttou' });
     expect(piece.barChordNames).toEqual(['FM7', 'E7', 'Am7', 'Gm7(3拍) C7(1拍)']);

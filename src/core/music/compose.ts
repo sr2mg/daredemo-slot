@@ -2258,6 +2258,16 @@ export function compose(opts: ComposeOptions): Piece {
 
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
   const bass: NoteEvent[] = [];
+  // kickSync用: その小節で実際に鳴るキック骨格の強度。ドラム生成と同じ節解決
+  // (sectionB/breakdown)を通すことで、ベースが譜面上のAパターンでなく
+  // 「聴こえているキック」に同置される。
+  const kickStepLevel = (bar: number, step: number): number => {
+    const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
+    const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
+    if (sectionPlan.drum === 'breakdown') return step === 0 || step === 8 ? 1 : 0;
+    const pattern = sectionPlan.drum === 'sectionB' ? style.sectionB.kick : style.kick;
+    return drumPatternStep(pattern, bar, step);
+  };
   // rev1: アンカーを直前アンカーへの最短連結で選ぶ(固定写像はE/D#間で11半音跳ぶ)。
   // 分数コードのライン(bassLine)は連結が前提なので、装置onならrevに関わらず連結する。
   const linkedAnchors = engineRev >= 1 || bassLinePolicy === 'on';
@@ -2283,6 +2293,29 @@ export function compose(opts: ComposeOptions): Piece {
       for (let b = 0; b < c.dur; b++) {
         bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
       }
+    } else if (style.bass === 'sustain') {
+      // 持続サブ: コードイベントごとに1音を長く保つ。倍速ドラムに対する低音の
+      // 持続(速度対比)が様式の核なので、刻まずイベント長のほぼ全部を鳴らす。
+      bass.push({ beat: c.beat, dur: Math.max(0.5, c.dur - 0.1), midi: root });
+    } else if (style.bass === 'kickSync') {
+      // キック同期シンコペ: 実際に鳴るキックに同置し、各キックの2×16分後
+      // (同一コードイベント内のみ)で応答する。応答位置もキック由来なので、
+      // 16分押し込み(s7)への応答はシャッフル格子ごと跳ねる。
+      const startStep = Math.round(c.beat * 4);
+      const endStep = Math.round((c.beat + c.dur) * 4);
+      let pushed = 0;
+      for (let s = startStep; s < endStep; s++) {
+        const onKick = kickStepLevel(Math.floor(s / 16), s % 16) > 0;
+        const answers = !onKick && s - 2 >= startStep
+          && kickStepLevel(Math.floor((s - 2) / 16), (s - 2) % 16) > 0;
+        if (!onKick && !answers) continue;
+        const beat = grooveBeat(s * 0.25, grooveFeel);
+        const nextBeat = grooveBeat(s * 0.25 + 0.5, grooveFeel);
+        bass.push({ beat, dur: Math.min(0.4, Math.max(0.18, (nextBeat - beat) * 0.8)), midi: root });
+        pushed++;
+      }
+      // コード変更は低音でも聴かせる: イベント内にキックが無ければ頭で1音だけ打つ。
+      if (pushed === 0) bass.push({ beat: grooveBeat(c.beat, grooveFeel), dur: 0.4, midi: root });
     } else {
       for (let e = 0; e < c.dur * 2; e++) {
         const midi = style.bass === 'octave8' && e % 2 === 1 ? root + 12 : root;
@@ -2317,7 +2350,23 @@ export function compose(opts: ComposeOptions): Piece {
         last.midi = nearestWithPc(last.midi, [approachPc], 36, 64);
       } else if (melodicLanguage !== 'japanese' && style.bassCadence === 'chordTone') {
         const nextAnchorMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
-        last.midi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
+        const approachMidi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
+        if (style.bass === 'sustain' && last.beat < bar * 4 + 3.5 - 0.001) {
+          // 持続サブの終止: 長音そのものを再ピッチすると小節全体の低音が動いて
+          // しまうため、長音は保ったまま最後の8分だけを接近音へ割く。
+          const pickupBeat = grooveBeat(bar * 4 + 3.5, grooveFeel);
+          last.dur = Math.min(last.dur, pickupBeat - last.beat - 0.05);
+          bass.push({
+            beat: pickupBeat,
+            dur: 0.35,
+            midi: approachMidi,
+            velocity: Math.max(0.4, barPlan.dynamic - 0.1),
+            articulation: 'staccato',
+            role: 'structural',
+          });
+        } else {
+          last.midi = approachMidi;
+        }
       } else {
         const dir = phraseGesture[15]!.direction;
         let distance = 1;
@@ -2372,7 +2421,10 @@ export function compose(opts: ComposeOptions): Piece {
   for (const note of bass) {
     const barPlan = phrasePlan.bars[Math.min(opts.bars - 1, Math.floor(note.beat / 4))]!;
     note.velocity = Math.min(1, barPlan.dynamic + (note.beat % 1 === 0 ? 0.06 : -0.05));
-    note.articulation = style.id === 'rock' ? 'tenuto' : 'staccato';
+    // 持続サブの長音はテヌート(終止の接近音など短音はスタッカートのまま)。
+    note.articulation = style.bass === 'sustain' && note.dur >= 0.5
+      ? 'tenuto'
+      : style.id === 'rock' ? 'tenuto' : 'staccato';
     note.role = 'structural';
   }
   bass.sort((a, b) => a.beat - b.beat);

@@ -1056,7 +1056,20 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               data-testid="st-bpm"
             />
           </label>
-          <select value={styleId} onChange={(e) => setStyleId(e.target.value)} data-testid="st-style">
+          <select
+            value={styleId}
+            onChange={(e) => {
+              // ジャンルは「パターン×テンポ×グルーヴ」の結合で成立するため、
+              // スタイル切替はスタイル既定のBPM/グルーヴへ追従する(その後の手動変更は自由)。
+              setStyleId(e.target.value);
+              const nextStyle = STYLES.find((s) => s.id === e.target.value);
+              if (nextStyle) {
+                setBpm(nextStyle.defaultBpm);
+                setGrooveFeel(nextStyle.defaultGroove ?? DEFAULT_GROOVE_FEEL);
+              }
+            }}
+            data-testid="st-style"
+          >
             {STYLES.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}（{s.feel}）
