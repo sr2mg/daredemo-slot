@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { compose, japanesePlanFor } from '../src/core/music/compose.js';
+import { compose } from '../src/core/music/compose.js';
+import { japanesePlanFor } from '../src/core/music/japanese.js';
 import {
   checkPieceStructure,
   diagnosePiece,
