@@ -11,6 +11,7 @@ import type { BassLinePolicy } from './bassline.js';
 import { DRUM_GHOST } from './drum-articulation.js';
 import type { DuetPolicy } from './duet.js';
 import type { GlidePolicy } from './glide.js';
+import type { GrooveFeel } from './groove.js';
 
 export type HarmonicFunction = 'tonic' | 'predominant' | 'dominant' | 'colour';
 
@@ -518,6 +519,14 @@ export interface StyleDef {
   name: string;
   feel: string;
   /**
+   * スタイル既定のテンポ(BPM)。ジャンルはパターン単体でなく「パターン×テンポ×
+   * グルーヴ」の結合で成立するため、UIのスタイル切替はこの値へ追従する。
+   * compose自体は常にopts.bpmを使うので、保存済みの曲には影響しない。
+   */
+  defaultBpm: number;
+  /** スタイル既定のグルーヴ。省略=straight。UIのスタイル切替が追従する。 */
+  defaultGroove?: GrooveFeel;
+  /**
    * 16 分グリッドの発音強度。値は 0=休符 / 1=通常打 / 中間値=ゴースト(DRUM_GHOST、
    * ベロシティとして鳴る)。長さは 16 の倍数: 16=1小節ループ、32=2小節フレーズ
    * (ブレイクビーツ系の小節間変化)。声部ごとに長さが違ってよく、小節をまたぐ参照は
@@ -532,7 +541,16 @@ export interface StyleDef {
     snare: readonly number[];
     hat: readonly number[];
   };
-  bass: 'octave8' | 'root8' | 'rootFifth';
+  /**
+   * ベースの様式軸(compose.tsのベース生成が分岐する):
+   * - octave8 / root8 / rootFifth: 8分・4分の刻み系(従来)。
+   * - sustain: コードイベントごとの持続低音。倍速ドラムに対する低音の持続
+   *   (速度対比)が様式の核であるブレイクビーツ系(DnB)用。
+   * - kickSync: その小節で実際に鳴るキック骨格(A/B/ブレイクダウン)に同置し、
+   *   各キックの8分裏で応答するシンコペ。低域でキックとベースが一体化する
+   *   UKガラージ系用。実音列は列挙せず、キック譜から毎回導出する。
+   */
+  bass: 'octave8' | 'root8' | 'rootFifth' | 'sustain' | 'kickSync';
   /** 主旋律の8分グリッド上の語彙。拍節の違いを音色だけでなく作曲へ反映する。 */
   melody: {
     /** step 0..7 の発音しやすさ。0・4は生成側で必ず強拍として残す。 */
@@ -563,6 +581,7 @@ export const STYLES: StyleDef[] = [
     id: 'eurobeat',
     name: 'ユーロビート',
     feel: '疾走・パチスロ王道',
+    defaultBpm: 170, // 従来のUI既定を継承(パチスロの疾走文脈)。
     kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
     snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
     hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
@@ -584,6 +603,7 @@ export const STYLES: StyleDef[] = [
     id: 'rock',
     name: 'ロックファンファーレ',
     feel: '熱い・獣王系',
+    defaultBpm: 170, // 従来のUI既定を継承(未実測)。
     kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
     snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
     hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
@@ -605,6 +625,7 @@ export const STYLES: StyleDef[] = [
     id: 'kmmo',
     name: '韓国MMO風',
     feel: '寂しげ×疾走・00年代ネトゲ',
+    defaultBpm: 100, // ESTi系実測BPM96-103(下のコメント)の中央値。
     // 中庸テンポの8ビート+16分ハットの推進。疾走感はBPMでなく細分密度で作る
     // (ESTi系実測: BPM96-103で音符の6割超が16分)。
     kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
@@ -636,6 +657,7 @@ export const STYLES: StyleDef[] = [
     id: 'ska',
     name: 'スカ',
     feel: '陽気・コミカル',
+    defaultBpm: 170, // 従来のUI既定を継承(未実測)。
     kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
     snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
     hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
@@ -657,6 +679,10 @@ export const STYLES: StyleDef[] = [
     id: 'garage2step',
     name: '2ステップ',
     feel: '跳ねる16分・UKガラージ',
+    // UKガラージの常用域(130-135)の中央。シャッフルした16分は様式の核なので
+    // 既定グルーヴで有効にする(スナップショット検証も同じ組で行う)。
+    defaultBpm: 132,
+    defaultGroove: 'shuffle16',
     // 2小節フレーズ(32ステップ)。骨格は「4つ打ちから3拍目のキックを抜く」変則:
     // 1小節目=1拍目+3拍裏、2小節目=1拍目+3拍目直前の16分押し込み(s7)。
     // シャッフル16分グルーヴと合わせると16分位置(s7・ゴースト)だけが跳ねる。
@@ -680,7 +706,8 @@ export const STYLES: StyleDef[] = [
       ],
       hat: [0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0],
     },
-    bass: 'root8',
+    // ベースはキック骨格と同置+8分裏の応答(kickSync)。低域の一体化が様式。
+    bass: 'kickSync',
     melody: {
       // 裏拍(2拍裏・4拍裏)を押すシンコペーション優位の語彙。
       onsetWeights: [100, 55, 40, 90, 100, 50, 45, 92],
@@ -696,6 +723,8 @@ export const STYLES: StyleDef[] = [
     id: 'dnb',
     name: 'ドラムンベース',
     feel: '疾走ブレイクビーツ(BPM170前後)',
+    // DnBの常用域(170-178)の代表値(スナップショット検証も同値)。
+    defaultBpm: 174,
     // ツーステップ・ブレイクの骨格: キックは1拍目+3拍裏の1小節ループ。
     kick: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
     // 主打(2・4拍=強度1)は不変のまま、ゴーストの位置が2小節で入れ替わり
@@ -718,7 +747,8 @@ export const STYLES: StyleDef[] = [
       ],
       hat: [1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1],
     },
-    bass: 'root8',
+    // 倍速ドラムの下で低音は持続(sustain)。melodyの速度対比と同じ原則をベースへも適用。
+    bass: 'sustain',
     melody: {
       // 速いテンポの上に長い音価で歌うパッド/リード型(ドラムとの速度対比が様式)。
       onsetWeights: [100, 30, 55, 45, 100, 35, 60, 50],
