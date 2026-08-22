@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { playPerfect } from '../core/sim.js';
@@ -10,12 +10,16 @@ import { machines } from '../machines/index.js';
 import { checkLayout, validateMachine } from '../core/validate.js';
 import { EditorPanel } from './editor.js';
 import { compose } from '../core/music/compose.js';
-import { BgmComposerPanel } from './bgm-composer.js';
+// 作曲スタジオ一式(診断・ブラインド比較・研究ログUI込み)は重いのでゲーム側
+// バンドルへ静的リンクしない(vite の main/bgm 2エントリ分離を実質有効に保つ)。
+const BgmComposerPanel = lazy(() =>
+  import('./bgm-composer.js').then((m) => ({ default: m.BgmComposerPanel })),
+);
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
-import { arrangeComposedBgm } from './bgm-audio.js';
+import { arrangeComposedBgm } from '../audio/render.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
-import type { SfxName } from './opll-core.js';
+import type { SfxName } from './sfx-names.js';
 import { decodeMachine, parseShareHash } from './share.js';
 import { SfxPlayer } from './sfx-player.js';
 import { loadStored, oneOf, saveStored, usePersistentState } from './persist.js';
@@ -1160,7 +1164,9 @@ export function App() {
           </a>
         </div>
         <SoundTestPanel player={sfxRef.current!} />
-        <BgmComposerPanel player={sfxRef.current!} />
+        <Suspense fallback={<p className="panel-note">BGM作曲パネルを読み込み中…</p>}>
+          <BgmComposerPanel player={sfxRef.current!} />
+        </Suspense>
         <SfxDesignerPanel player={sfxRef.current!} />
         <p className="panel-note credit-note">
           音源コア:{' '}

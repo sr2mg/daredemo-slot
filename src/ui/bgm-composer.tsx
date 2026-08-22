@@ -94,13 +94,13 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
-import { arrangeComposedBgm, isPcmBgm } from './bgm-audio.js';
-import type { BgmPcmRenderer, ComposedBgmDef } from './bgm-audio.js';
+import { arrangeComposedBgm, bgmRendererFor, isPcmBgm, renderComposedBgm } from '../audio/render.js';
+import type { BgmPcmRenderer, ComposedBgmDef } from '../audio/render.js';
 import type { PcmVoiceOverride } from '../audio/pcm-arrange.js';
 import { exportMp3 } from '../audio/mp3-export.js';
 import { NES_DUTIES } from '../audio/nes-apu.js';
-import { defaultVoicesFor, OPLL_USER_PATCHES } from './opll-arrange.js';
-import { OPLL_RATE, OPLL_VOICES } from './opll-core.js';
+import { defaultVoicesFor, OPLL_USER_PATCHES } from '../audio/opll-arrange.js';
+import { OPLL_RATE, OPLL_VOICES } from '../audio/opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import { PROGRESSION_USAGE } from './progression-usage.js';
 import type { SfxPlayer } from './sfx-player.js';
@@ -533,22 +533,17 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     return pcmVoices && Object.keys(pcmVoices).length > 0 ? { ...rest, pcmVoices } : rest;
   };
 
-  /** その曲の再生に使うレンダラ。曲側の音源設定がpcmのときだけPCMレンダラを使う。 */
-  const rendererFor = (opts: ComposeOptions): BgmPcmRenderer | null =>
-    opts.soundChip === 'pcm' ? pcmRenderer : null;
-
   /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
   const bgmCacheKey = (opts: ComposeOptions): string => {
-    const renderer = rendererFor(opts);
+    const renderer = bgmRendererFor(opts, pcmRenderer);
     return renderer ? `${JSON.stringify(opts)}|${renderer.idFor(opts)}` : JSON.stringify(opts);
   };
 
   const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
-    const renderer = rendererFor(opts);
-    if (!renderer) return arrangeComposedBgm(p, opts);
+    if (!bgmRendererFor(opts, pcmRenderer)) return renderComposedBgm(p, opts);
     // 高価なSF2レンダリングはプレイヤーのdefキャッシュ照会を先に行い、ヒット時は丸ごと
     // 省略する(キーは実効音色で組んであるので、同キー=同波形が保証されている)。
-    return player.getCachedPcmBgm(bgmCacheKey(opts)) ?? await renderer.render(p, opts);
+    return player.getCachedPcmBgm(bgmCacheKey(opts)) ?? await renderComposedBgm(p, opts, pcmRenderer);
   };
 
   const playOptions = async (opts: ComposeOptions, preserveRepairHistory = false) => {

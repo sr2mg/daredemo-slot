@@ -1,7 +1,6 @@
-import type { SfxDesign, SfxEvent, ToneEvent } from '../core/music/sfx-design.js';
-import { buildSfxEvents, sfxDuration } from '../core/music/sfx-design.js';
-import { initRhythmMode } from './mml.js';
-import { SeqBuilder } from './opll-core.js';
+import type { SfxDesign, SfxEvent, ToneEvent } from '../core/sfx/sfx-design.js';
+import { buildSfxEvents, sfxDuration } from '../core/sfx/sfx-design.js';
+import { initRhythmMode, SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
 
 /**

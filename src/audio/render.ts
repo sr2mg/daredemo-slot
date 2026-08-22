@@ -1,11 +1,10 @@
 import type { ComposeOptions, Piece } from '../core/music/types.js';
-import { renderNesPiece, NES_SAMPLE_RATE } from '../audio/nes-apu.js';
-import type { PcmBgmDef } from '../audio/pcm-types.js';
+import { renderNesPiece, NES_SAMPLE_RATE } from './nes-apu.js';
+import type { PcmBgmDef } from './pcm-types.js';
 import { arrangePiece } from './opll-arrange.js';
 import type { SfxDef } from './opll-core.js';
 
-// 型の所有はaudio層(audio→uiの逆依存を作らない)。既存の参照先として再エクスポート。
-export type { PcmBgmDef } from '../audio/pcm-types.js';
+export type { PcmBgmDef } from './pcm-types.js';
 
 export type ComposedBgmDef = (SfxDef & { loopStart: number; loopEnd: number }) | PcmBgmDef;
 
@@ -41,4 +40,26 @@ export function arrangeComposedBgm(piece: Piece, options: ComposeOptions): Compo
     };
   }
   return arrangePiece(piece, options.styleId, options.voices, options.opllUserPatch);
+}
+
+/** その曲の再生に使う外部レンダラ。曲側の音源設定がpcmのときだけPCMレンダラを使う。 */
+export function bgmRendererFor(
+  options: ComposeOptions,
+  pcmRenderer: BgmPcmRenderer | null,
+): BgmPcmRenderer | null {
+  return options.soundChip === 'pcm' ? pcmRenderer : null;
+}
+
+/**
+ * 3バックエンド（OPLL / 2A03 / PCM）を1箇所で解決する非同期の単一入口。
+ * PCMレンダラが未指定・未ロードの曲は arrangeComposedBgm の劣化経路
+ * （pcm→OPLL、nes2a03→内蔵APU）へ落ちる。
+ */
+export async function renderComposedBgm(
+  piece: Piece,
+  options: ComposeOptions,
+  pcmRenderer: BgmPcmRenderer | null = null,
+): Promise<ComposedBgmDef> {
+  const renderer = bgmRendererFor(options, pcmRenderer);
+  return renderer ? renderer.render(piece, options) : arrangeComposedBgm(piece, options);
 }

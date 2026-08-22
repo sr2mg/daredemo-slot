@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { SFX_RECIPES } from '../core/music/sfx-design.js';
-import type { SfxDesign } from '../core/music/sfx-design.js';
+import { SFX_RECIPES } from '../core/sfx/sfx-design.js';
+import type { SfxDesign } from '../core/sfx/sfx-design.js';
 import { NOTE_NAMES } from '../core/music/theory.js';
-import { OPLL_VOICES } from './opll-core.js';
-import type { SfxName } from './opll-core.js';
+import { OPLL_VOICES } from '../audio/opll-core.js';
+import type { SfxName } from './sfx-names.js';
 import { loadStored, saveStored } from './persist.js';
 import type { SfxPlayer } from './sfx-player.js';
 import {

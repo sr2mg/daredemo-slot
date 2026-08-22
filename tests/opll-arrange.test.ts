@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
 import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
 import { PROGRESSIONS } from '../src/core/music/theory.js';
-import { arrangePiece, defaultVoicesFor, OPLL_USER_PATCHES } from '../src/ui/opll-arrange.js';
+import { arrangePiece, defaultVoicesFor, OPLL_USER_PATCHES } from '../src/audio/opll-arrange.js';
 
 const piece = compose({
   progressionId: 'royal-pop',

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { compileDrums, compileMmlTrack, compileSong } from '../src/ui/mml.js';
-import type { OpllExports } from '../src/ui/opll-core.js';
+import { compileDrums, compileMmlTrack, compileSong } from './helpers/mml.js';
+import type { OpllExports } from '../src/audio/opll-core.js';
 import {
   freqToFnum,
   OPLL_CLOCK,
@@ -9,8 +9,8 @@ import {
   OPLL_RATE,
   renderSequence,
   SeqBuilder,
-} from '../src/ui/opll-core.js';
-import { arrangeSfx } from '../src/ui/sfx-arrange.js';
+} from '../src/audio/opll-core.js';
+import { arrangeSfx } from '../src/audio/sfx-arrange.js';
 import { ASSIGNABLE_SFX, PRESET_SFX } from '../src/ui/sfx-library.js';
 
 const wasmBytes = readFileSync(new URL('../src/ui/emu2413.wasm', import.meta.url));

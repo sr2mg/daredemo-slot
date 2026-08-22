@@ -3,13 +3,12 @@ import type {
 } from '../core/music/types.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
 import { grooveBeat } from '../core/music/groove.js';
-import { initRhythmMode } from './mml.js';
-import { SeqBuilder } from './opll-core.js';
+import { initRhythmMode, SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
 
 import { glideDurationSec } from '../core/music/glide.js';
-import type { StageRole } from '../audio/stage.js';
-import { noteStageEchoFor } from '../audio/time-layer.js';
+import type { StageRole } from './stage.js';
+import { noteStageEchoFor } from './time-layer.js';
 
 /**
  * OPLLの旋律パート語彙 = ミックスの役割語彙(stage.ts)からドラム(リズムモード担当)を

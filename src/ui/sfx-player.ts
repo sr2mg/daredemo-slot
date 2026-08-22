@@ -1,9 +1,10 @@
-import type { SfxDesign } from '../core/music/sfx-design.js';
-import { isPcmBgm } from './bgm-audio.js';
-import type { ComposedBgmDef, PcmBgmDef } from './bgm-audio.js';
-import type { OpllExports, SfxDef, SfxName } from './opll-core.js';
-import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from './opll-core.js';
-import { arrangeSfx } from './sfx-arrange.js';
+import type { SfxDesign } from '../core/sfx/sfx-design.js';
+import { isPcmBgm } from '../audio/render.js';
+import type { ComposedBgmDef, PcmBgmDef } from '../audio/render.js';
+import type { OpllExports, SfxDef } from '../audio/opll-core.js';
+import type { SfxName } from './sfx-names.js';
+import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from '../audio/opll-core.js';
+import { arrangeSfx } from '../audio/sfx-arrange.js';
 import { ASSIGNABLE_SFX, PRESET_SFX, resolveSfxAssign } from './sfx-library.js';
 
 /**

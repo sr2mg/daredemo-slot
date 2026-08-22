@@ -1,7 +1,7 @@
 import { Xoshiro128 } from '../core/rng.js';
 import type { Rng } from '../core/rng.js';
 import type { EngineState, GameEvent, MachineDef, RoleId } from '../core/types.js';
-import type { SfxName } from './opll-core.js';
+import type { SfxName } from './sfx-names.js';
 
 /**
  * サブ基板演出層（示唆・煽り）。NavLayer（軸 5）と同じ作法で、専用の独立乱数を持ち、

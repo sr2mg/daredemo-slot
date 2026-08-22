@@ -1,7 +1,11 @@
-import { SeqBuilder } from './opll-core.js';
+import { initRhythmMode, SeqBuilder } from '../../src/audio/opll-core.js';
 
 /**
- * MML 風ミニ言語 → OPLL レジスタイベントのコンパイラ（BGM 作曲用）。
+ * MML 風ミニ言語 → OPLL レジスタイベントのコンパイラ。
+ *
+ * 旧BGM作曲経路の遺物で、本番コードはもう使わない（compose() → opll-arrange が現行）。
+ * OPLL レンダラの回帰テスト（tests/opll.test.ts）が既知の譜面を組み立てる
+ * フィクスチャとしてだけ残している。
  *
  * 対応構文（1 トラック = 1 チャンネル）:
  * - 音名: c d e f g a b（直後に + / # で半音上げ、- で半音下げ）
@@ -105,20 +109,6 @@ const DRUM_BITS: Record<string, number> = {
   c: 0x02, // トップシンバル
   h: 0x01, // ハイハット
 };
-
-/** リズムモードの初期化（ch6〜8 の fnum/blk 定番値・リズム音量・モード ON）*/
-export function initRhythmMode(b: SeqBuilder): void {
-  b.raw(0x16, 0x20, 0)
-    .raw(0x17, 0x50, 0)
-    .raw(0x18, 0xc0, 0)
-    .raw(0x26, 0x05, 0)
-    .raw(0x27, 0x05, 0)
-    .raw(0x28, 0x01, 0)
-    .raw(0x36, 0x04, 0) //  BD 音量
-    .raw(0x37, 0x24, 0) //  HH(上位) / SD(下位)
-    .raw(0x38, 0x24, 0) //  TOM(上位) / CYM(下位)
-    .raw(0x0e, 0x20, 0);
-}
 
 /** リズムモード有効化 + ドラムパターン。パターン長（秒）を返す */
 export function compileDrums(b: SeqBuilder, pattern: string, bpm: number, step = 8): number {

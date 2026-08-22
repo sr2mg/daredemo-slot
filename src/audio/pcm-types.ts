@@ -1,7 +1,7 @@
 /**
  * オーディオ層の出力形式。UIプレイヤー(sfx-player)がそのまま再生できる
  * モノラル/ステレオPCM+ループ区間。audio層はuiへ依存しないため、型はここが所有し、
- * ui/bgm-audio.tsは互換のため再エクスポートする。
+ * audio/render.tsは互換のため再エクスポートする。
  */
 export interface PcmBgmDef {
   kind: 'pcm';
