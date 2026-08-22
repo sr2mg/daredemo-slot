@@ -1,5 +1,5 @@
 import type { ComposeOptions, Piece } from '../core/music/types.js';
-import { renderNesPiece, NES_SAMPLE_RATE } from './nes-apu.js';
+import { renderNesPiece, renderNesPieceAsync, NES_SAMPLE_RATE } from './nes-apu.js';
 import type { PcmBgmDef } from './pcm-types.js';
 import { arrangePiece } from './opll-arrange.js';
 import type { SfxDef } from './opll-core.js';
@@ -73,7 +73,21 @@ export async function renderComposedBgm(
   piece: Piece,
   options: ComposeOptions,
   pcmRenderer: BgmPcmRenderer | null = null,
+  onProgress?: (ratio: number) => void,
 ): Promise<ComposedBgmDef> {
   const renderer = bgmRendererFor(options, pcmRenderer);
-  return renderer ? renderer.render(piece, options) : arrangeComposedBgm(piece, options);
+  if (renderer) return renderer.render(piece, options);
+  // 2A03はサンプル合成が重い(曲丸ごと同期でレンダリングするとメインスレッドが
+  // 数百ms〜秒単位止まる)ため、非同期経路ではチャンク合成を使う。
+  if (options.soundChip === 'nes2a03') {
+    const spb = 60 / piece.bpm;
+    return {
+      kind: 'pcm',
+      wave: await renderNesPieceAsync(piece, options.nes, onProgress),
+      sampleRate: NES_SAMPLE_RATE,
+      loopStart: piece.loopStartBeat * spb,
+      loopEnd: piece.beats * spb,
+    };
+  }
+  return arrangeComposedBgm(piece, options);
 }

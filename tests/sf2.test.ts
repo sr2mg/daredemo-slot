@@ -227,11 +227,11 @@ describe('PCM編曲(Piece→GMノート)', () => {
     expect(notes.some((n) => n.program === 48 && n.bank === 0)).toBe(true);
   });
 
-  it('同梱GeneralUser GSで実際に音が出る(統合)', () => {
+  it('同梱GeneralUser GSで実際に音が出る(統合)', async () => {
     const buffer = readFileSync('public/soundfonts/GeneralUser-GS.sf2');
     const font = parseSf2(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
     expect(font.presets.length).toBeGreaterThan(100);
-    const def = renderSf2Bgm(piece, font);
+    const def = await renderSf2Bgm(piece, font);
     expect(def.sampleRate).toBe(SF2_SAMPLE_RATE);
     expect(def.loopEnd).toBeCloseTo(piece.beats * (60 / piece.bpm), 5);
     expect(rmsOf(def.wave, 0.5, Math.min(def.loopEnd, 5), SF2_SAMPLE_RATE)).toBeGreaterThan(0.01);

@@ -16,7 +16,7 @@ const BgmComposerPanel = lazy(() =>
   import('./bgm-composer.js').then((m) => ({ default: m.BgmComposerPanel })),
 );
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
-import { arrangeComposedBgm, bgmCacheKey } from '../audio/render.js';
+import { bgmCacheKey, renderComposedBgm } from '../audio/render.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import type { SfxName } from './sfx-names.js';
@@ -568,13 +568,16 @@ export function App() {
         if (sfx?.enabled) {
           const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
           const song = resolveAssign(slot);
-          try {
-            const piece = compose(song.options);
-            const def = arrangeComposedBgm(piece, song.options);
-            void sfx.playComposedBgm(bgmCacheKey(song.options), def, 1.05);
-          } catch {
-            // 保存データ破損等。音は演出なので無音で続行する
-          }
+          void (async () => {
+            try {
+              const piece = compose(song.options);
+              // 2A03等の重い合成はチャンク化された非同期経路で行い、リール操作を固めない。
+              const def = await renderComposedBgm(piece, song.options);
+              void sfx.playComposedBgm(bgmCacheKey(song.options), def, 1.05);
+            } catch {
+              // 保存データ破損等。音は演出なので無音で続行する
+            }
+          })();
         }
       } else if (event.replayWon) playSfx('replay');
       else if (event.payout > 0) playSfx('payout');
@@ -726,7 +729,7 @@ export function App() {
         const song = resolveAssign(slot);
         try {
           const piece = compose(song.options);
-          const def = arrangeComposedBgm(piece, song.options);
+          const def = await renderComposedBgm(piece, song.options);
           void sfx.ensureComposedBgm(bgmCacheKey(song.options), def);
         } catch {
           // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる

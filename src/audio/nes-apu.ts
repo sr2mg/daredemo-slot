@@ -172,11 +172,15 @@ function tndOutput(triangle: number, noise: number, dmc = 0): number {
 }
 
 /**
- * Piece を標準2A03のチャンネル予算へ落としてPCM化する。
- * pulse1=主旋律 / pulse2=単音伴奏 / triangle=ベース / noise=ドラム。
- * DMCは初版では常に0（未使用）。拡張音源・リバーブ・任意波形は使わない。
+ * 合成の準備(譜面→チャンネル別イベント列)と、サンプル範囲を書き込む閉包を作る。
+ * 状態(発振器・フィルタ・LFSR)は閉包が持ち、renderRange は先頭から順に
+ * 呼ばれる前提(チャンク分割はできるが、範囲の巻き戻し・スキップはできない)。
  */
-export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Float32Array {
+function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
+  length: number;
+  out: Float32Array;
+  renderRange: (start: number, end: number) => void;
+} {
   const duration = piece.beats * 60 / piece.bpm;
   const length = Math.max(1, toSample(duration));
   const pulse1Events: GateEvent[] = [];
@@ -262,34 +266,67 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
     }
   };
 
-  for (let i = 0; i < length; i++) {
-    applyEvents(pulse1, i);
-    applyEvents(pulse2, i);
-    applyEvents(triangle, i);
-    while (noiseIndex < noiseHits.length && noiseHits[noiseIndex]!.sample <= i) currentNoise = noiseHits[noiseIndex++]!;
+  const renderRange = (start: number, end: number): void => {
+    for (let i = start; i < end; i++) {
+      applyEvents(pulse1, i);
+      applyEvents(pulse2, i);
+      applyEvents(triangle, i);
+      while (noiseIndex < noiseHits.length && noiseHits[noiseIndex]!.sample <= i) currentNoise = noiseHits[noiseIndex++]!;
 
-    const p1 = clockPulse(pulse1);
-    const p2 = clockPulse(pulse2);
-    const tri = clockTriangle(triangle);
-    let noise = 0;
-    if (currentNoise) {
-      const elapsed = i - currentNoise.sample;
-      const envelopeStep = Math.floor(elapsed * 240 / NES_SAMPLE_RATE / currentNoise.decayFrames);
-      const volume = Math.max(0, currentNoise.volume - envelopeStep);
-      if (volume > 0) {
-        noisePhase += NES_CPU_CLOCK / NES_NOISE_PERIODS[currentNoise.period]! / NES_SAMPLE_RATE;
-        while (noisePhase >= 1) {
-          noisePhase -= 1;
-          const tap = currentNoise.mode === 1 ? 6 : 1;
-          const feedback = (lfsr & 1) ^ ((lfsr >> tap) & 1);
-          lfsr = (lfsr >> 1) | (feedback << 14);
+      const p1 = clockPulse(pulse1);
+      const p2 = clockPulse(pulse2);
+      const tri = clockTriangle(triangle);
+      let noise = 0;
+      if (currentNoise) {
+        const elapsed = i - currentNoise.sample;
+        const envelopeStep = Math.floor(elapsed * 240 / NES_SAMPLE_RATE / currentNoise.decayFrames);
+        const volume = Math.max(0, currentNoise.volume - envelopeStep);
+        if (volume > 0) {
+          noisePhase += NES_CPU_CLOCK / NES_NOISE_PERIODS[currentNoise.period]! / NES_SAMPLE_RATE;
+          while (noisePhase >= 1) {
+            noisePhase -= 1;
+            const tap = currentNoise.mode === 1 ? 6 : 1;
+            const feedback = (lfsr & 1) ^ ((lfsr >> tap) & 1);
+            lfsr = (lfsr >> 1) | (feedback << 14);
+          }
+          noise = (lfsr & 1) === 0 ? volume : 0;
         }
-        noise = (lfsr & 1) === 0 ? volume : 0;
       }
-    }
 
-    const mixed = pulseOutput(p1, p2) + tndOutput(tri, noise);
-    out[i] = Math.max(-1, Math.min(1, lp14k.step(hp440.step(hp90.step(mixed))) * 2.2));
+      const mixed = pulseOutput(p1, p2) + tndOutput(tri, noise);
+      out[i] = Math.max(-1, Math.min(1, lp14k.step(hp440.step(hp90.step(mixed))) * 2.2));
+    }
+  };
+  return { length, out, renderRange };
+}
+
+/**
+ * Piece を標準2A03のチャンネル予算へ落としてPCM化する。
+ * pulse1=主旋律 / pulse2=単音伴奏 / triangle=ベース / noise=ドラム。
+ * DMCは初版では常に0（未使用）。拡張音源・リバーブ・任意波形は使わない。
+ */
+export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Float32Array {
+  const { length, out, renderRange } = prepareNesRender(piece, options);
+  renderRange(0, length);
+  return out;
+}
+
+/**
+ * renderNesPiece の非同期版。約0.5秒ぶんずつ合成して制御をイベントループへ返し、
+ * ゲーム本体のメインスレッドを長時間ブロックしない(OPLLのrenderSequenceAsyncと同じ作法)。
+ */
+export async function renderNesPieceAsync(
+  piece: Piece,
+  options: NesVoiceOptions = {},
+  onProgress?: (ratio: number) => void,
+): Promise<Float32Array> {
+  const { length, out, renderRange } = prepareNesRender(piece, options);
+  const chunk = Math.round(0.5 * NES_SAMPLE_RATE);
+  for (let start = 0; start < length; start += chunk) {
+    const end = Math.min(length, start + chunk);
+    renderRange(start, end);
+    onProgress?.(end / length);
+    if (end < length) await new Promise((resolve) => setTimeout(resolve, 0));
   }
   return out;
 }

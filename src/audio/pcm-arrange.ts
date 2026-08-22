@@ -252,12 +252,14 @@ function echoGateFor(piece: Piece, length: number, sampleRate: number, spb: numb
  * PieceをSoundFontで合成し、既存プレイヤーのPCM BGM形式(ステレオ)で返す。
  * fontに配列を渡すと重ねになり、先頭に無いプリセットは後続フォントが補完する
  * (sf2.tsのSf2FontStack。部分フォント+フルGMの2台構成が典型)。
+ * パート(声部)を1つ合成するごとに制御をイベントループへ返し、UIを固めない。
  */
-export function renderSf2Bgm(
+export async function renderSf2Bgm(
   piece: Piece,
   font: Sf2FontStack,
   overrides: PcmVoiceOverride = {},
-): PcmBgmDef {
+  onProgress?: (ratio: number) => void,
+): Promise<PcmBgmDef> {
   const spb = 60 / piece.bpm;
   const room = roomFor(piece.styleId);
   const loopEndSec = piece.beats * spb;
@@ -278,8 +280,10 @@ export function renderSf2Bgm(
 
   const parts = arrangeSf2Parts(piece, overrides);
   const echoSpec = noteStageEchoFor(piece.grooveFeel);
-  for (const [part, baseNotes] of Object.entries(parts) as [PcmPart, Sf2Note[]][]) {
-    if (baseNotes.length === 0) continue;
+  const partEntries = (Object.entries(parts) as [PcmPart, Sf2Note[]][])
+    .filter(([, baseNotes]) => baseNotes.length > 0);
+  let renderedParts = 0;
+  for (const [part, baseNotes] of partEntries) {
     const stage = ROLE_STAGE[part];
     // MIDI段エコー: セクション計画が有効にした区間のリードだけ。タップはループへ巻き戻す。
     const notes = part === 'lead'
@@ -325,6 +329,10 @@ export function renderSf2Bgm(
       if (chorusSend > 0) chorusBus[i] = chorusBus[i]! + sample * chorusSend;
       if (delaySend > 0) delayBus[i] = delayBus[i]! + sample * delaySend * echoGate[i]!;
     }
+    renderedParts++;
+    // 空間処理(リバーブ等)を残り1割として配分する。
+    onProgress?.((renderedParts / partEntries.length) * 0.9);
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   const reverb = stereoReverb(reverbBus, SF2_SAMPLE_RATE, room.rt60Sec);
@@ -353,6 +361,7 @@ export function renderSf2Bgm(
     left[i] = Math.tanh(sumLeft[i]!);
     right[i] = Math.tanh(sumRight[i]!);
   }
+  onProgress?.(1);
   return {
     kind: 'pcm',
     wave: left,

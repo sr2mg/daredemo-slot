@@ -37,16 +37,14 @@ import {
   GROOVE_FEELS,
   GROOVE_FEEL_LABELS,
   allowsTupletOverlay,
-  isGrooveFeel,
 } from '../core/music/groove.js';
 import type { GrooveFeel } from '../core/music/groove.js';
 import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
 import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
 import { normalizeComposeOptions } from '../core/music/options.js';
 import { checkPieceStructure, suggestCompositionRepair } from '../core/music/diagnostics.js';
-import type { CompositionRepair, DiagnosticCategory } from '../core/music/diagnostics.js';
+import type { CompositionRepair } from '../core/music/diagnostics.js';
 import { defaultChoiceFor, hasVariedChoiceFor, variedChoiceFor } from '../core/music/harmony-plan.js';
-import { resolveMelodicLanguage, resolveTonality } from '../core/music/song-plan.js';
 import { capabilitiesFor } from '../core/music/sound-capabilities.js';
 import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import {
@@ -70,12 +68,6 @@ import {
 } from '../core/music/piece-diff.js';
 import type { PiecePartId } from '../core/music/piece-diff.js';
 import {
-  COMPOSITION_EXPERIMENTS,
-  COMPOSITION_EXPERIMENT_STATUS_LABELS,
-  COMPOSITION_HYPOTHESES,
-  COMPOSITION_HYPOTHESIS_STATUS_LABELS,
-} from '../core/music/composition-research.js';
-import {
   KEYS,
   PROGRESSIONS,
   STYLES,
@@ -96,7 +88,6 @@ import {
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
 import {
-  arrangeComposedBgm,
   bgmCacheKey as sharedBgmCacheKey,
   bgmRendererFor,
   isPcmBgm,
@@ -109,6 +100,19 @@ import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from '../audio/opll-arrange.js';
 import { OPLL_RATE, OPLL_VOICES } from '../audio/opll-core.js';
 import { loadStored, saveStored } from './persist.js';
+import {
+  DIMINUTION_CHOICES,
+  FORM_KEY,
+  loadComposerForm,
+  newSeed,
+  newSongId,
+  songSummary,
+  TENSION_CHOICES,
+  VOICE_PARTS,
+  voiceLabel,
+} from './composer-form.js';
+import { CompositionResearchPanel } from './composition-research-panel.js';
+import { DiagnosisPanel } from './diagnosis-panel.js';
 import { PROGRESSION_USAGE } from './progression-usage.js';
 import type { SfxPlayer } from './sfx-player.js';
 
@@ -125,86 +129,10 @@ import type { SfxPlayer } from './sfx-player.js';
  * BB/RB のゲーム中 BGM に割り当てられる（App.tsx がボーナス開始時に読む）。
  */
 
-const newSeed = (): number => (Math.random() * 0xffff_ffff) >>> 0;
 
-const newSongId = (): string => `s${Date.now().toString(36)}${newSeed().toString(36)}`;
 
-const DIAGNOSTIC_LABELS: Record<DiagnosticCategory, string> = {
-  harmony: '和声',
-  melody: '旋律',
-  voiceLeading: '声部進行',
-  rhythm: 'リズム',
-  counterpoint: '副旋律',
-  texture: '編成',
-  form: 'フォーム',
-  loop: 'ループ',
-};
 
-const STRUCTURAL_STATUS_LABELS = {
-  pass: '問題なし',
-  attention: '要確認',
-  error: '要修正',
-} as const;
 
-const COMPOSITION_RESEARCH_COUNTS = {
-  tested: COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'tested').length,
-  partiallyTested: COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'partiallyTested').length,
-  untested: COMPOSITION_HYPOTHESES.filter((hypothesis) => hypothesis.status === 'untested').length,
-} as const;
-
-/** 音色を上書きできる旋律パート（リズム5音は OPLL リズムモード固定） */
-const VOICE_PARTS: readonly { part: keyof VoiceOverride; label: string }[] = [
-  { part: 'lead', label: 'リード' },
-  { part: 'backing', label: 'バッキング' },
-  { part: 'bass', label: 'ベース' },
-  { part: 'counter', label: '副旋律' },
-  { part: 'ostinato', label: '分散和音' },
-];
-
-const voiceLabel = (id: number): string =>
-  id === 0 ? 'ユーザー音色' : OPLL_VOICES.find((v) => v.id === id)?.label.split('（')[0] ?? String(id);
-
-/** 選択肢の唯一の出所はLABELS。型・バリデータ・selectの選択肢がここから同期する。 */
-const TENSION_CHOICES = Object.keys(TENSION_POLICY_LABELS) as ('auto' | TensionPolicy)[];
-const DIMINUTION_CHOICES = Object.keys(DIMINUTION_POLICY_LABELS) as ('auto' | DiminutionPolicy)[];
-
-/** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
-function songSummary(options: ComposeOptions): string {
-  const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
-  const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
-  const chip = capabilitiesFor(options.soundChip).label;
-  const form = options.bars === 40
-    ? 'OPLL BIG風40小節'
-    : options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
-  const intro = (options.bars === 16 || options.bars === 40) && options.intro === false ? ' / イントロなし' : '';
-  const tonality = resolveTonality(options);
-  const melodicLanguage = resolveMelodicLanguage(options);
-  const tonalLabel = tonality === 'minor' ? ' / 短調' : '';
-  const melody = melodicLanguage === 'japanese'
-    ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
-    : melodicLanguage === 'pentatonic' ? ' / 五音ペンタ' : '';
-  const groove = options.grooveFeel && options.grooveFeel !== DEFAULT_GROOVE_FEEL
-    ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
-    : '';
-  const tuplet = options.tupletOverlay && options.tupletOverlay !== 'off'
-    ? ` / 連符${TUPLET_OVERLAY_LABELS[String(options.tupletOverlay) as keyof typeof TUPLET_OVERLAY_LABELS]}`
-    : '';
-  const tension = options.tensionPolicy && options.tensionPolicy !== 'auto'
-    ? ` / テンション:${TENSION_POLICY_LABELS[options.tensionPolicy]}`
-    : '';
-  const diminution = options.diminution && options.diminution !== 'auto'
-    ? ` / 細分:${DIMINUTION_POLICY_LABELS[options.diminution]}`
-    : '';
-  const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
-  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${tension}${diminution}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
-  if (options.soundChip && options.soundChip !== 'opll') return base;
-  const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
-  if (overridden.length === 0) return base;
-  return `${base} / ${overridden.map(({ part, label }) => `${label}=${voiceLabel(options.voices![part]!)}`).join('・')}`;
-}
-
-/** 作曲フォームの永続化（曲リストとは別に、作業中の設定そのものを覚える） */
-const FORM_KEY = 'daredemo.bgmComposer.form.v1';
 const BLIND_VOTES_KEY = 'daredemo.bgmComposer.blindStudy.v1';
 
 function loadBlindStudyVotes(): BlindStudyVote[] {
@@ -215,117 +143,6 @@ function loadBlindStudyVotes(): BlindStudyVote[] {
   );
 }
 
-interface ComposerForm {
-  bars: ComposeBars;
-  progId: string;
-  styleId: string;
-  tonality: Tonality;
-  melodicLanguage: MelodicLanguage;
-  japaneseScale: JapaneseScaleChoice;
-  grooveFeel: GrooveFeel;
-  tupletOverlay: TupletOverlayChoice;
-  tensionPolicy: 'auto' | TensionPolicy;
-  diminution: 'auto' | DiminutionPolicy;
-  duet: 'auto' | 'off' | 'on';
-  glide: 'auto' | 'off' | 'on';
-  keyRoot: number;
-  bpm: number;
-  soundChip: SoundBackendId;
-  voices: VoiceOverride;
-  opllUserPatch: OpllUserPatchId;
-  nes: NesVoiceOptions;
-  choice: number[];
-  autoVary: boolean;
-  intro: boolean;
-  seed: number;
-  loop: boolean;
-}
-
-/** 保存済みフォームをフィールド単位で検証して読む（壊れた項目だけ既定に落ちる） */
-function loadComposerForm(): ComposerForm {
-  const raw = loadStored<Record<string, unknown>>(
-    FORM_KEY,
-    {},
-    (v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v),
-  );
-  const bars: ComposeBars = raw.bars === 40 ? 40 : raw.bars === 16 ? 16 : raw.bars === 8 ? 8 : 4;
-  const legacyMode = raw.melodyMode === 'japanese'
-    ? 'japanese'
-    : raw.melodyMode === 'minor' ? 'minor' : 'major';
-  const tonality: Tonality = raw.tonality === 'minor'
-    ? 'minor'
-    : raw.tonality === 'major' ? 'major' : legacyMode === 'minor' ? 'minor' : 'major';
-  const melodicLanguage: MelodicLanguage = raw.melodicLanguage === 'japanese'
-    ? 'japanese'
-    : raw.melodicLanguage === 'pentatonic'
-      ? 'pentatonic'
-      : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
-  const availableProgressions = progressionsForTonality(tonality).filter((p) => p.slots.length <= bars);
-  const initialProgression = typeof raw.progId === 'string'
-    ? availableProgressions.find((p) => p.id === raw.progId) ?? availableProgressions[0]!
-    : availableProgressions[0]!;
-  const progId = initialProgression.id;
-  const voices: VoiceOverride = {};
-  if (raw.voices !== null && typeof raw.voices === 'object') {
-    for (const part of ['lead', 'backing', 'bass', 'counter', 'ostinato'] as const) {
-      const v = (raw.voices as Record<string, unknown>)[part];
-      if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 15) voices[part] = v;
-    }
-  }
-  return {
-    bars,
-    progId,
-    styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
-    tonality,
-    melodicLanguage,
-    japaneseScale: ['ritsu', 'minyo', 'miyakobushi'].includes(String(raw.japaneseScale))
-      ? raw.japaneseScale as JapaneseScaleChoice
-      : 'auto',
-    grooveFeel: isGrooveFeel(raw.grooveFeel) ? raw.grooveFeel : DEFAULT_GROOVE_FEEL,
-    tupletOverlay: raw.tupletOverlay === 'auto' || [5, 6, 7].includes(raw.tupletOverlay as number)
-      ? raw.tupletOverlay as TupletOverlayChoice
-      : 'off',
-    tensionPolicy: TENSION_CHOICES.includes(raw.tensionPolicy as 'auto' | TensionPolicy)
-      ? raw.tensionPolicy as 'auto' | TensionPolicy
-      : 'auto',
-    diminution: DIMINUTION_CHOICES.includes(raw.diminution as 'auto' | DiminutionPolicy)
-      ? raw.diminution as 'auto' | DiminutionPolicy
-      : 'auto',
-    duet: raw.duet === 'off' || raw.duet === 'on' ? raw.duet : 'auto',
-    glide: raw.glide === 'off' || raw.glide === 'on' ? raw.glide : 'auto',
-    keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
-    bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
-    soundChip: raw.soundChip === 'nes2a03' || raw.soundChip === 'pcm'
-      ? raw.soundChip as SoundBackendId
-      : 'opll',
-    voices,
-    opllUserPatch: ['brightLead', 'metalBell', 'punchBass'].includes(String(raw.opllUserPatch))
-      ? raw.opllUserPatch as OpllUserPatchId
-      : 'brightLead',
-    nes: {
-      pulse1Duty: [0, 1, 2, 3].includes((raw.nes as NesVoiceOptions | undefined)?.pulse1Duty ?? -1)
-        ? ((raw.nes as NesVoiceOptions).pulse1Duty as 0 | 1 | 2 | 3)
-        : 1,
-      pulse2Duty: [0, 1, 2, 3].includes((raw.nes as NesVoiceOptions | undefined)?.pulse2Duty ?? -1)
-        ? ((raw.nes as NesVoiceOptions).pulse2Duty as 0 | 1 | 2 | 3)
-        : 2,
-    },
-    choice:
-      Array.isArray(raw.choice)
-        && raw.choice.length >= bars
-        && raw.choice.every((c, bar) => (
-          Number.isInteger(c)
-          && c >= 0
-          && c < initialProgression.slots[bar % initialProgression.slots.length]!.length
-        ))
-        ? (raw.choice as number[])
-        : defaultChoiceFor(initialProgression, bars),
-    autoVary: raw.autoVary !== false,
-    intro: raw.intro !== false,
-    seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
-    loop: raw.loop !== false,
-  };
-}
 
 export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange, pcmVoices }: {
   player: SfxPlayer;
@@ -793,16 +610,18 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       ? songs.find((s) => `song:${s.id}` === value)
       : PRESET_SONGS.find((p) => `preset:${p.id}` === value);
     if (song) {
-      try {
-        const p = compose(song.options);
-        // ボーナス割当の先行レンダリングは常にチップ音源(ゲーム側の再生経路と一致させる)。
-        void player.ensureComposedBgm(
-          bgmCacheKey(song.options),
-          arrangeComposedBgm(p, song.options),
-        );
-      } catch {
-        // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
-      }
+      void (async () => {
+        try {
+          const p = compose(song.options);
+          // ボーナス割当の先行レンダリングは常にチップ音源(ゲーム側の再生経路と一致させる)。
+          void player.ensureComposedBgm(
+            bgmCacheKey(song.options),
+            await renderComposedBgm(p, song.options),
+          );
+        } catch {
+          // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
+        }
+      })();
     }
   };
 
@@ -1544,83 +1363,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             </small>
           </div>
 
-          <details className="composition-research" data-testid="composition-research">
-            <summary>
-              <span>作曲仮説と検証履歴</span>
-              <small>
-                検証済み {COMPOSITION_RESEARCH_COUNTS.tested} ／
-                一部検証 {COMPOSITION_RESEARCH_COUNTS.partiallyTested} ／
-                未検証 {COMPOSITION_RESEARCH_COUNTS.untested}
-              </small>
-            </summary>
-            <div className="composition-research-body">
-              <p className="composition-research-intro">
-                比較で分かったことと、まだ比較できていない仮説を同じ研究ログで管理します。
-                新しい条件は、ここに仮説と比較方法を書いてから追加します。
-              </p>
-
-              <section className="composition-experiment-history" aria-labelledby="composition-experiment-title">
-                <h4 id="composition-experiment-title">今までに検証したことと結果</h4>
-                {COMPOSITION_EXPERIMENTS.map((experiment, index) => (
-                  <article key={experiment.id} className="composition-experiment" data-testid={`composition-experiment-${experiment.id}`}>
-                    <header>
-                      <div>
-                        <small>{index === COMPOSITION_EXPERIMENTS.length - 1 ? '直近の検証' : experiment.id}</small>
-                        <h5>{experiment.title}</h5>
-                      </div>
-                      <span className={`research-status experiment-${experiment.status}`}>
-                        {COMPOSITION_EXPERIMENT_STATUS_LABELS[experiment.status]}
-                      </span>
-                    </header>
-                    <p><b>問い:</b> {experiment.question}</p>
-                    <div className="composition-condition-list" aria-label="比較条件">
-                      {experiment.conditions.map((condition) => <span key={condition}>{condition}</span>)}
-                    </div>
-                    <p className="composition-experiment-result"><b>結果:</b> {experiment.result}</p>
-                    <p><b>暫定結論:</b> {experiment.conclusion}</p>
-                    <details className="composition-limitations">
-                      <summary>この結果でまだ言えないこと</summary>
-                      <ul>
-                        {experiment.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
-                      </ul>
-                    </details>
-                  </article>
-                ))}
-              </section>
-
-              <section className="composition-hypothesis-section" aria-labelledby="composition-hypothesis-title">
-                <h4 id="composition-hypothesis-title">仮説リスト</h4>
-                <p>未検証のものを順次、同じ素材を使ったブラインド比較へ入れていきます。</p>
-                <div className="composition-hypothesis-list">
-                  {COMPOSITION_HYPOTHESES.map((hypothesis) => (
-                    <details
-                      key={hypothesis.id}
-                      className={`composition-hypothesis hypothesis-${hypothesis.status}`}
-                      data-testid={`composition-hypothesis-${hypothesis.id}`}
-                    >
-                      <summary>
-                        <span>
-                          <small>{hypothesis.id}</small>
-                          {hypothesis.title}
-                        </span>
-                        <b className={`research-status hypothesis-${hypothesis.status}`}>
-                          {COMPOSITION_HYPOTHESIS_STATUS_LABELS[hypothesis.status]}
-                        </b>
-                      </summary>
-                      <div className="composition-hypothesis-detail">
-                        <p><b>仮説:</b> {hypothesis.proposition}</p>
-                        <p><b>現在の判断:</b> {hypothesis.assessment}</p>
-                        {hypothesis.experimentIds.length > 0 && (
-                          <p><b>根拠:</b> {hypothesis.experimentIds.join('、')}</p>
-                        )}
-                        <p><b>次の比較:</b> {hypothesis.nextComparison}</p>
-                      </div>
-                    </details>
-                  ))}
-                </div>
-              </section>
-            </div>
-          </details>
+          <CompositionResearchPanel />
         </section>
 
         {progress !== null && (
@@ -1680,77 +1423,14 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                 .map((phraseFunction) => PHRASE_FUNCTION_LABELS[phraseFunction]).join('→')}
             </p>
             {diagnosis && (
-              <details className="composer-diagnosis" data-testid="st-diagnosis">
-                <summary>
-                  構造チェック: <span className={diagnosis.status === 'pass' ? 'badge-ok' : 'badge-ng'}>
-                    {STRUCTURAL_STATUS_LABELS[diagnosis.status]}
-                  </span>
-                  {diagnosis.issues.length > 0 && ` ／ 指摘 ${diagnosis.issues.length}件`}
-                </summary>
-                <div className="diagnosis-grid">
-                  {(Object.entries(diagnosis.categoryStatus) as [DiagnosticCategory, keyof typeof STRUCTURAL_STATUS_LABELS][])
-                    .map(([category, status]) => (
-                    <span key={category}>
-                      {DIAGNOSTIC_LABELS[category]}{' '}
-                      <b className={status === 'pass' ? 'badge-ok' : 'badge-ng'}>
-                        {STRUCTURAL_STATUS_LABELS[status]}
-                      </b>
-                    </span>
-                    ))}
-                </div>
-                {diagnosis.observations.length > 0 && (
-                  <div className="diagnosis-observations" data-testid="st-diagnosis-observations">
-                    <p className="panel-note">
-                      意図として許容: モチーフ反復
-                      {diagnosis.observations.filter((item) => item.kind === 'motif').length}件・装飾進行
-                      {diagnosis.observations.filter((item) => item.kind === 'embellishment').length}件
-                    </p>
-                    <ul>
-                      {diagnosis.observations.slice(0, 4).map((observation, index) => (
-                        <li key={`${observation.kind}-${observation.beat}-${index}`}>
-                          {observation.beat.toFixed(2)}拍: {observation.description}
-                          {observation.relatedBeats.length > 0
-                            ? `（同型 ${observation.relatedBeats.map((beat) => beat.toFixed(2)).join('・')}拍）`
-                            : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {diagnosis.issues.length > 0 && (
-                  <ul className="diagnosis-issues">
-                    {displayedDiagnosisItems.map(({ issue, originalIndex, repair }, index) => {
-                      return (
-                        <li key={`${issue.category}-${issue.beat}-${originalIndex}`}>
-                          {issue.severity === 'error' ? '要修正' : '注意'}・{DIAGNOSTIC_LABELS[issue.category]}・
-                          {issue.beat.toFixed(2)}拍: {issue.reason}
-                          {repair && (
-                            <button
-                              className="form-mini-btn"
-                              onClick={() => applyRepair(repair)}
-                              disabled={progress !== null}
-                              data-testid={`st-repair-${index}`}
-                              title={`${noteName(repair.edit.fromMidi)}から${noteName(repair.edit.toMidi)}へ最小修正し、全曲を再診断します`}
-                            >
-                              修正して試聴（{noteName(repair.edit.fromMidi)}→{noteName(repair.edit.toMidi)}）
-                            </button>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                {repairHistory.length > 0 && (
-                  <button
-                    className="form-mini-btn"
-                    onClick={undoRepair}
-                    disabled={progress !== null}
-                    data-testid="st-repair-undo"
-                  >
-                    ↶ 直前の修正を戻して試聴
-                  </button>
-                )}
-              </details>
+              <DiagnosisPanel
+                diagnosis={diagnosis}
+                items={displayedDiagnosisItems}
+                busy={progress !== null}
+                canUndo={repairHistory.length > 0}
+                onApplyRepair={applyRepair}
+                onUndoRepair={undoRepair}
+              />
             )}
             <p className="panel-note">
               シード {seed}（同じシード + 同じ設定なら同じ曲になります）
