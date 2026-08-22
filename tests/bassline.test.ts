@@ -114,13 +114,13 @@ describe('engineRevゲート(rev1: ベースアンカーの最短連結)', () =>
 
   it('rev0(未指定)とrev1でベースが変わり、旋律は変わらない', () => {
     const rev0 = compose(base);
-    const rev1 = compose({ ...base, engineRev: CURRENT_ENGINE_REV });
+    const rev1 = compose({ ...base, engineRev: 1 });
     expect(rev1.bass).not.toEqual(rev0.bass);
     expect(rev1.melody).toEqual(rev0.melody);
   });
 
   it('rev1のベースアンカーはD#2..D3窓に収まる', () => {
-    const rev1 = compose({ ...base, engineRev: CURRENT_ENGINE_REV, bassLine: 'on' });
+    const rev1 = compose({ ...base, engineRev: 1, bassLine: 'on' });
     // 終止の接近音(36..64)を含む全ベース音でも、逸脱しないことの粗い上限を固定する。
     for (const note of rev1.bass) {
       expect(note.midi).toBeGreaterThanOrEqual(36);

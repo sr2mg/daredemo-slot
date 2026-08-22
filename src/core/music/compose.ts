@@ -272,7 +272,15 @@ export function compose(opts: ComposeInput): Piece {
     opts, style, rng, chordAt, startMidi, melodicLanguage, scalePcs, japanesePlan, arrangementPlan, songPlan,
   );
   // 区間ごとに別の音程ジェスチャーを持つ。リズムだけ変えて同じ上下動をA〜Eへ貼らない。
-  const phraseGestures = songPlan.form.sections.map(() => makePhraseGesture(rng, style));
+  // rev2: 主題ジェスチャーは主系列rngでなく区間ごとの独立ストリームから抽選する。
+  // rev1以前はPhrasePlanの消費直後の主系列を使っており、フレーズ計画の抽選回数が
+  // 変わるとジェスチャーが連動して変わる暗黙結合があった(保存曲は旧経路で再現)。
+  const phraseGestures = songPlan.form.sections.map((_, sectionIndex) => makePhraseGesture(
+    engineRev >= 2
+      ? new Xoshiro128(((opts.seed ^ 0x4753_5452) + sectionIndex * 0x9e37_79b9) >>> 0)
+      : rng,
+    style,
+  ));
   // 曲間モチーフ流用: 外部モチーフは主題区間(A)のジェスチャーだけを置き換える。
   // 乱数消費は変えない(全区間ぶん生成してから差し替える)ので、他区間・他声部は不変。
   // B〜E側への浸透は既存のモチーフ借用(motifSourceBar / externalMotifPhrases)が担う。

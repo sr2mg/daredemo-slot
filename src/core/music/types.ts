@@ -276,8 +276,11 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  *
  * - rev1: ベースのアンカー音を「ルートpcの固定写像(E2..D#3帯、pc上隣接するE→D#が
  *   11半音跳ぶ不連続)」から「直前アンカーへの最短連結」へ変更(ベース生成部を参照)。
+ * - rev2: 主題ジェスチャーの抽選を主系列rngから区間ごとの独立ストリームへ分離
+ *   (compose.tsを参照)。rev1以前は「PhrasePlanの主系列消費量が変わるとジェスチャーが
+ *   連動して変わる」暗黙結合があり、フレーズ計画の将来変更が主題まで壊す構造だった。
  */
-export const CURRENT_ENGINE_REV = 1;
+export const CURRENT_ENGINE_REV = 2;
 
 /**
  * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。
