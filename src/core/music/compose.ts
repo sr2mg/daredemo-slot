@@ -53,7 +53,7 @@ import type {
   CadenceType,
   ChordEvent,
   ComposeBars,
-  ComposeOptions,
+  ComposeInput,
   DiminutionPolicy,
   DrumEvent,
   DuetPolicy,
@@ -360,7 +360,7 @@ function closestPcToMidi(target: number, pcs: readonly number[], lo = 48, hi = 9
 
 /** フレーズの役割・終止目標・対旋律の空間を、各声部より先に決める。 */
 function makePhrasePlan(
-  opts: ComposeOptions,
+  opts: ComposeInput,
   style: StyleDef,
   rng: Rng,
   chordAt: (beat: number) => ChordEvent,
@@ -983,7 +983,7 @@ function realizeIntro(
   return { chords, melody, bass, drums, chordNames };
 }
 
-export function compose(opts: ComposeOptions): Piece {
+export function compose(opts: ComposeInput): Piece {
   const progression = PROGRESSIONS.find((p) => p.id === opts.progressionId);
   if (!progression) throw new Error(`未知の進行: ${opts.progressionId}`);
   const style = STYLES.find((s) => s.id === opts.styleId);

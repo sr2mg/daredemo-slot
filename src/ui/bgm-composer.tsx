@@ -42,6 +42,7 @@ import {
 import type { GrooveFeel } from '../core/music/groove.js';
 import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
 import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
+import { normalizeComposeOptions } from '../core/music/options.js';
 import { checkPieceStructure, suggestCompositionRepair } from '../core/music/diagnostics.js';
 import type { CompositionRepair, DiagnosticCategory } from '../core/music/diagnostics.js';
 import { defaultChoiceFor, hasVariedChoiceFor, variedChoiceFor } from '../core/music/harmony-plan.js';
@@ -94,7 +95,13 @@ import {
   saveSongs,
 } from './bgm-library.js';
 import type { BgmAssign, SavedSong } from './bgm-library.js';
-import { arrangeComposedBgm, bgmRendererFor, isPcmBgm, renderComposedBgm } from '../audio/render.js';
+import {
+  arrangeComposedBgm,
+  bgmCacheKey as sharedBgmCacheKey,
+  bgmRendererFor,
+  isPcmBgm,
+  renderComposedBgm,
+} from '../audio/render.js';
 import type { BgmPcmRenderer, ComposedBgmDef } from '../audio/render.js';
 import type { PcmVoiceOverride } from '../audio/pcm-arrange.js';
 import { exportMp3 } from '../audio/mp3-export.js';
@@ -462,64 +469,38 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     setBlindPlaying(null);
   };
 
+  // 正準化(どの値を保存JSONへ残すか=キャッシュキーの同一性規則)は core が持つ。
+  // UIはフォームの生値を渡すだけ。
   const optionsFor = (
     nextSeed: number,
     targetBars: ComposeBars,
     targetChoice: readonly number[],
     compositionStrategy?: CompositionStrategy,
-  ): ComposeOptions => {
-    // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
-    const picked = Object.fromEntries(
-      VOICE_PARTS.filter(({ part }) => voices[part] !== undefined).map(({ part }) => [part, voices[part]]),
-    ) as VoiceOverride;
-    return {
-      progressionId: prog.id,
-      styleId,
-      keyRoot,
-      bpm,
-      bars: targetBars,
-      seed: nextSeed,
-      choice: [...targetChoice],
-      // rev0 の間は入れない(欠落=0 なのでキャッシュキー同一性を保つ)。最初の
-      // rev ゲート分岐が入って CURRENT が上がった時点から焼き始める。旧曲を編集して
-      // 再保存すると現行へ引き上がるが、試聴も同じ options なので聴いた音=保存される音。
-      ...(CURRENT_ENGINE_REV > 0 ? { engineRev: CURRENT_ENGINE_REV } : {}),
-      soundChip,
-      ...(intro ? {} : { intro: false }),
-      ...(tonality === 'minor' ? { tonality } : {}),
-      ...(melodicLanguage === 'japanese' ? {
-        melodicLanguage,
-        ...(japaneseScale !== 'auto' ? { japaneseScale } : {}),
-      } : melodicLanguage === 'pentatonic' ? { melodicLanguage } : {}),
-      ...(grooveFeel === DEFAULT_GROOVE_FEEL ? {} : { grooveFeel }),
-      // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
-      ...(capabilitiesFor(soundChip).independentArpeggio
-        && allowsTupletOverlay(grooveFeel) && tupletOverlay !== 'off'
-        ? { tupletOverlay }
-        : {}),
-      // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)
-      ...(tensionPolicy !== 'auto' && melodicLanguage !== 'japanese'
-        && capabilitiesFor(soundChip).colorTones
-        ? { tensionPolicy }
-        : {}),
-      ...(diminution !== 'auto' && melodicLanguage !== 'japanese' ? { diminution } : {}),
-      ...(duet !== 'auto' && melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).duetLayer
-        ? { duet }
-        : {}),
-      ...(glide !== 'auto' && melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).glide
-        ? { glide }
-        : {}),
-      ...(soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
-      ...(soundChip === 'opll' && Object.values(picked).includes(0) ? { opllUserPatch } : {}),
-      // PCM音色上書きも曲へ焼く(voicesと同じ理由: ComposeOptionsだけで音が完全再現
-      // できる保存単位にする)。上書きが無ければ入れず、既存保存曲とキーを共有する。
-      ...(soundChip === 'pcm' && pcmVoices && Object.keys(pcmVoices).length > 0
-        ? { pcmVoices }
-        : {}),
-      ...(soundChip === 'nes2a03' ? { nes: { ...nes } } : {}),
-      ...(compositionStrategy ? { compositionStrategy } : {}),
-    };
-  };
+  ): ComposeOptions => normalizeComposeOptions({
+    progressionId: prog.id,
+    styleId,
+    keyRoot,
+    bpm,
+    bars: targetBars,
+    seed: nextSeed,
+    choice: targetChoice,
+    soundChip,
+    intro,
+    tonality,
+    melodicLanguage,
+    japaneseScale,
+    grooveFeel,
+    tupletOverlay,
+    tensionPolicy,
+    diminution,
+    duet,
+    glide,
+    voices,
+    opllUserPatch,
+    pcmVoices,
+    nes,
+    compositionStrategy,
+  });
 
   /**
    * 編集中の曲の再生し直し(同じメロディで再生・局所修正・Undo)へ、現在のPCM音色
@@ -534,10 +515,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   };
 
   /** レンダラが違えば別キャッシュ(同じ曲でもチップ版とPCM版は別の波形)。 */
-  const bgmCacheKey = (opts: ComposeOptions): string => {
-    const renderer = bgmRendererFor(opts, pcmRenderer);
-    return renderer ? `${JSON.stringify(opts)}|${renderer.idFor(opts)}` : JSON.stringify(opts);
-  };
+  const bgmCacheKey = (opts: ComposeOptions): string => sharedBgmCacheKey(opts, pcmRenderer);
 
   const renderBgmDef = async (p: Piece, opts: ComposeOptions): Promise<ComposedBgmDef> => {
     if (!bgmRendererFor(opts, pcmRenderer)) return renderComposedBgm(p, opts);
@@ -819,7 +797,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
         const p = compose(song.options);
         // ボーナス割当の先行レンダリングは常にチップ音源(ゲーム側の再生経路と一致させる)。
         void player.ensureComposedBgm(
-          JSON.stringify(song.options),
+          bgmCacheKey(song.options),
           arrangeComposedBgm(p, song.options),
         );
       } catch {

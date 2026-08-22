@@ -51,6 +51,20 @@ export function bgmRendererFor(
 }
 
 /**
+ * BGMキャッシュのキー。曲の保存単位(ComposeOptionsのJSON)に、外部レンダラ使用時は
+ * その波形を変える要因(idFor: フォント・実効音色)を連結する。生成箇所をここへ
+ * 一元化する — 「同じキー ⇒ 同じ波形」の不変条件は、全キーがこの関数から出る
+ * ことで保たれる(ゲーム側はレンダラ無しで呼び、従来の生JSONキーと同一になる)。
+ */
+export function bgmCacheKey(
+  options: ComposeOptions,
+  pcmRenderer: BgmPcmRenderer | null = null,
+): string {
+  const renderer = bgmRendererFor(options, pcmRenderer);
+  return renderer ? `${JSON.stringify(options)}|${renderer.idFor(options)}` : JSON.stringify(options);
+}
+
+/**
  * 3バックエンド（OPLL / 2A03 / PCM）を1箇所で解決する非同期の単一入口。
  * PCMレンダラが未指定・未ロードの曲は arrangeComposedBgm の劣化経路
  * （pcm→OPLL、nes2a03→内蔵APU）へ落ちる。

@@ -16,7 +16,7 @@ const BgmComposerPanel = lazy(() =>
   import('./bgm-composer.js').then((m) => ({ default: m.BgmComposerPanel })),
 );
 import { loadBgmVolume, resolveAssign } from './bgm-library.js';
-import { arrangeComposedBgm } from '../audio/render.js';
+import { arrangeComposedBgm, bgmCacheKey } from '../audio/render.js';
 import { SfxDesignerPanel } from './sfx-designer.js';
 import { CompliancePanel, GuidePanel, LayoutPanel, SpecPanel } from './panels.js';
 import type { SfxName } from './sfx-names.js';
@@ -571,7 +571,7 @@ export function App() {
           try {
             const piece = compose(song.options);
             const def = arrangeComposedBgm(piece, song.options);
-            void sfx.playComposedBgm(JSON.stringify(song.options), def, 1.05);
+            void sfx.playComposedBgm(bgmCacheKey(song.options), def, 1.05);
           } catch {
             // 保存データ破損等。音は演出なので無音で続行する
           }
@@ -727,7 +727,7 @@ export function App() {
         try {
           const piece = compose(song.options);
           const def = arrangeComposedBgm(piece, song.options);
-          void sfx.ensureComposedBgm(JSON.stringify(song.options), def);
+          void sfx.ensureComposedBgm(bgmCacheKey(song.options), def);
         } catch {
           // 壊れた保存データはボーナス開始時にプリセットへフォールバックされる
         }

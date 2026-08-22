@@ -150,10 +150,16 @@ export interface JapanesePlan {
 }
 
 // ---------------------------------------------------------------------------
-// ComposeOptions（エンジン入力 = 曲の保存単位）
+// ComposeOptions（エンジン入力 + レンダリング設定 = 曲の保存単位）
+//
+// 保存フォーマット・キャッシュキーは ComposeOptions の JSON。役割を型で分けて
+// 明示する: ComposeInput は compose() が読む作曲パラメータ、RenderConfig は
+// compose() が読まない編曲層のパラメータ(音色・チップ固有設定)。両者の合成が
+// 「曲」の保存単位になる(同じ曲=同じ音色を JSON ひとつで保証するため)。
 // ---------------------------------------------------------------------------
 
-export interface ComposeOptions {
+/** compose() が読む作曲パラメータ。 */
+export interface ComposeInput {
   progressionId: string;
   styleId: string;
   /** キー主音のピッチクラス（0 = C） */
@@ -232,6 +238,16 @@ export interface ComposeOptions {
   /** ブラインド比較用の上位戦略。省略時は既存と同じ current。 */
   compositionStrategy?: CompositionStrategy;
   /**
+   * 作曲対象のバックエンド。省略時は従来どおり OPLL(保存済み v1 曲との後方互換)。
+   * 'pcm' は制約の少ない作曲対象(広い編成・テンション等)で、チップでの再生時は
+   * 各編曲層が能力に応じて劣化させる(sound-capabilities.ts)。
+   */
+  soundChip?: SoundBackendId;
+}
+
+/** compose() が読まない編曲層のパラメータ。曲へ音色を焼き込むための保存項目。 */
+export interface RenderConfig {
+  /**
    * OPLL 音色の上書き（0=ユーザー音色、1〜15=内蔵音色）。省略時はスタイル既定。
    * compose() 自体は使わない編曲層のパラメータだが、曲の保存単位・BGM キャッシュの
    * キーが ComposeOptions の JSON なので、ここに持たせて「同じ曲 = 同じ音色」を保証する
@@ -246,15 +262,12 @@ export interface ComposeOptions {
    * 未指定の旧保存曲は再生環境のグローバル設定で鳴る（従来挙動）。
    */
   pcmVoices?: PcmVoiceOverride;
-  /**
-   * 作曲対象のバックエンド。省略時は従来どおり OPLL(保存済み v1 曲との後方互換)。
-   * 'pcm' は制約の少ない作曲対象(広い編成・テンション等)で、チップでの再生時は
-   * 各編曲層が能力に応じて劣化させる(sound-capabilities.ts)。
-   */
-  soundChip?: SoundBackendId;
   /** ファミコン 2A03 モード固有の音色パラメータ。 */
   nes?: NesVoiceOptions;
 }
+
+/** 曲の保存単位 = 作曲入力 + レンダリング設定。JSON がそのままキャッシュキーになる。 */
+export interface ComposeOptions extends ComposeInput, RenderConfig {}
 
 /**
  * 現行エンジンのリビジョン。音を変える生成器変更を入れるたびに +1 し、compose() 内の
