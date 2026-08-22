@@ -369,9 +369,10 @@ function introRoleFor(
   }
   const density = (options.style.melody.density[0] + options.style.melody.density[1]) / 2;
   const candidates: IntroRole[] = [];
-  if (hasGrooveDevice(options.grooveFeel) || options.style.id === 'ska') candidates.push('groove');
-  if (options.style.id === 'rock') candidates.push('fanfare');
-  if (options.style.id === 'eurobeat' || entryFunction === 'dominant') candidates.push('runup');
+  const styleIntroRoles = options.style.introRoles ?? [];
+  if (hasGrooveDevice(options.grooveFeel) || styleIntroRoles.includes('groove')) candidates.push('groove');
+  if (styleIntroRoles.includes('fanfare')) candidates.push('fanfare');
+  if (styleIntroRoles.includes('runup') || entryFunction === 'dominant') candidates.push('runup');
   if (options.melodicLanguage === 'japanese' || harmonicActivity > 0 || density <= 5.5) candidates.push('motif');
   const compatible = uniqueIntroRoles([...candidates, 'motif']);
   return compatible[((options.seed ^ 0x494e_5452) >>> 0) % compatible.length]!;

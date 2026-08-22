@@ -1,6 +1,6 @@
 import type { NesVoiceOptions, NoteEvent, Piece } from '../core/music/types.js';
-import { arrangementSectionFor } from '../core/music/arrangement.js';
-import { grooveBeat } from '../core/music/groove.js';
+import { offbeatBackingRiff } from './backing-riff.js';
+import { midiFreq } from './pitch.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;
@@ -25,8 +25,6 @@ const DUTY_TABLE: readonly (readonly number[])[] = [
 export const NES_NOISE_PERIODS = [
   4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ] as const;
-
-const midiFreq = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
 
 export function pulseTimerForMidi(midi: number): number {
   return Math.max(8, Math.min(0x7ff, Math.round(NES_CPU_CLOCK / (16 * midiFreq(midi)) - 1)));
@@ -198,17 +196,12 @@ export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Flo
   for (const chord of piece.chords) {
     const third = chord.midis[1] ?? chord.midis[0]!;
     const fifth = chord.midis[2] ?? third;
-    for (let beat = 0; beat + 0.5 < chord.dur - 0.001; beat++) {
-      const absoluteBeat = grooveBeat(chord.beat + beat + 0.5, piece.grooveFeel);
-      const sectionPlan = arrangementSectionFor(piece, absoluteBeat);
-      const thin = absoluteBeat < piece.loopStartBeat || sectionPlan.backingDensity === 'sparse';
-      // sparse区間はパルス2の裏打ちを半分にし、full区間では毎拍鳴らす。
-      if (thin && beat % 2 === 0) continue;
+    for (const step of offbeatBackingRiff(piece, chord, 'onset')) {
       chordBacking.push({
-        beat: absoluteBeat,
+        beat: step.beat,
         dur: 0.2,
-        midi: beat % 2 === 0 ? third : fifth,
-        volume: thin ? 5 : 7,
+        midi: step.slot === 'lower' ? third : fifth,
+        volume: step.thin ? 5 : 7,
       });
     }
   }

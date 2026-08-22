@@ -1,12 +1,15 @@
 import type {
   NoteEvent, OpllUserPatchId, Piece, VoiceOverride,
 } from '../core/music/types.js';
+import { offbeatBackingRiff } from './backing-riff.js';
+import { midiFreq } from './pitch.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
-import { grooveBeat } from '../core/music/groove.js';
 import { initRhythmMode, SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
 
 import { glideDurationSec } from '../core/music/glide.js';
+import { styleLookup } from '../core/music/theory.js';
+import type { StyleId } from '../core/music/theory.js';
 import type { StageRole } from './stage.js';
 import { noteStageEchoFor } from './time-layer.js';
 
@@ -62,7 +65,7 @@ export const OPLL_USER_PATCHES: readonly {
 ];
 
 /** スタイル → 内蔵音色の割り当て（0〜15。0はユーザー音色） */
-const STYLE_VOICES: Record<string, StyleVoices> = {
+const STYLE_VOICES: Record<StyleId, StyleVoices> = {
   eurobeat: {
     lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'offbeat',
   },
@@ -87,11 +90,11 @@ const STYLE_VOICES: Record<string, StyleVoices> = {
     lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half',
   },
 };
-const DEFAULT_VOICES: StyleVoices = STYLE_VOICES['eurobeat']!;
+const DEFAULT_VOICES: StyleVoices = STYLE_VOICES.eurobeat;
 
 /** スタイルの既定音色（UI の「スタイル既定（○○）」表示用） */
 export function defaultVoicesFor(styleId: string): StyleVoices {
-  return STYLE_VOICES[styleId] ?? DEFAULT_VOICES;
+  return styleLookup(STYLE_VOICES, styleId, DEFAULT_VOICES);
 }
 
 /** 上書きから有効な音色（ユーザー音色0〜内蔵15）だけ拾う。 */
@@ -106,7 +109,6 @@ function pickVoices(override?: VoiceOverride): Partial<StyleVoices> {
   return out;
 }
 
-const midiFreq = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
 const volumeFor = (note: NoteEvent, fallback: number): number => note.velocity === undefined
   ? fallback
   : Math.max(0, Math.min(15, Math.round(12 - note.velocity * 11)));
@@ -248,7 +250,7 @@ export function arrangePiece(
   override?: VoiceOverride,
   userPatchId: OpllUserPatchId = 'brightLead',
 ): ArrangedBgm {
-  const voices = { ...(STYLE_VOICES[styleId] ?? DEFAULT_VOICES), ...pickVoices(override) };
+  const voices = { ...styleLookup(STYLE_VOICES, styleId, DEFAULT_VOICES), ...pickVoices(override) };
   const spb = 60 / piece.bpm;
   const duration = piece.beats * spb;
   const loopStart = piece.loopStartBeat * spb;
@@ -303,19 +305,17 @@ export function arrangePiece(
     const colorVoice = chord.midis.find((midi) => (chord.colorPcs ?? []).includes(midi % 12));
     const lowerVoice = chordToneMidis[1] ?? chordToneMidis[0] ?? chord.midis[1] ?? chord.midis[0]!;
     const upperVoice = colorVoice ?? chordToneMidis[2] ?? lowerVoice;
-    const section = arrangementSectionFor(piece, chord.beat);
-    const thin = chord.beat < piece.loopStartBeat || section.backingDensity === 'sparse';
-    const volume = thin ? 9 : 7;
+    const thin = chord.beat < piece.loopStartBeat
+      || arrangementSectionFor(piece, chord.beat).backingDensity === 'sparse';
     if (voices.backingPattern === 'offbeat') {
-      for (let beat = 0; beat + 0.5 < chord.dur - 0.001; beat++) {
-        if (thin && beat % 2 === 0) continue;
+      for (const step of offbeatBackingRiff(piece, chord, 'chordStart')) {
         candidates.push({
           part: 'backing',
-          beat: grooveBeat(chord.beat + beat + 0.5, piece.grooveFeel),
+          beat: step.beat,
           dur: 0.2,
-          midi: beat % 2 === 0 ? lowerVoice : upperVoice,
+          midi: step.slot === 'lower' ? lowerVoice : upperVoice,
           voice: voices.backing,
-          volume,
+          volume: step.thin ? 9 : 7,
           vibrato: false,
           shake: false,
           priority: PART_PRIORITY.backing,
@@ -332,7 +332,7 @@ export function arrangePiece(
           midi: beat > 0 && colorVoice !== undefined ? colorVoice : lowerVoice,
           dur: Math.min(2, chord.dur - beat) * 0.75,
           voice: voices.backing,
-          volume,
+          volume: thin ? 9 : 7,
           vibrato: false,
           shake: false,
           priority: PART_PRIORITY.backing,

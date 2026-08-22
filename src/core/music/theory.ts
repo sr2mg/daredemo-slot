@@ -14,6 +14,8 @@ import type {
   DuetPolicy,
   GlidePolicy,
   HarmonicFunction,
+  IntroRole,
+  TextureStrategy,
 } from './types.js';
 
 /**
@@ -515,8 +517,30 @@ export function chordScalePcs(
   return [...result].sort((a, b) => a - b);
 }
 
+/**
+ * スタイルの識別子。カタログ(STYLES)と各レンダラのスタイル別テーブル
+ * (GM音色・OPLL音色・残響・ドラムバス)はこのunionで完全性を強制する:
+ * スタイルを追加してテーブルを忘れるとコンパイルエラーになる。
+ * 保存曲のstyleIdは任意文字列で来るので、参照時はstyleLookup()で照合する。
+ */
+export const STYLE_IDS = ['eurobeat', 'rock', 'kmmo', 'ska', 'garage2step', 'dnb'] as const;
+export type StyleId = (typeof STYLE_IDS)[number];
+
+export const isStyleId = (value: string): value is StyleId =>
+  (STYLE_IDS as readonly string[]).includes(value);
+
+/** スタイル別テーブルの照合。保存曲の未知idはfallback(既定値)で鳴らす。 */
+export function styleLookup<T>(table: Record<StyleId, T>, styleId: string, fallback: T): T {
+  return isStyleId(styleId) ? table[styleId] : fallback;
+}
+
+/** カタログからのスタイル解決。保存曲の未知idはundefined(呼び出し側が既定へ落とす)。 */
+export function styleForId(styleId: string): StyleDef | undefined {
+  return STYLES.find((style) => style.id === styleId);
+}
+
 export interface StyleDef {
-  id: string;
+  id: StyleId;
   name: string;
   feel: string;
   /**
@@ -562,9 +586,38 @@ export interface StyleDef {
     gate: number;
     /** 弱拍で順次進行を選ぶ確率。 */
     stepwisePercent: number;
+    /** 旋律の目標音域中心(MIDI)。省略=78。テッシトゥーラ変位の基準になる。 */
+    center?: number;
+    /**
+     * 弱拍音の様式的アーティキュレーション。省略=normal。
+     * - offbeatStaccato: 弱拍を常にスタッカートで切る(スカの裏打ち感)。
+     * - longTenuto: 1拍以上残せる音だけテヌートで保続する(ロックの朗々)。
+     */
+    articulation?: 'offbeatStaccato' | 'longTenuto';
   };
   /** フレーズ終端で次コードへ接続するベースの作法。 */
   bassCadence: 'chromatic' | 'chordTone' | 'diatonicPickup';
+  /** ベース刻みのアーティキュレーション既定。省略=staccato(持続サブの長音は常にテヌート)。 */
+  bassArticulation?: 'tenuto' | 'staccato';
+  /**
+   * 編成戦略の候補(声部予算が十分なバックエンド)。省略=全戦略
+   * ['counterDrive','arpDrive','bassDrive','hybrid']。seedは候補内の選択にだけ使う。
+   */
+  textureStrategies?: readonly TextureStrategy[];
+  /** 独立アルペジオの声部予算が無いバックエンドで主導にする戦略。省略=bassDrive。 */
+  compactTextureStrategy?: TextureStrategy;
+  /**
+   * このスタイルが常時イントロ役割候補へ挙げる型(song-plan.tsのintroRoleFor)。
+   * グルーヴ・和声条件からの候補追加とは独立に効く。
+   */
+  introRoles?: readonly IntroRole[];
+  /**
+   * 密な応答句(counterDensity=2)で副旋律が確保する8分ステップ。省略=[6](4拍目表)。
+   * スカは[5,7](裏打ち2打)で裏拍の会話にする。
+   */
+  denseCounterSteps?: readonly number[];
+  /** 対旋律の最大音価(拍)。省略={counterline:0.85, response:0.4}。 */
+  counterMaxDur?: { counterline: number; response: number };
   /** スタイル既定のテンション方針(tension.ts)。省略はoff=素の和音。 */
   tension?: 'soft' | 'lush';
   /** スタイル既定のディミニューション密度(diminution.ts)。省略はoff。 */
@@ -599,6 +652,7 @@ export const STYLES: StyleDef[] = [
       stepwisePercent: 72,
     },
     bassCadence: 'chromatic',
+    introRoles: ['runup'],
   },
   {
     id: 'rock',
@@ -619,8 +673,14 @@ export const STYLES: StyleDef[] = [
       density: [4, 5],
       gate: 0.9,
       stepwisePercent: 62,
+      center: 77,
+      articulation: 'longTenuto',
     },
     bassCadence: 'chordTone',
+    bassArticulation: 'tenuto',
+    textureStrategies: ['bassDrive', 'counterDrive', 'hybrid'],
+    introRoles: ['fanfare'],
+    counterMaxDur: { counterline: 1.25, response: 0.75 },
   },
   {
     id: 'kmmo',
@@ -673,8 +733,14 @@ export const STYLES: StyleDef[] = [
       density: [5, 6],
       gate: 0.58,
       stepwisePercent: 78,
+      center: 79,
+      articulation: 'offbeatStaccato',
     },
     bassCadence: 'diatonicPickup',
+    textureStrategies: ['counterDrive', 'hybrid'],
+    compactTextureStrategy: 'counterDrive',
+    introRoles: ['groove'],
+    denseCounterSteps: [5, 7],
   },
   {
     id: 'garage2step',

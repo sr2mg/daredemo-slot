@@ -483,7 +483,7 @@ function makePhrasePlan(
         for (let step = 5; step < 8; step++) rhythm[step] = false;
         rhythm[4] = true;
         targetStep = 4;
-        const preferred = sectionPlan.counterDensity === 2 && style.id === 'ska' ? [5, 7] : [6];
+        const preferred = sectionPlan.counterDensity === 2 ? style.denseCounterSteps ?? [6] : [6];
         counterSteps.push(...preferred);
       } else {
         targetStep = rhythm.reduce((last, on, step) => on ? step : last, 4);
@@ -1161,7 +1161,7 @@ export function compose(opts: ComposeOptions): Piece {
   const scaleStepMax = melodicLanguage === 'standard' ? 2
     : melodicLanguage === 'japanese' ? 4
       : maxAdjacentScaleInterval(scalePcs);
-  const baseCenter = style.id === 'rock' ? 77 : style.id === 'ska' ? 79 : 78;
+  const baseCenter = style.melody.center ?? 78;
   const climaxChord = chordAt(phrasePlan.climaxBar * 4);
   const climaxMidi = nearestWithPc(
     MELODY_HI,
@@ -1573,9 +1573,9 @@ export function compose(opts: ComposeOptions): Piece {
           ? 'accent'
           : strong
             ? 'accent'
-            : style.id === 'ska'
+            : style.melody.articulation === 'offbeatStaccato'
               ? 'staccato'
-              : style.id === 'rock' && boundaryStep - step >= 2
+              : style.melody.articulation === 'longTenuto' && boundaryStep - step >= 2
                 ? 'tenuto'
                 : 'normal';
       const gate = articulation === 'staccato'
@@ -1700,9 +1700,10 @@ export function compose(opts: ComposeOptions): Piece {
         : barStart + 4;
       const boundary = Math.min(leadAfter?.beat ?? barStart + 4, nextCounterBeat);
       const shortCounterPhrase = barPlan.counterSteps.length >= 3;
+      const counterDurs = style.counterMaxDur ?? { counterline: 0.85, response: 0.4 };
       const maxDur = arrangementPlan.counterRole === 'counterline'
-        ? shortCounterPhrase ? 0.38 : (style.id === 'rock' ? 1.25 : 0.85)
-        : (style.id === 'rock' ? 0.75 : 0.4);
+        ? shortCounterPhrase ? 0.38 : counterDurs.counterline
+        : counterDurs.response;
       const dur = Math.min(maxDur, boundary - beat - 0.05);
       if (dur >= 0.15) {
         counterMelody.push({
@@ -1921,7 +1922,7 @@ export function compose(opts: ComposeOptions): Piece {
     // 持続サブの長音はテヌート(終止の接近音など短音はスタッカートのまま)。
     note.articulation = style.bass === 'sustain' && note.dur >= 0.5
       ? 'tenuto'
-      : style.id === 'rock' ? 'tenuto' : 'staccato';
+      : style.bassArticulation ?? 'staccato';
     note.role = 'structural';
   }
   bass.sort((a, b) => a.beat - b.beat);

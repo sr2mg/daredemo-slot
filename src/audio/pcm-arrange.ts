@@ -13,6 +13,8 @@
  */
 
 import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { styleLookup } from '../core/music/theory.js';
+import type { StyleId } from '../core/music/theory.js';
 import type {
   LeadColorSlot,
   PcmPart,
@@ -69,7 +71,7 @@ interface GmProgramMap {
  * drumKitはGeneralUser GSの実装キット(8=Room/16=Power/24=Electronic/25=808909/26=Dance)
  * から選ぶ。未指定フォントでもGM/GS準拠なら同系キットへ解決される。
  */
-const STYLE_PROGRAMS: Record<string, GmProgramMap> = {
+const STYLE_PROGRAMS: Record<StyleId, GmProgramMap> = {
   kmmo: { leadPalette: [110, 73, 48], counter: 73, ostinato: 46, backing: 48, bass: 33 },
   eurobeat: { leadPalette: [81, 80], counter: 80, ostinato: 4, backing: 50, bass: 38 },
   rock: { leadPalette: [30, 29], counter: 29, ostinato: 27, backing: 17, bass: 33 },
@@ -89,7 +91,11 @@ const DEFAULT_PROGRAMS: GmProgramMap = {
  * 既存スタイルのレンダリング結果は1サンプルも変わらない。
  * パラメータの導出根拠はbus-fx.tsのモジュールコメントを参照。
  */
-const STYLE_DRUM_BUS: Record<string, DrumBusFx> = {
+const STYLE_DRUM_BUS: Record<StyleId, DrumBusFx | null> = {
+  eurobeat: null,
+  rock: null,
+  kmmo: null,
+  ska: null,
   // UKガラージ: 軽めの3:1バスコンプ+薄いサチュレーション。クラッシュなし
   // (UKGはMPC/DAT世代でジャングルより録り音が綺麗)。
   garage2step: {
@@ -107,7 +113,7 @@ const STYLE_DRUM_BUS: Record<string, DrumBusFx> = {
 
 /** スタイルのドラムバスFX(なければnull)。テストと描画側の単一参照点。 */
 export function drumBusFxFor(styleId: string): DrumBusFx | null {
-  return STYLE_DRUM_BUS[styleId] ?? null;
+  return styleLookup(STYLE_DRUM_BUS, styleId, null);
 }
 
 /** GMパーカッション(bank128)のキー。ハットはopen指示でクローズ42/オープン46を使い分ける。 */
@@ -143,7 +149,7 @@ export function arrangeSf2Parts(
   piece: Piece,
   overrides: PcmVoiceOverride = {},
 ): Record<PcmPart, Sf2Note[]> {
-  const programs = STYLE_PROGRAMS[piece.styleId] ?? DEFAULT_PROGRAMS;
+  const programs = styleLookup(STYLE_PROGRAMS, piece.styleId, DEFAULT_PROGRAMS);
   const refFor = (part: Exclude<PcmPart, 'drums' | 'duet' | 'lead'>): PcmPresetRef =>
     overrides[part] ?? { bank: 0, program: programs[part] };
   const drumRef = overrides.drums ?? { bank: 128, program: programs.drumKit ?? 0 };

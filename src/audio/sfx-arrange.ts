@@ -2,6 +2,7 @@ import type { SfxDesign, SfxEvent, ToneEvent } from '../core/sfx/sfx-design.js';
 import { buildSfxEvents, sfxDuration } from '../core/sfx/sfx-design.js';
 import { initRhythmMode, SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
+import { midiFreq } from './pitch.js';
 
 /**
  * 効果音デザイン（レシピ生成のイベント列）を OPLL レジスタ列へ変換する。
@@ -13,7 +14,6 @@ import type { SfxDef } from './opll-core.js';
  * - ノイズはリズムモードのハイハット/スネアで代用
  */
 
-const midiFreq = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
 
 /** gain（0..1）→ OPLL 音量（0=最大〜15=最小）。0.05 刻みの gain 差が 1 段になる粒度 */
 const gainToVol = (gain: number): number => Math.max(0, Math.min(15, Math.round(9 - gain * 12)));
