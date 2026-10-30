@@ -43,6 +43,8 @@ const REV_MS = 750;
 /** 停止時のバウンド（行き過ぎて戻る量と時間。「ガチッ」の感触） */
 const BOUNCE_KOMA = 0.16;
 const BOUNCE_MS = 110;
+/** ウエイト: 前ゲームのリール始動からこの時間が経つまで次のリールは回らない（実機は 4.1 秒） */
+const WAIT_MS = 4100;
 const INITIAL_CREDIT = 1000;
 const REPOSITORY_URL = 'https://github.com/sr2mg/daredemo-slot';
 
@@ -105,7 +107,8 @@ function loadCustoms(): MachineDef[] {
   }
 }
 
-type Phase = 'ready' | 'spinning';
+/** waiting = レバーは受け付けたがウエイト中（リールはまだ回らない。停止ボタンも効かない） */
+type Phase = 'ready' | 'waiting' | 'spinning';
 
 interface ReelView {
   /** 基準コマ番号（コアの stopPosition = 画面の下段。行番号は下から上へ 0,1,2） */
@@ -406,6 +409,8 @@ export function App() {
 
   /** リールの連続コマ位置（ReelColumn が毎フレーム更新。押下位置の量子化に使う） */
   const reelPositionsRef = useRef<number[]>([0, 0, 0]);
+  /** 前回リールが回り始めた時刻（performance.now）。ウエイトの起点 */
+  const lastSpinStartRef = useRef(-Infinity);
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => [line, ...prev].slice(0, 10));
@@ -495,9 +500,13 @@ export function App() {
     const sel = forceSelRef.current;
     const forceFlags = sel === '' ? undefined : sel === FORCE_PURE_MISS ? [] : sel.split('+');
     const session = new GameSession(machineRef.current, engineRef.current, rngRef.current, undefined, forceFlags);
-    if (session.bet > creditRef.current) return; // クレジット不足
+    if (session.bet > creditRef.current) {
+      playSfx('error'); // クレジット不足 = 操作拒否
+      return;
+    }
     if (sel !== '') setForceSel('');
     sessionRef.current = session;
+    const waitMs = Math.max(0, WAIT_MS - (performance.now() - lastSpinStartRef.current));
     // ハナビ式「遅れ」演出: ボーナス（SB 以外）かレア役（目押し必須の小役）の成立時、
     // 始動音がたまに一拍遅れる。音を変えずタイミングだけで煽る当時の手法
     // （演出のみで抽選・制御には無関係。Math.random は設定ランダム着席と同じホール側の乱数）
@@ -509,17 +518,37 @@ export function App() {
     });
     // ベット済み・再遊技はレバー音のみ、未ベットなら投入込みの連結音
     const startSfx: SfxName = betDoneRef.current || session.bet === 0 ? 'lever' : 'betLever';
-    if (chanceUp && Math.random() < 0.25) window.setTimeout(() => playSfx(startSfx), 120);
-    else playSfx(startSfx);
+    // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）。ナビ音は第 1 停止リールで聞き分ける
+    const nav = navRef.current?.navFor(session.flags) ?? null;
+    // サブ基板演出: 第四リール始動・カットイン抽選（読み取り専用）。予告音を返す
+    const subFx = subRef.current!.onLever(session.flags);
+    // レバー時の音は優先度順に直列化（操作音 → ナビ → ウエイト → 予告）
+    const batch: SfxName[] = [startSfx];
+    if (nav) batch.push(nav.correctFirst === 0 ? 'navLeft' : nav.correctFirst === 1 ? 'navCenter' : 'navRight');
+    if (waitMs > 0) batch.push('wait');
+    if (subFxOnRef.current) batch.push(...subFx.sfx);
+    const fire = () => sfxRef.current?.playMany(batch);
+    if (chanceUp && Math.random() < 0.25) window.setTimeout(fire, 120);
+    else fire();
     setBetDone(false);
-    // ナビ層: 成立フラグを購読して正解を開示（AT 中のみ）
-    setNavDisplay(navRef.current?.navFor(session.flags) ?? null);
-    // サブ基板演出: 第四リール始動・カットイン抽選（読み取り専用）
-    setSubView(subRef.current!.onLever(session.flags).view);
+    setNavDisplay(nav);
+    setSubView(subFx.view);
     setCredit((c) => c - session.bet);
     setLastEvent(null);
-    setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
-    setPhase('spinning');
+    const startSpin = () => {
+      lastSpinStartRef.current = performance.now();
+      setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
+      setPhase('spinning');
+    };
+    if (waitMs > 0) {
+      // ウエイト: レバーは受け付け済み。待ち時間が明けてからリールが回る
+      setPhase('waiting');
+      window.setTimeout(() => {
+        if (sessionRef.current === session) startSpin(); // 機種切替等で破棄されていたら回さない
+      }, waitMs);
+    } else {
+      startSpin();
+    }
   }, [playSfx]);
 
   /** 全リール停止後の精算と演出。通常プレイ（stopReel）と即入賞（教材モード）で共用 */
@@ -558,41 +587,52 @@ export function App() {
         setFlashKey((k) => k + 1); // ボーナス確定フラッシュ
       }
 
-      // --- 音（効果音 OPLL / BGM）。優先度: ファンファーレ > 払い出し ---
+      // --- 音（効果音 OPLL / BGM）。契機を集めて優先度順に直列化する（planSfxBatch の規則:
+      // 告知があれば予告は鳴らさない、ファンファーレがあれば払い出しは鳴らさない） ---
       const sfx = sfxRef.current;
-      if (event.bonusStarted && kindOf(event.bonusStarted) !== 'sb') {
-        playSfx('fanfare');
-        // ファンファーレが鳴り終わる頃に BGM イン。BGM 作成パネルの割り当て
-        //（自作曲 or プリセット曲）を OPLL（emu2413）で鳴らす。通常はキャッシュ済みだが、
-        // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
-        if (sfx?.enabled) {
-          const slot = kindOf(event.bonusStarted) === 'rb' ? 'rb' : 'bb';
-          const song = resolveAssign(slot);
-          void (async () => {
-            try {
-              const piece = compose(song.options);
-              // 2A03等の重い合成はチャンク化された非同期経路で行い、リール操作を固めない。
-              const def = await renderComposedBgm(piece, song.options);
-              void sfx.playComposedBgm(bgmCacheKey(song.options), def, 1.05);
-            } catch {
-              // 保存データ破損等。音は演出なので無音で続行する
-            }
-          })();
-        }
-      } else if (event.replayWon) playSfx('replay');
-      else if (event.payout > 0) playSfx('payout');
+      const batch: SfxName[] = [];
+      const bonusStart = event.bonusStarted !== null && kindOf(event.bonusStarted) !== 'sb';
+      if (bonusStart) batch.push('fanfare');
+      if (event.replayWon) batch.push('replay');
+      else if (event.payout > 0) {
+        // 払い出し音は状態と額で分ける。賭け枚数以下の払い出しは「勝ちに偽装された負け」なので
+        // 祝福音ではなく受領の確認音だけにする（負けを勝ちに見せない）
+        const inBonus = state.base.type === 'bonus' || state.ct !== null || (navRef.current?.atActive ?? false);
+        batch.push(inBonus ? 'payoutBonus' : event.payout < session.bet ? 'payoutLow' : 'payout');
+      }
       if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
       if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
-        playSfx('kyuin');
+        batch.push('kyuin');
       }
-      if (event.lidReleased) playSfx('siren');
-      if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) playSfx('rush');
+      if (event.lidReleased) batch.push('siren');
+      if (event.ctEntered || navNotes.some((n) => n.includes('AT 突入'))) batch.push('rush');
       if (subFxOnRef.current) {
         parts.push(...subFx.notes);
-        for (const name of subFx.sfx) {
-          if (name === 'kyuin' && noticeModeRef.current === 'flag') continue; // 告知モードの分と重複させない
-          playSfx(name);
-        }
+        batch.push(...subFx.sfx); // 告知モードのキュインと重なっても planSfxBatch が 1 回にまとめる
+      }
+      const batchEndSec = sfx?.playMany(batch) ?? 0;
+      if (bonusStart && sfx?.enabled) {
+        // ファンファーレ（と同時に立った告知）が鳴り終わった直後に BGM をサビ（A の頭）から
+        // イン。入口が最大の山なので曲のイントロは飛ばし、効果音はその曲のキーへ追従させる。
+        // BGM 作成パネルの割り当て（自作曲 or プリセット曲）を鳴らす。通常はキャッシュ済みだが、
+        // 未レンダリングならレンダリング完了後にインする（ボーナスは数十秒続くので間に合う）
+        const slot = kindOf(event.bonusStarted!) === 'rb' ? 'rb' : 'bb';
+        const song = resolveAssign(slot);
+        const requestedAt = performance.now();
+        void (async () => {
+          try {
+            const piece = compose(song.options);
+            // 2A03等の重い合成はチャンク化された非同期経路で行い、リール操作を固めない。
+            const def = await renderComposedBgm(piece, song.options);
+            const delay = Math.max(0, batchEndSec + 0.05 - (performance.now() - requestedAt) / 1000);
+            void sfx.playComposedBgm(bgmCacheKey(song.options), def, delay, {
+              startAtSec: def.loopStart,
+              keyRoot: song.options.keyRoot,
+            });
+          } catch {
+            // 保存データ破損等。音は演出なので無音で続行する
+          }
+        })();
       }
       if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') parts.push(`■ ボーナス終了`);
       if (event.rtEntered) parts.push(`RT 突入`);
@@ -965,7 +1005,7 @@ export function App() {
             disabled={phase !== 'ready'}
             data-testid="lever"
           >
-            レバー (Space)
+            {phase === 'waiting' ? 'ウエイト中…' : 'レバー (Space)'}
           </button>
           {[0, 1, 2].map((reel) => (
             <button

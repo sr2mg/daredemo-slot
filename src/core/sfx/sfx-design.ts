@@ -66,8 +66,17 @@ export interface SfxRecipe {
   /** 推奨基準音（MIDI）と推奨音色 */
   defaultRoot: number;
   defaultVoice: number;
+  /**
+   * BGM のキーに追従させるか（既定 true）。音程が「調の中の音」として意味を持つ
+   * レシピは追従し、物理音の借用（サイレン・キュイン）や意図的に外す警告は
+   * キーに関係なく同じ音で鳴らす（外れていること自体が記号なので）
+   */
+  keyed?: boolean;
   build(root: number): SfxEvent[];
 }
+
+/** 低域補強の 1 打（タイトなキック）。中高域の主音に重ねて、騒音下でも輪郭が残るようにする */
+const kick = (t: number, gain = 0.5): NoiseEvent => ({ kind: 'noise', t, dur: 0.05, freq: 100, gain });
 
 const tone = (t: number, dur: number, midi: number, gain = 0.5, midiTo?: number): ToneEvent => ({
   kind: 'tone',
@@ -88,7 +97,7 @@ export const SFX_RECIPES: SfxRecipe[] = [
   {
     id: 'kakutei',
     name: '確定・当選',
-    theory: 'V→I の完全終止 + 分散和音上行。最後の音を最高音にして長く伸ばす',
+    theory: 'V→I の完全終止 + 分散和音上行。最後の音を最高音にして長く伸ばし、着地にキックを重ねて低域で補強する',
     defaultRoot: 72, // C5
     defaultVoice: 7, // トランペット
     build: (root) => [
@@ -97,6 +106,7 @@ export const SFX_RECIPES: SfxRecipe[] = [
       tone(0.16, 0.07, root + 4), // ミ
       tone(0.24, 0.07, root + 7), // ソ
       tone(0.32, 0.5, root + 12, 0.55), // 高いドー（トニックで着地）
+      kick(0.32), // 着地の低域補強（高音を低音で支える）
     ],
   },
   {
@@ -137,6 +147,7 @@ export const SFX_RECIPES: SfxRecipe[] = [
     theory: 'トライトーン（増4度）へのベンド + 2〜4kHz 帯。不安定音程 = 異常の記号',
     defaultRoot: 84, // C6（貫通力のある高域）
     defaultVoice: 10, // シンセ
+    keyed: false, // 外れていることが記号なのでキーに追従させない
     build: (root) => [
       tone(0, 0.22, root, 0.45, root + 6), // 増4度へずり上げ（警告の音程）
       { kind: 'noise', t: 0, dur: 0.06, freq: 6000, gain: 0.15 },
@@ -190,7 +201,9 @@ export const SFX_RECIPES: SfxRecipe[] = [
     theory: '上下ベンドの反復 = 現実の緊急音の借用。放出・重大事の記号',
     defaultRoot: 74, // D5
     defaultVoice: 9, // ホルン
+    keyed: false, // 物理音の借用。キーに関係なく同じサイレン
     build: (root) => [
+      kick(0), // 立ち上がりの低域補強
       tone(0, 0.3, root, 0.5, root + 8),
       tone(0.3, 0.3, root + 8, 0.5, root),
       tone(0.6, 0.3, root, 0.5, root + 8),
@@ -251,17 +264,48 @@ export const SFX_RECIPES: SfxRecipe[] = [
   {
     id: 'kyuin',
     name: 'キュイン（確定告知）',
-    theory: '2オクターブの指数スイープ + 微上昇ホールド。デチューン 2 声で太らせる',
+    theory: '2オクターブの指数スイープ + 微上昇ホールド。デチューン 2 声で太らせ、頭にキックを重ねて低域で補強する',
     defaultRoot: 67, // G4 ≒ 392Hz
     defaultVoice: 15, // エレキギター
+    keyed: false, // 異質な音色・スイープが記号。キーに追従させない
     build: (root) => [
+      kick(0), // 立ち上がりの低域補強
       tone(0, 0.35, root, 0.5, root + 24),
       tone(0, 0.35, root + 0.15, 0.4, root + 24.15), // デチューン重ね（当時流の太さ）
       tone(0.35, 0.55, root + 24, 0.5, root + 25),
       tone(0.35, 0.55, root + 24.15, 0.4, root + 25.15),
     ],
   },
+  {
+    id: 'waitTick',
+    name: 'ウエイト（待ち合図）',
+    theory: '低めの単音 2 打 = 「受け付けたが待て」。待ち時間の可視化なので肯定でも否定でもない平坦な音程',
+    defaultRoot: 60, // C4
+    defaultVoice: 4, // フルート
+    build: (root) => [tone(0, 0.05, root, 0.35), tone(0.22, 0.05, root, 0.3)],
+  },
+  {
+    id: 'payoutLow',
+    name: '小払い出し（賭け枚数以下）',
+    theory:
+      '単音の短い確認 = 「受け取った」だけを伝え、祝福しない。賭け枚数を下回る払い出しは勝ちに偽装された負け（LDW）なので報酬音を鳴らさない',
+    defaultRoot: 84, // C6
+    defaultVoice: 12, // ビブラフォン
+    build: (root) => [tone(0, 0.05, root, 0.4), tone(0.07, 0.07, root - 5, 0.35)],
+  },
 ];
+
+/**
+ * BGM のキー（0 = C … 11 = B）へ効果音を平行移動する。keyed: false のレシピは
+ * そのまま。移動量は最寄り方向（F# 以上は下へ）にして音域が大きく変わらないようにする
+ */
+export function transposeDesign(design: SfxDesign, keyRoot: number): SfxDesign {
+  const recipe = SFX_RECIPES.find((r) => r.id === design.recipeId);
+  if (!recipe || recipe.keyed === false) return design;
+  const k = ((Math.round(keyRoot) % 12) + 12) % 12;
+  const shift = k > 6 ? k - 12 : k;
+  return shift === 0 ? design : { ...design, rootMidi: design.rootMidi + shift };
+}
 
 /** design から再生イベント列を生成（速度倍率で時間軸を縮尺） */
 export function buildSfxEvents(design: SfxDesign): SfxEvent[] {

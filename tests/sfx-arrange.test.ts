@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildSfxEvents, sfxDuration } from '../src/core/sfx/sfx-design.js';
 import type { SfxDesign } from '../src/core/sfx/sfx-design.js';
 import { arrangeSfx } from '../src/audio/sfx-arrange.js';
-import { ASSIGNABLE_SFX, PRESET_SFX } from '../src/ui/sfx-library.js';
+import { applyTier, ASSIGNABLE_SFX, PRESET_SFX } from '../src/ui/sfx-library.js';
 
 /**
  * 効果音デザイン → OPLL レジスタ列の変換（sfx-arrange.ts）と、
@@ -70,8 +70,8 @@ describe('arrangeSfx（デザイン → OPLL レジスタ列）', () => {
   it('プリセットのベット/レバーは C メジャーのコードトーン設計（BGM と濁らない）', () => {
     expect(PRESET_SFX.bet).toMatchObject({ recipeId: 'coinIn', rootMidi: 72 }); // ド・ミ・ソ
     expect(PRESET_SFX.lever).toMatchObject({ recipeId: 'startArp', rootMidi: 72 }); // テレレレ（ド・ミ・ソ・ド）
-    // MAX BET 前提: 連結もレバー音のみ。毎ゲーム鳴る音は控えめレベル
+    // MAX BET 前提: 連結もレバー音のみ。毎ゲーム鳴る音は契機の段階（int-1）で控えめレベルになる
     expect(PRESET_SFX.betLever).toMatchObject({ recipeId: 'startArp', rootMidi: 72 });
-    expect(PRESET_SFX.lever.level).toBeLessThan(1);
+    expect(applyTier(PRESET_SFX.lever, 'lever').level).toBeLessThan(1);
   });
 });
