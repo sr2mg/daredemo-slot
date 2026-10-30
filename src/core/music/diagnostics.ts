@@ -1,5 +1,7 @@
 import { capabilitiesFor } from './sound-capabilities.js';
-import { CHORDS, COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
+import {
+  CHORDS, COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO, styleForId,
+} from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
@@ -589,10 +591,13 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('texture', 'warning', bodyStart, -1, '全セクションの編成が同一で、出し引きがない');
     }
   }
+  // 伴奏型の分散和音(撥弦の弾き語り)は推進装置でなく常設伴奏なので、「足し算」「貼り付き」の
+  // 装置規則から外す(様式の宣言 StyleDef.ostinatoRole を参照し、idでは分岐しない)。
+  const ostinatoIsAccompaniment = styleForId(piece.styleId)?.ostinatoRole === 'accompaniment';
   textureSections.forEach((section, sectionIndex) => {
     const optionalLayers = Number(section.echo)
       + Number(section.counterDensity > 0)
-      + Number(section.ostinatoDensity > 0);
+      + Number(!ostinatoIsAccompaniment && section.ostinatoDensity > 0);
     if (textureSections.length > 1 && optionalLayers > 1) {
       add(
         'texture', 'warning', bodyStart + sectionIndex * 8 * 4, -1,
@@ -620,6 +625,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     ['分散和音', textureSections.filter((section) => section.ostinatoDensity > 0).length],
   ] as const;
   for (const [label, coverage] of deviceCoverage) {
+    if (label === '分散和音' && ostinatoIsAccompaniment) continue;
     if (textureSections.length > 1 && coverage === textureSections.length) {
       add('texture', 'warning', bodyStart, -1, `${label}が全セクションに貼り付いている`);
     } else if (textureSections.length >= 5 && coverage > 3) {

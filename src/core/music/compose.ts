@@ -16,7 +16,8 @@
 import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import {
-  CHORDS, COUNTER_HI, COUNTER_LO, MAJOR_PENTATONIC_SCALE, MAJOR_SCALE, MELODY_HI, MELODY_LO,
+  CHORDS, COUNTER_HI, COUNTER_LO, MAJOR_HEXATONIC_SCALE, MAJOR_PENTATONIC_SCALE, MAJOR_SCALE,
+  MELODY_HI, MELODY_LO, MINOR_HEXATONIC_SCALE,
   MINOR_PENTATONIC_SCALE, NATURAL_MINOR_SCALE, PROGRESSIONS, STYLES, YO_SCALE, chordName,
   chordScalePcs, drumPatternStep, harmonicFunctionForToken, progressionForTonality,
 } from './theory.js';
@@ -128,7 +129,9 @@ export function compose(opts: ComposeInput): Piece {
   const scalePcs = japanesePlan?.scalePcs
     ?? (melodicLanguage === 'pentatonic'
       ? (tonality === 'minor' ? MINOR_PENTATONIC_SCALE : MAJOR_PENTATONIC_SCALE)
-      : (tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE)
+      : melodicLanguage === 'hexatonic'
+        ? (tonality === 'minor' ? MINOR_HEXATONIC_SCALE : MAJOR_HEXATONIC_SCALE)
+        : (tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE)
     ).map((t) => (t + keyRoot) % 12);
   // 弱拍・経過音の音組織は小節のコードスケール（変位音でキーの音階を上書きした音組織）。
   // 和風五音は核音・間の独自語彙を持つため対象外とし、従来の音組織を保つ。
@@ -262,6 +265,10 @@ export function compose(opts: ComposeInput): Piece {
   // --- PhrasePlan（旋律・副旋律・ベースが共有する設計図） ---
   const melodyPcsForChord = (chord: ChordEvent): readonly number[] => {
     const modalTones = chord.pcs.filter((pc) => scalePcs.includes(pc));
+    // 六音語法: 語法の外にある和音構成音(長調なら IV 系の根音=第4音)は強拍の着地候補から
+    // 外し、残りが2音以上あるときだけ絞る(1音まで痩せると旋律線が止まる)。五音語法は
+    // 保存曲の互換のため従来どおり和音全体へ着地する。
+    if (melodicLanguage === 'hexatonic') return modalTones.length >= 2 ? modalTones : chord.pcs;
     if (melodicLanguage !== 'japanese' || modalTones.length === 0) return chord.pcs;
     // 核音はPhrasePlanの到達点で優先する。通常の強拍まで核音だけに絞ると、
     // コードによって使用可能音が1音になり旋律線が痩せるため、ここでは共通音をすべて使う。

@@ -240,6 +240,8 @@ export function realizeIntro(
 
   const drums: DrumEvent[] = [];
   for (const barPlan of plan.barPlans) {
+    // 打楽器のない編成では導入ジェスチャーも低音と旋律だけで作る。
+    if (style.percussion === 'none') break;
     const start = barPlan.bar * 4;
     const addDrum = (beat: number, inst: DrumEvent['inst'], level = 1) => {
       if (beat >= endBeat || level <= 0) return;

@@ -84,6 +84,8 @@ describe('理論データ', () => {
     const fullOnsets = (pattern: readonly number[]): number[] =>
       fold(pattern).flatMap((level, index) => (level === 1 ? [index] : []));
     for (const style of STYLES) {
+      // 打楽器のない様式は譜が全休符(型の完全性のため)。骨格契約の対象外。
+      if (style.percussion === 'none') continue;
       const voices = [
         ['kick', style.kick, style.sectionB.kick],
         ['snare', style.snare, style.sectionB.snare],
@@ -966,6 +968,12 @@ describe('compose', () => {
   it('副旋律は全スタイルで主旋律の休符だけに短く応答する', () => {
     for (const style of STYLES) {
       const piece = compose({ ...base, styleId: style.id, bars: 8, seed: 42 });
+      // 対旋律装置を計画しない編成(分散和音だけの弾き語り)は空でよい。計画したなら必ず鳴る。
+      const planned = piece.arrangementPlan.sections.some((section) => section.counterDensity > 0);
+      if (!planned) {
+        expect(piece.counterMelody, style.id).toEqual([]);
+        continue;
+      }
       expect(piece.counterMelody.length, style.id).toBeGreaterThan(0);
       for (const response of piece.counterMelody) {
         expect(Math.floor(response.beat / 4) % 2, `${style.id}/beat=${response.beat}`).toBe(1);
@@ -1017,6 +1025,7 @@ describe('compose', () => {
 
   it('フィル後はスタイル別のBグルーヴへ変わり、最終拍を空けてAへ戻す', () => {
     for (const style of STYLES) {
+      if (style.percussion === 'none') continue;
       const piece = compose({ ...base, progressionId: 'tanaka-manabe', styleId: style.id, bars: 16 });
       const patternAt = (bar: number) =>
         piece.drums

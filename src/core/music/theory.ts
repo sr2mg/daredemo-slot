@@ -21,7 +21,7 @@ import type {
 /**
  * コード品質。文字列は chordName() の表示接尾辞であり、同時に tones の導出キー。
  */
-export type ChordQuality = '' | 'm' | 'dim' | '7' | 'm7' | 'M7' | '6' | 'sus4' | 'add9';
+export type ChordQuality = '' | 'm' | 'dim' | '7' | 'm7' | 'M7' | '6' | 'sus4' | 'add9' | 'sus2';
 
 /**
  * 品質 → ルートからの相対音程（半音）。tones は root とこの表から導出する。
@@ -38,6 +38,8 @@ const QUALITY_INTERVALS: Record<ChordQuality, readonly number[]> = {
   '6': [0, 4, 7, 9],
   sus4: [0, 5, 7],
   add9: [0, 4, 7, 2],
+  /** 3度を2度へ置き換えた掛留。sus4と同じく第3音を持たず長短両調で使える。並びは5度を[2]に保つ(開放五度化の参照位置)。 */
+  sus2: [0, 2, 7],
 };
 
 export interface ChordDef {
@@ -110,6 +112,18 @@ export const CHORDS: Record<string, ChordDef> = {
   IIIM7: chord(3, 'M7', 'tonic'),
   /** ♭VIIm（フリギア借用）。機能進行に属さない旋法的色彩。 */
   vii: chord(10, 'm', 'colour'),
+  // --- 3度を薄めた属和音と掛留（主音へ着地しないループの語彙）。 ---
+  /** 属和音に9thを足した開いた響き。b7を持たないので属7の牽引力を持たず、浮遊する。 */
+  Vadd9: chord(7, 'add9', 'dominant'),
+  /** 属和音の6th。add9と同じく導音は保ちつつb7を避け、旋法的な明るさで浮かせる。 */
+  V6: chord(7, '6', 'dominant'),
+  /**
+   * 主和音の3度を2度へ掛留した形。主音・2度・5度だけなので長短どちらとも言えず、
+   * 主和音の位置に置いても「着地」にならない。機能はcolour(着地判定の対象外)。
+   */
+  Isus2: chord(0, 'sus2', 'colour'),
+  /** 短調の♭VIIを掛留した形(3度抜き)。相対長調読みのVsus4と同じ音集合。 */
+  VIIsus4: chord(10, 'sus4', 'dominant'),
 };
 
 /** ローマ数字トークンの和声機能。カタログのメタデータを引く（未知トークンは colour）。 */
@@ -440,6 +454,43 @@ export const PROGRESSIONS: ProgressionDef[] = [
       [0, 2, 2, 3], // VI・VII → iv・V7 → VII・V7
     ],
   },
+  {
+    id: 'drifting-orbit',
+    name: '主音不在ループ',
+    feel: '浮遊・夜明け前の弾き語り',
+    tonality: 'major',
+    // vi→IV→V を回り続け、I が一度も来ない。V は b7 を持たない add9/6/sus4 で属7の
+    // 牽引力を薄め、末尾の掛留から vi へ戻る(偽終止の恒常化)。主音を鳴らさないまま
+    // 長調の衛星(vi/IV/V)だけで周回するため、聴き手は vi(相対短調)・IV(リディア)・
+    // V(ミクソ)のどこを主音と取ってもよい=「主音が浮遊する」旋法感の正体。
+    // 参照音源の測定では、歌が調の第4音(IVの根音)をほぼ使わず、和音は 9th/11th/13th と
+    // 第5音省略を含む5音の開離配置だった(analysis/ 参照。旋律側は六音語法が担う)。
+    realizations: {
+      // 相対短調読み: i7→VI→VII→VIIsus4。同じ音集合を短調の度数で綴り直す。
+      minor: {
+        // スロットの選択肢数は長調と揃える(variations の添字を両調性で共有するため)。
+        slots: [
+          [['i7'], ['i']],
+          [['VI'], ['VImaj7'], ['iv7']],
+          [['VII'], ['VIIM7'], ['VIIsus4']],
+          [['VIIsus4'], ['VI', 'VIIsus4'], ['VII']],
+        ],
+      },
+    },
+    slots: [
+      [['vi7'], ['vi']],
+      [['IVadd9'], ['IV'], ['IVM7']],
+      [['Vadd9'], ['V6'], ['Vsus4']],
+      [['Vsus4'], ['Isus2'], ['IVadd9', 'Vsus4']],
+    ],
+    defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 1, 1, 0], // vi7 → IV → V6 → Vsus4
+      [0, 0, 2, 1], // vi7 → IVadd9 → Vsus4 → Isus2（掛留のまま主音の位置へ）
+      [1, 2, 0, 2], // vi → IVM7 → Vadd9 → IVadd9・Vsus4（和声リズムで押す）
+      [0, 0, 1, 1], // vi7 → IVadd9 → V6 → Isus2
+    ],
+  },
 ];
 
 const progressionRealizationCache = new WeakMap<
@@ -523,7 +574,7 @@ export function chordScalePcs(
  * スタイルを追加してテーブルを忘れるとコンパイルエラーになる。
  * 保存曲のstyleIdは任意文字列で来るので、参照時はstyleLookup()で照合する。
  */
-export const STYLE_IDS = ['eurobeat', 'rock', 'kmmo', 'ska', 'garage2step', 'dnb'] as const;
+export const STYLE_IDS = ['eurobeat', 'rock', 'kmmo', 'ska', 'garage2step', 'dnb', 'acoustic'] as const;
 export type StyleId = (typeof STYLE_IDS)[number];
 
 export const isStyleId = (value: string): value is StyleId =>
@@ -628,6 +679,19 @@ export interface StyleDef {
   glide?: GlidePolicy;
   /** スタイル既定のベースライン生成(bassline.ts、分数コード)。省略はoff。 */
   bassLine?: BassLinePolicy;
+  /**
+   * 打楽器の有無。省略=kit(スタイル譜のドラムを敷く)。'none' は弾き語り・室内楽的な
+   * 編成で、本編・イントロ・フィル・シンバルの全てを鳴らさない(kick/snare/hat の
+   * 譜は参照されないが、型の完全性のため全休符を置く)。
+   */
+  percussion?: 'kit' | 'none';
+  /**
+   * 分散和音声部の役割。省略=device(テクスチャ戦略が選んだ区間・フレーズ帯だけで鳴る
+   * 推進装置)。'accompaniment' は撥弦の伴奏型で、全区間・全小節に敷く
+   * (編成計画が各区間の ostinatoDensity を 1 以上に保証し、声部側はフレーズ帯の
+   * 間引きをしない)。
+   */
+  ostinatoRole?: 'device' | 'accompaniment';
 }
 
 export const STYLES: StyleDef[] = [
@@ -827,6 +891,51 @@ export const STYLES: StyleDef[] = [
     // アトモスフェリックなカラートーン和声(リキッド系)をlushで近似する。
     tension: 'lush',
   },
+  {
+    id: 'acoustic',
+    name: 'アコースティック',
+    feel: '弾き語り・ナイロン弦と息の長い歌',
+    // 参照音源の実測(analysis/): 拍間隔中央値534ms=112BPM、拍間隔の変動係数4.7%。
+    // 揺れ自体は未実装なので中央値だけを継承する。
+    defaultBpm: 112,
+    // 打楽器なし。譜は型の完全性のための全休符で、percussion:'none' が参照を止める。
+    percussion: 'none',
+    kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    snare: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    sectionB: {
+      kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      snare: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    },
+    // 低音はギターの低弦が担う持続音(実測: ベース楽器なし、小節ごとの最頻低音が
+    // 2小節単位で持続)。刻まず、終止だけ全音階の経過音で次コードへ渡す。
+    bass: 'sustain',
+    bassArticulation: 'tenuto',
+    bassCadence: 'diatonicPickup',
+    melody: {
+      // 実測の歌の発音位置は拍頭・8分裏・16分位置に広く分布し、表裏の偏りが小さい。
+      // 表(0,4)は生成規則で必ず残るので、裏と拍半ばを平滑に持ち上げる。
+      onsetWeights: [100, 62, 70, 66, 100, 60, 72, 68],
+      // 実測 1.25音/拍 ≈ 5音/小節。
+      density: [4, 6],
+      // 息の長い歌(音価中央値=8分、1秒超8.7%)。スタッカートにしない。
+      gate: 0.88,
+      // 実測: 順次(≤2半音)66%。
+      stepwisePercent: 66,
+      // 歌の中央値は F#4(67) だが旋律音域の下限(MELODY_LO=72)が固定なので、
+      // 窓の中で最も低い中心を取る。音色側(フルート系)が1オクターブ上を自然に聴かせる。
+      center: 75,
+    },
+    // 分散和音(撥弦)を常設伴奏にし、対旋律・低音主導へは振らない。
+    textureStrategies: ['arpDrive'],
+    ostinatoRole: 'accompaniment',
+    compactTextureStrategy: 'bassDrive',
+    // 導入はモチーフの断片だけ(打楽器が無いのでグルーヴ提示・カウントインは成立しない)。
+    introRoles: ['motif'],
+    // 色付けは和音トークン側(add9/6/sus)で持つ。テンション装置で b7 を足すと属7の
+    // 牽引力が戻り、主音不在の浮遊が壊れるので off のまま。
+  },
 ];
 
 /**
@@ -852,6 +961,27 @@ export const YO_SCALE = [0, 2, 5, 7, 9] as const;
  */
 export const MAJOR_PENTATONIC_SCALE = [0, 2, 4, 7, 9] as const;
 export const MINOR_PENTATONIC_SCALE = [0, 3, 5, 7, 10] as const;
+
+/**
+ * 主音から完全五度を count-1 回積んだ音集合(五度圏の連続 count 音)。
+ * count=5 が長五音(MAJOR_PENTATONIC_SCALE と同値)、6 が長六音、7 がリディア。
+ * 半音は count=6 で初めて1つ現れる(第7音と主音の間)ので、五音の無半音性を
+ * ほぼ保ったまま導音だけを得る。相対短調の形は +3 半音の回転で得る
+ * (MINOR_PENTATONIC_SCALE が MAJOR_PENTATONIC の回転であるのと同じ関係)。
+ */
+export function stackedFifthsScale(count: number): number[] {
+  return Array.from({ length: count }, (_, index) => (index * 7) % 12).sort((a, b) => a - b);
+}
+const relativeMinorOf = (scale: readonly number[]): number[] =>
+  scale.map((pc) => (pc + 3) % 12).sort((a, b) => a - b);
+/**
+ * 六音語法(五度圏6連続)。長調では長音階から第4音を除いた形 {0,2,4,7,9,11}、
+ * 短調では自然短音階から第6音を除いた形 {0,2,3,5,7,10}(短五音+長2度)。
+ * 第4音(長調)/第6音(短調)が無いので、IV系・VI系の和音上でも旋律が和音の根音を
+ * 避けて 9th/13th 側に座り、主音の確定を先送りする(参照音源の歌の音集合)。
+ */
+export const MAJOR_HEXATONIC_SCALE: readonly number[] = stackedFifthsScale(6);
+export const MINOR_HEXATONIC_SCALE: readonly number[] = relativeMinorOf(MAJOR_HEXATONIC_SCALE);
 
 /**
  * 選べるキー(全12)。表記はNOTE_NAMESから導出し、和音チップ・音名表示

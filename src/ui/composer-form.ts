@@ -68,7 +68,8 @@ export function songSummary(options: ComposeOptions): string {
   const tonalLabel = tonality === 'minor' ? ' / 短調' : '';
   const melody = melodicLanguage === 'japanese'
     ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
-    : melodicLanguage === 'pentatonic' ? ' / 五音ペンタ' : '';
+    : melodicLanguage === 'pentatonic' ? ' / 五音ペンタ'
+      : melodicLanguage === 'hexatonic' ? ' / 六音' : '';
   const groove = options.grooveFeel && options.grooveFeel !== DEFAULT_GROOVE_FEEL
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
@@ -134,8 +135,8 @@ export function loadComposerForm(): ComposerForm {
     : raw.tonality === 'major' ? 'major' : legacyMode === 'minor' ? 'minor' : 'major';
   const melodicLanguage: MelodicLanguage = raw.melodicLanguage === 'japanese'
     ? 'japanese'
-    : raw.melodicLanguage === 'pentatonic'
-      ? 'pentatonic'
+    : raw.melodicLanguage === 'pentatonic' || raw.melodicLanguage === 'hexatonic'
+      ? raw.melodicLanguage
       : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
   const availableProgressions = progressionsForTonality(tonality).filter((p) => p.slots.length <= bars);
   const initialProgression = typeof raw.progId === 'string'

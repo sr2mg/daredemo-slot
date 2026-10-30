@@ -218,8 +218,27 @@ export function arrangementPlanFor(
   tupletOverlay: TupletOverlayChoice = 'off',
 ): ArrangementPlan {
   const tuplet = resolveTupletOverlay(tupletOverlay, songPlan);
-  const plan = planArrangement(bars, seed, progressionId, songPlan, tuplet !== null);
+  const planned = planArrangement(bars, seed, progressionId, songPlan, tuplet !== null);
+  const style = songPlan ? styleForId(songPlan.styleId) : undefined;
+  const plan = style?.ostinatoRole === 'accompaniment' && capabilitiesFor(songPlan?.soundChip).independentArpeggio
+    ? withAccompanimentOstinato(planned, seed)
+    : planned;
   return tuplet === null ? plan : withTupletLayer(plan, tuplet, seed, songPlan);
+}
+
+/**
+ * 伴奏型の分散和音(撥弦の弾き語り)は推進装置でなく常設伴奏なので、テクスチャ戦略が
+ * 選ばなかった区間にも密度≥1を保証する。密度は区間の厚みに従う(full=16分へ加速する
+ * フレーズ帯を持つ、sparse=8分のみ)。加速点の抽選は withTransitions と同じ写像。
+ */
+function withAccompanimentOstinato(plan: ArrangementPlan, seed: number): ArrangementPlan {
+  const peakChoices = ['restatement', 'departure', 'conclusion'] as const;
+  const sections = plan.sections.map((item, index) => (item.ostinatoDensity > 0 ? item : {
+    ...item,
+    ostinatoDensity: item.backingDensity === 'full' ? 2 as const : 1 as const,
+    ostinatoPeak: peakChoices[(seed + index * 5) % peakChoices.length]!,
+  }));
+  return { ...plan, sectionA: sections[0]!, sectionB: sections[1] ?? sections[0]!, sections };
 }
 
 function planArrangement(

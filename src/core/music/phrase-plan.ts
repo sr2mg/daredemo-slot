@@ -289,7 +289,10 @@ export function makePhrasePlan(
     if (targetChord && cadence) {
       const rootPc = targetChord.pcs[0]!;
       const modalChordPcs = targetChord.pcs.filter((pc) => scalePcs.includes(pc));
-      const targetPcs = melodicLanguage === 'japanese' && modalChordPcs.length > 0
+      // 終止の目標音も語法の中から選ぶ。和風は共通音が1音でも核音優先で絞り、六音は
+      // 2音以上残るときだけ絞る(compose の melodyPcsForChord と同じ規則)。
+      const targetPcs = (melodicLanguage === 'japanese' && modalChordPcs.length > 0)
+        || (melodicLanguage === 'hexatonic' && modalChordPcs.length >= 2)
         ? modalChordPcs
         : targetChord.pcs;
       const nuclearTargets = japanesePlan

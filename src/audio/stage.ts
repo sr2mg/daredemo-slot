@@ -101,6 +101,8 @@ export const STYLE_ROOMS: Record<StyleId, RoomModel> = {
   // クラブ系はドラムの輪郭を立てたいので短め。DnBはパッドを泳がせる分だけ広く。
   garage2step: room(1.0),
   dnb: room(1.6),
+  // 弾き語りは残響の長い室内(ホール寄り)。参照音源のRT60は未測定で、これは参照値。
+  acoustic: room(1.8),
 };
 
 export function roomFor(styleId: string): RoomModel {

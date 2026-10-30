@@ -885,6 +885,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             <option value="standard">旋律語法: 標準</option>
             <option value="japanese">旋律語法: 和風五音</option>
             <option value="pentatonic">旋律語法: 五音ペンタ</option>
+            <option value="hexatonic">旋律語法: 六音(五音+導音)</option>
           </select>
           {melodicLanguage === 'japanese' && (
             <select

@@ -99,7 +99,9 @@ export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
     ...(japanese ? {
       melodicLanguage: draft.melodicLanguage,
       ...(draft.japaneseScale !== 'auto' ? { japaneseScale: draft.japaneseScale } : {}),
-    } : draft.melodicLanguage === 'pentatonic' ? { melodicLanguage: draft.melodicLanguage } : {}),
+    } : draft.melodicLanguage === 'pentatonic' || draft.melodicLanguage === 'hexatonic'
+      ? { melodicLanguage: draft.melodicLanguage }
+      : {}),
     ...(draft.grooveFeel === DEFAULT_GROOVE_FEEL ? {} : { grooveFeel: draft.grooveFeel }),
     // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
     ...(caps.independentArpeggio && allowsTupletOverlay(draft.grooveFeel) && draft.tupletOverlay !== 'off'

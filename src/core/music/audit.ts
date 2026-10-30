@@ -9,6 +9,7 @@
  * 2026-07 の初回監査（168曲）: 不変条件違反0件。表現レンジの穴として
  * ロングトーン皆無・音域固定・裏拍シンコペ皆無・休符始まり皆無・標準語法の装飾休眠を検出。
  */
+import { styleForId } from './theory.js';
 import type { Piece } from './types.js';
 
 export interface AuditAnomaly {
@@ -72,7 +73,10 @@ export function auditPieceInvariants(piece: Piece): AuditAnomaly[] {
   }
 
   if (piece.bass.length === 0) anomalies.push({ kind: 'bass-empty', detail: 'ベースが完全に無い' });
-  if (piece.drums.length === 0) anomalies.push({ kind: 'drums-empty', detail: 'ドラムが完全に無い' });
+  // 打楽器のない様式(StyleDef.percussion='none')は空が正。それ以外で空なら生成の欠落。
+  if (piece.drums.length === 0 && styleForId(piece.styleId)?.percussion !== 'none') {
+    anomalies.push({ kind: 'drums-empty', detail: 'ドラムが完全に無い' });
+  }
 
   // 主旋律と副旋律が同じ音を同時に発音し続ける（意図しない完全ユニゾン化）
   let unisonOverlap = 0;
