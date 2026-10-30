@@ -91,6 +91,8 @@ export class Subboard {
   private fakeZoneLeft = 0;
   private sbZoneActive = false;
   private cutin: SubboardView['cutin'] = null;
+  /** 当該契機（レバー / 全停止）で鳴らす予告音。onLever / onSettle の先頭で空にする */
+  private fx: SfxName[] = [];
 
   constructor(machine: MachineDef, seed: number) {
     this.machine = machine;
@@ -114,12 +116,13 @@ export class Subboard {
   /** レバー ON。第四リールの始動と、成立フラグを受けたカットイン抽選 */
   onLever(flags: readonly RoleId[]): SubboardFx {
     this.cutin = null;
+    this.fx = [];
     if (this.kind === 'atype') {
       this.fourthSymbol = null;
       this.fourthFlash = false;
     }
     if (this.kind === 'at') this.rollAtCutin(flags);
-    return { view: this.snapshot(), sfx: [], notes: [] };
+    return { view: this.snapshot(), sfx: this.fx, notes: [] };
   }
 
   /** 教材モードの強制 AT 突入をサブ基板にも見せる（RUSH ステージ + 突入カットイン） */
@@ -134,7 +137,8 @@ export class Subboard {
   /** 全リール停止後。GameEvent と更新後のエンジン状態から演出を確定させる */
   onSettle(event: GameEvent, engine: EngineState, nav: NavInfo | null): SubboardFx {
     this.cutin = null; // レバー時のカットインは全停止で役目を終える
-    const sfx: SfxName[] = [];
+    this.fx = [];
+    const sfx = this.fx;
     const notes: string[] = [];
     switch (this.kind) {
       case 'atype':
@@ -174,6 +178,7 @@ export class Subboard {
       const rare = this.hasRareSmall(event.flags);
       this.fourthSymbol = honest;
       this.fourthFlash = this.chance(rare ? 0.25 : honest === 'blank' ? 1 / 64 : 1 / 48);
+      if (this.fourthFlash) sfx.push('yokokuWeak'); // 点滅 = チャンス（ガセ込み）の弱予告
       return;
     }
 
@@ -209,6 +214,9 @@ export class Subboard {
       this.fourthSymbol = roll < 80 ? honest : this.contradictionOf(honest);
       this.fourthFlash = roll >= 50 && roll < 80;
       this.lamp = false;
+      // 潜伏中の点滅は弱予告、矛盾図柄は（分かる人には確定なので）中予告で小さく背中を押す
+      if (this.fourthFlash) sfx.push('yokokuWeak');
+      else if (this.fourthSymbol !== honest) sfx.push('yokokuMid');
     }
   }
 
@@ -257,16 +265,16 @@ export class Subboard {
       .filter((r) => r !== undefined)
       .filter((r) => r.kind === 'small' && r.pullIn !== 'guaranteed');
     const strong = rare.some((r) => r.payout >= 10);
-    if (hasBonus && this.chance(0.6)) this.setCutin('🦁 ガオオオッ！！');
-    else if (strong && this.chance(0.5)) this.setCutin('🦁 ガオオオッ！！');
-    else if (rare.length > 0 && this.chance(0.3)) this.setCutin('🐾 茂みが揺れている…');
-    else if (this.chance(1 / 64)) this.setCutin('🌿 風が吹いた'); // ガセ（弱）
+    if (hasBonus && this.chance(0.6)) this.setCutin('🦁 ガオオオッ！！', 'yokokuStrong');
+    else if (strong && this.chance(0.5)) this.setCutin('🦁 ガオオオッ！！', 'yokokuStrong');
+    else if (rare.length > 0 && this.chance(0.3)) this.setCutin('🐾 茂みが揺れている…', 'yokokuMid');
+    else if (this.chance(1 / 64)) this.setCutin('🌿 風が吹いた', 'yokokuWeak'); // ガセ（弱）
   }
 
   private settleAt(nav: NavInfo | null): void {
     this.atRush = nav?.atActive ?? false;
     if (nav?.atStarted) this.setCutin('🦁 BEAST RUSH 突入！！');
-    else if (nav?.atContinued) this.setCutin('🐘 群れが来た！継続！！');
+    else if (nav?.atContinued) this.setCutin('🐘 群れが来た！継続！！', 'yokokuMid'); // 継続中は抑揚を抑える
     if (!this.atRush && this.chance(0.2)) {
       // ステージは慣性を持って揺れる。高確モードほど夜寄り（体感でしか分からない示唆）
       const initial = this.machine.nav?.modes?.initial ?? null;
@@ -303,6 +311,7 @@ export class Subboard {
     const pending = engine.queue.some((id) => this.bonusKind(id) !== 'sb');
 
     // 高確率ゾーン表示（青→黄→緑→赤）
+    const prevZone = this.zone;
     if (releaseIn !== null && releaseIn <= 30) {
       const level = releaseIn <= 5 ? 3 : releaseIn <= 12 ? 2 : releaseIn <= 20 ? 1 : 0;
       this.zone = { label: '高確率', level };
@@ -318,6 +327,9 @@ export class Subboard {
     } else {
       this.zone = null;
     }
+    // ゾーンの出現は弱予告、色の昇格は中予告（本物・ガセで音を変えない）
+    if (this.zone !== null && prevZone === null) this.fx.push('yokokuWeak');
+    else if (this.zone !== null && prevZone !== null && this.zone.level > prevZone.level) this.fx.push('yokokuMid');
 
     // 対決連続演出
     if (this.battle !== null) {
@@ -334,8 +346,10 @@ export class Subboard {
       }
     } else if (releaseIn === 3) {
       this.battle = { roundsLeft: 3 }; // 本物: 放出にぴったり重なる
+      this.fx.push('yokokuStrong');
     } else if ((releaseIn === null || releaseIn > 30) && !pending && this.chance(1 / 48)) {
       this.battle = { roundsLeft: 2 }; // ガセ
+      this.fx.push('yokokuStrong'); // 本物と同じ音（音で本物・ガセを割らない）
     }
 
     // 天国示唆（モードが初期値以外のときだけ稀に漏れる）
@@ -360,7 +374,7 @@ export class Subboard {
     if (!active && this.sbZoneActive) notes.push('💤 放出ゾーン終了');
     // ストックが溜まっているときの前兆（サブ基板だけが知っている唸り）
     if (!active && engine.lid && engine.queue.length >= 10 && this.chance(1 / 32)) {
-      this.setCutin('⚡ 台の奥で何かが唸っている…');
+      this.setCutin('⚡ 台の奥で何かが唸っている…', 'yokokuMid');
     }
     this.sbZoneActive = active;
   }
@@ -377,9 +391,11 @@ export class Subboard {
     return role?.pattern.find((s) => s !== 'any') ?? 'blank';
   }
 
-  private setCutin(text: string): void {
+  /** カットインを出す。sfx を渡すと当該契機の予告音として鳴らす（告知・確定は App 側の契機が担当） */
+  private setCutin(text: string, sfx?: SfxName): void {
     this.cutinSeq += 1;
     this.cutin = { text, key: this.cutinSeq };
+    if (sfx) this.fx.push(sfx);
   }
 
   private chance(prob: number): boolean {

@@ -1,11 +1,12 @@
 import type { SfxDesign } from '../core/sfx/sfx-design.js';
+import { transposeDesign } from '../core/sfx/sfx-design.js';
 import { isPcmBgm } from '../audio/render.js';
 import type { ComposedBgmDef, PcmBgmDef } from '../audio/render.js';
 import type { OpllExports, SfxDef } from '../audio/opll-core.js';
 import type { SfxName } from './sfx-names.js';
 import { OPLL_CLOCK, OPLL_IMPORTS, OPLL_RATE, renderSequence, renderSequenceAsync } from '../audio/opll-core.js';
 import { arrangeSfx } from '../audio/sfx-arrange.js';
-import { ASSIGNABLE_SFX, PRESET_SFX, resolveSfxAssign } from './sfx-library.js';
+import { ASSIGNABLE_SFX, PRESET_SFX, applyTier, planSfxBatch, resolveSfxAssign, sfxTrigger } from './sfx-library.js';
 
 /**
  * 効果音 + BGM プレイヤー。音源はすべて OPLL（emu2413）。
@@ -26,8 +27,10 @@ const BGM_GAIN = 0.55; // マスターに対する BGM の相対音量（bgmVolu
 const CUSTOM_BGM_CACHE_MAX = 6;
 /** 効果音試聴の波形キャッシュ上限（短いので軽い） */
 const PREVIEW_CACHE_MAX = 16;
-/** 効果音の基準正規化ピーク（design.level はこれに乗算される） */
+/** 効果音の基準正規化ピーク（design.level = 契機の強度段階 × 微調整 がこれに乗算される） */
 const SFX_PEAK = 0.65;
+/** 直列化した効果音の継ぎ目に置く小さな間（秒） */
+const BATCH_GAP = 0.06;
 
 export class SfxPlayer {
   enabled: boolean;
@@ -57,6 +60,13 @@ export class SfxPlayer {
   private bgmVolume = 0.5;
   /** 効果音デザイン試聴の波形キャッシュ。キーは SfxDesign の JSON */
   private previewCache = new Map<string, Float32Array>();
+  /**
+   * 効果音を合わせる BGM のキー（0 = C … 11 = B）。BGM 再生中はその曲のキーへ追従し、
+   * 停止で C（プリセットの設計キー）に戻る。波形はキーごとに作り直す
+   */
+  private keyRoot = 0;
+  /** waves が作られたときのキー。keyRoot と違えば作り直しが必要 */
+  private wavesKeyRoot = 0;
   /** OPLL インスタンスは共有・ステートフルなので、レンダリングはこのキューで直列化する */
   private renderJobs: { run: () => Promise<void>; priority: boolean }[] = [];
   private pumping = false;
@@ -75,27 +85,36 @@ export class SfxPlayer {
     }
   }
 
-  /** design を波形にする（level = 正規化ピークへの相対出力。「この音だけ控えめ」用） */
-  private renderDesign(design: SfxDesign): Float32Array {
-    return renderSequence(this.exports!, this.opll, arrangeSfx(design), SFX_PEAK * (design.level ?? 1));
+  /**
+   * design を波形にする（level = 正規化ピークへの相対出力 = 契機の強度段階 × 微調整）。
+   * keyRoot を渡すと BGM のキーへ平行移動してから鳴らす（keyed: false のレシピはそのまま）
+   */
+  private renderDesign(design: SfxDesign, keyRoot = 0): Float32Array {
+    const keyed = transposeDesign(design, keyRoot);
+    return renderSequence(this.exports!, this.opll, arrangeSfx(keyed), SFX_PEAK * (design.level ?? 1));
   }
 
-  /** 全契機の効果音を、現在の割り当て（自作/プリセット/なし）からレンダリングする */
+  /** 契機 1 つぶんの波形を現在の割り当て・キーで作る（不正データはプリセットで再試行） */
+  private renderTrigger(name: SfxName): void {
+    try {
+      const design = resolveSfxAssign(name);
+      if (design === null) {
+        delete this.waves[name]; // 「なし」= 波形を持たない（play は無音で何もしない）
+      } else {
+        this.waves[name] = this.renderDesign(design, this.keyRoot);
+      }
+    } catch {
+      // 壊れた保存データ等はプリセットで再試行（プリセットは常に有効なレシピ）
+      this.waves[name] = this.renderDesign(applyTier(PRESET_SFX[name], name), this.keyRoot);
+    }
+    delete this.buffers[name];
+  }
+
+  /** 全契機の効果音を、現在の割り当て（自作/プリセット/なし）と BGM キーからレンダリングする */
   private renderSfx(): void {
     if (!this.exports) return;
-    for (const { name } of ASSIGNABLE_SFX) {
-      try {
-        const design = resolveSfxAssign(name);
-        if (design === null) {
-          delete this.waves[name]; // 「なし」= 波形を持たない（play は無音で何もしない）
-          continue;
-        }
-        this.waves[name] = this.renderDesign(design);
-      } catch {
-        // 壊れた保存データ等はプリセットで再試行（プリセットは常に有効なレシピ）
-        this.waves[name] = this.renderDesign(PRESET_SFX[name]);
-      }
-    }
+    for (const { name } of ASSIGNABLE_SFX) this.renderTrigger(name);
+    this.wavesKeyRoot = this.keyRoot;
     this.buffers = {};
   }
 
@@ -104,15 +123,30 @@ export class SfxPlayer {
     void this.enqueueRender(async () => {
       await this.preload();
       if (!this.exports) return;
-      try {
-        const design = resolveSfxAssign(name);
-        if (design === null) delete this.waves[name];
-        else this.waves[name] = this.renderDesign(design);
-        delete this.buffers[name];
-      } catch {
-        // 不正データは既存の波形のまま（音は演出）
-      }
+      this.renderTrigger(name);
     }, true);
+  }
+
+  /**
+   * 効果音を合わせるキーを変える（BGM の開始・停止で呼ぶ）。キーが変わったら全契機を
+   * 作り直す。作り直し中に鳴った効果音は旧キーの波形で鳴る（数十 ms の話なので許容）
+   */
+  setKeyRoot(keyRoot: number): void {
+    const k = ((Math.round(keyRoot) % 12) + 12) % 12;
+    if (k === this.keyRoot) return;
+    this.keyRoot = k;
+    void this.enqueueRender(async () => {
+      await this.preload();
+      if (!this.exports || this.wavesKeyRoot === this.keyRoot) return;
+      this.renderSfx();
+    }, true);
+  }
+
+  /** 契機の効果音が鳴り終わるまでの秒数（直前の間を含む）。未ロード・「なし」は 0 */
+  sfxEndSec(name: SfxName): number {
+    const wave = this.waves[name];
+    if (!wave) return 0;
+    return (sfxTrigger(name).preGapSec ?? 0) + wave.length / OPLL_RATE;
   }
 
   /** 効果音デザインの試聴（エディタ用なので ON/OFF トグルに関わらず鳴らす） */
@@ -315,10 +349,13 @@ export class SfxPlayer {
       startAtSec?: number;
       /** 再生開始からこの秒数で自動停止する。省略時は最後まで。 */
       stopAfterSec?: number;
+      /** 曲のキー（0 = C … 11）。渡すと効果音をこのキーへ追従させる（BGM と効果音のキー合わせ） */
+      keyRoot?: number;
     } = {},
   ): Promise<'played' | 'failed' | 'superseded'> {
     if (!this.enabled) return 'failed';
     this.stopBgm();
+    if (opts.keyRoot !== undefined) this.setKeyRoot(opts.keyRoot);
     const gen = this.bgmGen;
     const requestedAt = performance.now();
     let wave: Float32Array;
@@ -381,16 +418,22 @@ export class SfxPlayer {
       // 未 start の source を stop した場合など。無視してよい
     }
     this.bgmSource = null;
+    this.setKeyRoot(0); // 効果音はプリセットの設計キー（C）へ戻す
   }
 
-  /** 効果音を再生（未ロード・OFF・失敗時は黙って何もしない） */
-  play(name: SfxName): void {
-    if (!this.enabled) return;
+  /**
+   * 効果音を再生（未ロード・OFF・失敗時は黙って何もしない）。
+   * 契機に間（preGapSec）があればその分遅らせて鳴らし、間の間も BGM を下げる
+   * （「告知の直前の無音」）。戻り値は鳴り終わる時刻（AudioContext 時間）。
+   * 鳴らせなかったときは null
+   */
+  play(name: SfxName, startAt?: number): number | null {
+    if (!this.enabled) return null;
     try {
       const wave = this.waves[name];
       if (!wave) {
         void this.preload();
-        return;
+        return null;
       }
       const ctx = this.ensureCtx();
       let buffer = this.buffers[name];
@@ -402,10 +445,32 @@ export class SfxPlayer {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(this.gain!);
-      this.duckBgmFor(buffer.duration);
-      source.start();
+      const gap = sfxTrigger(name).preGapSec ?? 0;
+      const at = Math.max(ctx.currentTime, startAt ?? ctx.currentTime) + gap;
+      this.duckBgmFor(at - ctx.currentTime + buffer.duration);
+      source.start(at);
+      return at + buffer.duration;
     } catch {
-      // 音は演出。失敗してもゲームを止めない
+      return null; // 音は演出。失敗してもゲームを止めない
     }
+  }
+
+  /**
+   * 同じ瞬間に立った複数の契機を、優先度順に直列化して鳴らす（planSfxBatch の規則）。
+   * 発音数の限られた実機で「割り込みは優先度順に順番待ち」だった聞こえ方の再現で、
+   * 告知と予告、ファンファーレと払い出しが重なって団子になるのを防ぐ。
+   * 戻り値は最後の音が鳴り終わる秒数（今から。何も鳴らなければ 0）
+   */
+  playMany(names: readonly SfxName[]): number {
+    if (!this.enabled) return 0;
+    let cursor: number | undefined;
+    let end = 0;
+    for (const name of planSfxBatch(names)) {
+      const finished = this.play(name, cursor);
+      if (finished === null) continue;
+      cursor = finished + BATCH_GAP;
+      end = finished;
+    }
+    return end > 0 && this.ctx ? Math.max(0, end - this.ctx.currentTime) : 0;
   }
 }
