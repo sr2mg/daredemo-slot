@@ -867,6 +867,11 @@ export const KEYS: readonly { root: number; label: string }[] =
  */
 export const MELODY_LO = 72;
 export const MELODY_HI = 88;
+/**
+ * ループ境界(本編の最初の骨格音と最後の骨格音)の許容最大半音数。完全5度まで。
+ * 診断(loop)が検査し、主旋律のターンアラウンド着地(rev3以降)が設計時に守る。
+ */
+export const LOOP_BOUNDARY_MAX_SEMITONES = 7;
 export const COUNTER_LO = 60;
 export const COUNTER_HI = 76;
 
