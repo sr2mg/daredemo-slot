@@ -3,13 +3,14 @@ import { auditPieceInvariants, profilePieces } from '../src/core/music/audit.js'
 import { compose } from '../src/core/music/compose.js';
 import { diagnosePiece, validatePiece } from '../src/core/music/diagnostics.js';
 import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
+import { CURRENT_ENGINE_REV } from '../src/core/music/types.js';
 import type { ComposeOptions, Piece } from '../src/core/music/types.js';
 import { STYLES, progressionsForTonality } from '../src/core/music/theory.js';
 
 /**
  * 作曲エンジンの一括ファズ監査（聴かない層の回帰防止・CI用）。
  *
- * 全進行 × 2調性 × スタイル/戦略/シード回転の40小節コーパスで、
+ * 全進行 × 2調性 × スタイル/戦略/シード回転の40小節コーパス(現行engineRev)で、
  * 1. 不変条件（クラッシュ・検証エラー・退化・声部交差など）ゼロ
  * 2. 診断警告の総数が予算内（増えたら生成と診断の乖離が広がったサイン）
  * 3. 表現レンジのプロファイルが不変（変えたときはスナップショット更新で明示）
@@ -32,6 +33,9 @@ function buildCorpus(): { options: ComposeOptions; piece: Piece; where: string }
           bars: 40,
           tonality,
           seed: seed * 7919 + 1,
+          // 監査対象は現行エンジン。省略すると rev0(engineRev導入前の保存曲互換経路)を
+          // 監査することになり、revゲート付きの生成器変更がコーパスへ一切反映されない。
+          engineRev: CURRENT_ENGINE_REV,
           choice: variedChoiceFor(prog, 40, seed * 7919 + 1),
           compositionStrategy: STRATEGIES[seed % STRATEGIES.length]!,
         };
@@ -81,9 +85,12 @@ describe('作曲エンジンの一括ファズ監査', () => {
     expect(errors, errors.slice(0, 10).join('\n')).toEqual([]);
     // 計測履歴: 2026-07初回 melody 423 / harmony 282 / counterpoint 36。
     // 同月の警告削減（非和声音の生成側解決・ペダル認識・五度品質追従）後: 71 / 22 / 47。
+    // 2026-10: スタイル追加(garage2step/dnb)でスタイル回転が組み替わり loop 2 / harmony 32 が
+    // 露出。コーパスを現行engineRev(rev3)へ固定し、rev3の生成側修正(ターンアラウンドの
+    // 着地音・倚音の順次解決・開放終止の5度品質追従)後: melody 61 / harmony 3 / counterpoint 22。
     // 予算は計測値+25%。恒常的に超えたら「生成と診断の乖離が広がった」ので原因を調べる
     // （予算を黙って上げない。下げられるときは下げる）。
-    const budget: Record<string, number> = { melody: 90, harmony: 30, counterpoint: 60 };
+    const budget: Record<string, number> = { melody: 80, harmony: 5, counterpoint: 30 };
     for (const [category, count] of warningCounts) {
       expect(count, `${category} 警告が予算超過`).toBeLessThanOrEqual(budget[category] ?? 0);
     }

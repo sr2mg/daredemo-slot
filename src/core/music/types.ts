@@ -279,8 +279,14 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  * - rev2: 主題ジェスチャーの抽選を主系列rngから区間ごとの独立ストリームへ分離
  *   (compose.tsを参照)。rev1以前は「PhrasePlanの主系列消費量が変わるとジェスチャーが
  *   連動して変わる」暗黙結合があり、フレーズ計画の将来変更が主題まで壊す構造だった。
+ * - rev3: ファズ監査(現行rev)で露出した生成と診断の乖離を生成側で閉じる3点。
+ *   (a) ターンアラウンドの着地音を「小節0のフレーズアンカー」でなく「本編で実際に最初に
+ *   鳴った骨格音」を基準にクライマックス未満で選び、許容を超えるなら終止和音の到達候補音へ
+ *   目標音級ごと差し替える(melody-voice.ts)。(b) 倚音の解決先を順次(scaleStepMax以内)に
+ *   限り、コードスケールの増2度で解決しない(melody-voice.ts)。(c) 開放終止のベース5度を
+ *   和音の品質に追従させ(dim=減5度)、持続サブは長音を保って最後の8分だけを割く(bass-voice.ts)。
  */
-export const CURRENT_ENGINE_REV = 2;
+export const CURRENT_ENGINE_REV = 3;
 
 /**
  * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。

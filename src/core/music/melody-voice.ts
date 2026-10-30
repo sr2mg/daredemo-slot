@@ -8,13 +8,13 @@ import { fragmentOf, invertTheme, realizeDegree, themeDegreeSpan, themeFromGestu
 import type { ThemeSpec } from './melodic-theme.js';
 import { grooveBeat } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
-import { MELODY_HI, MELODY_LO } from './theory.js';
+import { LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
 import type { ComposeContext } from './compose-context.js';
 import type { NoteArticulation, NoteEvent } from './types.js';
 
 export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, style, melodicLanguage, scalePcs, grooveFeel, songPlan, phrasePlan, phraseGestures,
+    opts, style, melodicLanguage, scalePcs, grooveFeel, engineRev, songPlan, phrasePlan, phraseGestures,
     chordAt, scaleAt, melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   } = ctx;
   // --- 実音テーマ（melodic-theme.ts） ---
@@ -147,7 +147,35 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   let lastSequenceHead: number | null = null;
   let signatureLeapPending = false;
   let signatureStepBack: 1 | -1 | null = null;
+  // ターンアラウンド(ループ終端)の着地音。
+  // rev2以前: 小節0のフレーズアンカーに最も近い目標音級の音。休符始まり(restStart)で
+  // テーマの高い度数から入る曲ではアンカーと実際の最初の発音が1オクターブ近く離れ、
+  // また最初の発音が高いと目標音級の最寄りがクライマックス以上になって後段のクランプで
+  // 1オクターブ落ちるため、ループ境界の跳躍が許容(LOOP_BOUNDARY_MAX_SEMITONES)を
+  // 超える曲があった。
+  // rev3: 本編で実際に最初に鳴った骨格音(melody[0]; 小節0は常に先に実現される)を基準に、
+  // クライマックス未満の範囲で最も近い目標音級の音へ着地する。それでも許容を超える
+  // ときは、終止和音の到達候補音(melodyPcsForChord)のうち最も近い音へ目標音級ごと
+  // 差し替える(計画の targetPc も更新し、終止目標の検査と橋渡しを同じ音へ向ける)。
+  const turnaroundLandingFor = (
+    barPlan: typeof phrasePlan.bars[number],
+    targetPc: number,
+  ): number => {
+    if (engineRev < 3) return nearestWithPc(phraseAnchors[0] ?? startMidi, [targetPc]);
+    const entry = melody[0]?.midi ?? phraseAnchors[0] ?? startMidi;
+    const ceiling = climaxMidi - 1;
+    const planned = nearestWithPc(entry, [targetPc], MELODY_LO, ceiling);
+    if (Math.abs(planned - entry) <= LOOP_BOUNDARY_MAX_SEMITONES) return planned;
+    const targetChord = chordAt(barPlan.bar * 4 + barPlan.targetStep! * 0.5);
+    const landing = nearestWithPc(entry, melodyPcsForChord(targetChord), MELODY_LO, ceiling);
+    barPlan.targetPc = ((landing % 12) + 12) % 12;
+    return landing;
+  };
   for (const barPlan of phrasePlan.bars) {
+    const turnaroundLanding = barPlan.cadence === 'turnaround'
+      && barPlan.targetPc !== null && barPlan.targetStep !== null
+      ? turnaroundLandingFor(barPlan, barPlan.targetPc)
+      : null;
     const { bar } = barPlan;
     const barInSection = opts.bars >= 16 ? bar % 8 : bar;
     // 4小節フォームは1小節=1機能のSRDCなので、毎小節テーマの前半(問い)を実現する
@@ -187,8 +215,8 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       } else if (barPlan.targetStep === step && barPlan.targetPc !== null) {
         // 応答小節は、先に決めた終止音（終止音度の物語）へ実際に到達させる。
         if (barPlan.cadence === 'turnaround') {
-          // ループの渡し先は固定のstartMidiでなく、実際のA冒頭アンカーへ合わせる。
-          midi = nearestWithPc(phraseAnchors[0] ?? startMidi, [barPlan.targetPc]);
+          // ループの渡し先は固定のstartMidiでなく、実際のA冒頭へ合わせる(turnaroundLandingFor)。
+          midi = turnaroundLanding ?? nearestWithPc(phraseAnchors[0] ?? startMidi, [barPlan.targetPc]);
         } else if (bar + 1 === phrasePlan.climaxBar) {
           midi = bridgeWithPc(prev, climaxMidi, [barPlan.targetPc], MELODY_LO, climaxMidi - 1);
         } else {
@@ -258,7 +286,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       if (bridgesToCadence) {
         // ゴール予測は実際の終止計算と同じくクライマックス未満で束縛する。
         const goal = barPlan.cadence === 'turnaround'
-          ? nearestWithPc(phraseAnchors[0] ?? startMidi, [barPlan.targetPc!])
+          ? turnaroundLanding ?? nearestWithPc(phraseAnchors[0] ?? startMidi, [barPlan.targetPc!])
           : nearestWithPc(
             prev + Math.round((center - prev) / 2), [barPlan.targetPc!], MELODY_LO, climaxMidi - 1,
           );
@@ -347,8 +375,12 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
             const resolutionPcs = melodyPcsForChord(chordAt(bar * 4 + resolutionStep * 0.5));
             // 解決音はクライマックスの一意性を壊さない範囲(climaxMidi未満)に限る。
             // でないと後段のクランプが解決音を動かし、倚音が宙吊りのまま残る。
+            // rev3: 解決は順次(scaleStepMax以内)に限る。コードスケールの増2度(和声的短音階の
+            // ♭6→導音など)で3半音先を取ると、倚音の「2度で解決する」契約が破れて強拍の
+            // 非和声音として残る。順次で受けられなければ倚音にせず和声音へ吸着する。
             const usable = (candidate: number): boolean => (
               candidate < climaxMidi && resolutionPcs.includes(((candidate % 12) + 12) % 12)
+              && (engineRev < 3 || Math.abs(candidate - midi) <= scaleStepMax)
             );
             const below = stepOnScale(midi, -1, scaleAt(chord));
             const above = stepOnScale(midi, 1, scaleAt(chord));

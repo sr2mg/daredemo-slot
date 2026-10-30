@@ -1,5 +1,5 @@
 import { capabilitiesFor } from './sound-capabilities.js';
-import { CHORDS, COUNTER_HI, COUNTER_LO, MELODY_HI, MELODY_LO } from './theory.js';
+import { CHORDS, COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
@@ -765,8 +765,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   if (bodyMelody.length > 1) {
     const first = bodyMelody[0]!.note;
     const last = bodyMelody.at(-1)!.note;
-    if (Math.abs(first.midi - last.midi) > 7) {
-      add('loop', 'warning', last.beat, last.midi, '主旋律のループ境界が7半音を超える');
+    if (Math.abs(first.midi - last.midi) > LOOP_BOUNDARY_MAX_SEMITONES) {
+      add('loop', 'warning', last.beat, last.midi, `主旋律のループ境界が${LOOP_BOUNDARY_MAX_SEMITONES}半音を超える`);
     }
   }
   const lastPlan = piece.phrasePlan.bars.at(-1);

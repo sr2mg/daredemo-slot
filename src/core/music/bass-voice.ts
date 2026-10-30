@@ -99,10 +99,39 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     const nextChord = bar + 1 < opts.bars ? chordAt((bar + 1) * 4) : chordAt(0);
     // 接近の目標は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
     const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + keyRoot) % 12;
+    // 持続サブの終止音: 長音そのものを再ピッチすると小節全体の低音が動いてしまうため、
+    // 長音は保ったまま最後の8分だけを終止音・接近音へ割く。
+    const placeSustainedCadenceNote = (midi: number): void => {
+      const pickupBeat = grooveBeat(bar * 4 + 3.5, grooveFeel);
+      if (style.bass === 'sustain' && last.beat < pickupBeat - 0.001) {
+        last.dur = Math.min(last.dur, pickupBeat - last.beat - 0.05);
+        bass.push({
+          beat: pickupBeat,
+          dur: 0.35,
+          midi,
+          velocity: Math.max(0.4, barPlan.dynamic - 0.1),
+          articulation: 'staccato',
+          role: 'structural',
+        });
+      } else {
+        last.midi = midi;
+      }
+    };
     if (barPlan.cadence === 'closed') {
       last.midi = nearestWithPc(last.midi, [endRootPc], 36, 64);
     } else if (barPlan.cadence === 'open') {
-      last.midi = nearestWithPc(last.midi, [(endRootPc + 7) % 12], 36, 64);
+      if (engineRev >= 3) {
+        // rev3: 開放終止の5度は和音の品質に追従する(dimは減5度、augは増5度。rootFifth刻みと
+        // 同じ規則)。rev2以前は機械的な+7で、短調のiiDim(減三和音)上では和声外の完全5度に
+        // 落ちていた(診断 harmony「ベースの経過音が…解決していない」)。持続サブは長音を
+        // 保って最後の8分だけを5度へ割く(終止小節の低音の土台を1小節ぶん動かさない)。
+        const fifthPc = ([7, 6, 8] as const)
+          .map((interval) => (endRootPc + interval) % 12)
+          .find((pc) => endChord.pcs.includes(pc)) ?? (endRootPc + 7) % 12;
+        placeSustainedCadenceNote(nearestWithPc(last.midi, [fifthPc], 36, 64));
+      } else {
+        last.midi = nearestWithPc(last.midi, [(endRootPc + 7) % 12], 36, 64);
+      }
     } else if (barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') {
       if (melodicLanguage !== 'japanese' && style.bassCadence === 'chromatic') {
         const approachPc = (nextAnchorPc + (phraseGesture[15]!.direction === 1 ? 11 : 1)) % 12;
@@ -110,22 +139,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
       } else if (melodicLanguage !== 'japanese' && style.bassCadence === 'chordTone') {
         const nextAnchorMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
         const approachMidi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
-        if (style.bass === 'sustain' && last.beat < bar * 4 + 3.5 - 0.001) {
-          // 持続サブの終止: 長音そのものを再ピッチすると小節全体の低音が動いて
-          // しまうため、長音は保ったまま最後の8分だけを接近音へ割く。
-          const pickupBeat = grooveBeat(bar * 4 + 3.5, grooveFeel);
-          last.dur = Math.min(last.dur, pickupBeat - last.beat - 0.05);
-          bass.push({
-            beat: pickupBeat,
-            dur: 0.35,
-            midi: approachMidi,
-            velocity: Math.max(0.4, barPlan.dynamic - 0.1),
-            articulation: 'staccato',
-            role: 'structural',
-          });
-        } else {
-          last.midi = approachMidi;
-        }
+        placeSustainedCadenceNote(approachMidi);
       } else {
         const dir = phraseGesture[15]!.direction;
         let distance = 1;
