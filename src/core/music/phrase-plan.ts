@@ -277,7 +277,7 @@ export function makePhrasePlan(
         for (let step = 5; step < 8; step++) rhythm[step] = false;
         rhythm[4] = true;
         targetStep = 4;
-        const preferred = sectionPlan.counterDensity === 2 ? style.denseCounterSteps ?? [6] : [6];
+        const preferred = sectionPlan.counterDensity === 2 ? style.texture.counter?.denseSteps ?? [6] : [6];
         counterSteps.push(...preferred);
       } else {
         targetStep = rhythm.reduce((last, on, step) => on ? step : last, 4);

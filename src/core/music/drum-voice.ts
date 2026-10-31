@@ -14,7 +14,8 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
   // --- ドラム（16 分グリッドを小節数ぶん敷く） ---
   const drums: DrumEvent[] = [];
   // 打楽器のない編成(弾き語り)では、フィル・シンバル・ブレイクダウンも含めて何も敷かない。
-  if (style.percussion === 'none') return drums;
+  if (style.percussion.kind === 'none') return drums;
+  const kit = style.percussion;
   const hatOverlay = grooveFor(grooveFeel).subdivisionOverlay;
   // スタイル譜の強度(0..1)を発音へ写す。中間値はゴースト=ベロシティとして持たせる
   // (強度1は従来と同じ形のイベントになり、既存スタイルの音は1ビットも変わらない)。
@@ -26,7 +27,7 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
     const barPlan = phrasePlan.bars[bar]!;
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
     const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
-    const pattern = sectionPlan.drum === 'sectionB' ? style.sectionB : style;
+    const pattern = sectionPlan.drum === 'sectionB' ? kit.sectionB : kit;
     if (bar % 8 === 0 && sectionPlan.entrance === 'cymbal') {
       drums.push({ beat: bar * 4, inst: 'cymbal' });
     }
@@ -36,13 +37,13 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
       const beat = grooveBeat(bar * 4 + s * 0.25, grooveFeel);
       if (hasFill && s >= 12) {
         if (sectionPlan.exitFill === 'full') {
-          if (s === 12 && drumPatternStep(style.kick, bar, s)) drums.push({ beat, inst: 'kick' });
+          if (s === 12 && drumPatternStep(kit.kick, bar, s)) drums.push({ beat, inst: 'kick' });
           if (s === 12) drums.push({ beat, inst: 'snare' });
           if (s === 14) drums.push({ beat, inst: 'tom' });
           if (s === 15) drums.push({ beat, inst: 'cymbal' });
           if (hatOverlay === 'none' && s === 13) drums.push({ beat, inst: 'hat' });
         } else {
-          if (s === 12 && drumPatternStep(style.kick, bar, s)) drums.push({ beat, inst: 'kick' });
+          if (s === 12 && drumPatternStep(kit.kick, bar, s)) drums.push({ beat, inst: 'kick' });
           if (s === 14) drums.push({ beat, inst: 'snare' });
           if (hatOverlay === 'none' && (s === 13 || s === 15)) drums.push({ beat, inst: 'hat' });
         }

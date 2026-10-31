@@ -93,12 +93,13 @@ describe('理論データ', () => {
     const fullOnsets = (pattern: readonly number[]): number[] =>
       fold(pattern).flatMap((level, index) => (level === 1 ? [index] : []));
     for (const style of STYLES) {
-      // 打楽器のない様式は譜が全休符(型の完全性のため)。骨格契約の対象外。
-      if (style.percussion === 'none') continue;
+      // 打楽器のない様式は譜を持たない(判別共用体)。骨格契約の対象外。
+      if (style.percussion.kind === 'none') continue;
+      const kit = style.percussion;
       const voices = [
-        ['kick', style.kick, style.sectionB.kick],
-        ['snare', style.snare, style.sectionB.snare],
-        ['hat', style.hat, style.sectionB.hat],
+        ['kick', kit.kick, kit.sectionB.kick],
+        ['snare', kit.snare, kit.sectionB.snare],
+        ['hat', kit.hat, kit.sectionB.hat],
       ] as const;
       for (const [name, patternA, patternB] of voices) {
         for (const pattern of [patternA, patternB]) {
@@ -110,15 +111,15 @@ describe('理論データ', () => {
         }
       }
       // バックビート契約: 強度1のスネア位置はAとBで一致し、毎小節2・4拍を含む。
-      expect(fullOnsets(style.sectionB.snare), `${style.id}/backbeat`).toEqual(fullOnsets(style.snare));
+      expect(fullOnsets(kit.sectionB.snare), `${style.id}/backbeat`).toEqual(fullOnsets(kit.snare));
       for (const barStart of [0, 16]) {
-        expect(fullOnsets(style.snare), `${style.id}/2・4拍`).toEqual(
+        expect(fullOnsets(kit.snare), `${style.id}/2・4拍`).toEqual(
           expect.arrayContaining([barStart + 4, barStart + 12]),
         );
       }
       expect(
-        fold(style.sectionB.kick).some((level, index) => level !== fold(style.kick)[index])
-          || fold(style.sectionB.hat).some((level, index) => level !== fold(style.hat)[index]),
+        fold(kit.sectionB.kick).some((level, index) => level !== fold(kit.kick)[index])
+          || fold(kit.sectionB.hat).some((level, index) => level !== fold(kit.hat)[index]),
         style.id,
       ).toBe(true);
       expect(style.melody.onsetWeights).toHaveLength(8);
@@ -1009,12 +1010,12 @@ describe('compose', () => {
           expect(last.midi % 12, `${style.id}/${bar + 1}小節/open`).toBe((endRootPc + 7) % 12);
         } else if (plan.cadence === 'closed') {
           expect(last.midi % 12, `${style.id}/${bar + 1}小節/closed`).toBe(endRootPc);
-        } else if (style.bassCadence === 'chromatic') {
+        } else if (style.bass.cadence === 'chromatic') {
           const nextBeat = bar + 1 < piece.bars ? (bar + 1) * 4 : 0;
           const nextChord = piece.chords.find((chord) => chord.beat === nextBeat)!;
           const nextRootPc = (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
           expect([1, 11], `${style.id}/${bar + 1}小節/chromatic`).toContain((last.midi - nextRootPc + 12) % 12);
-        } else if (style.bassCadence === 'chordTone') {
+        } else if (style.bass.cadence === 'chordTone') {
           expect(endChord.pcs, `${style.id}/${bar + 1}小節/chordTone`).toContain(last.midi % 12);
         } else {
           expect(last.beat % 4, `${style.id}/${bar + 1}小節/pickup`).toBe(3.5);
@@ -1034,7 +1035,7 @@ describe('compose', () => {
 
   it('フィル後はスタイル別のBグルーヴへ変わり、最終拍を空けてAへ戻す', () => {
     for (const style of STYLES) {
-      if (style.percussion === 'none') continue;
+      if (style.percussion.kind === 'none') continue;
       const piece = compose({ ...base, progressionId: 'tanaka-manabe', styleId: style.id, bars: 16 });
       const patternAt = (bar: number) =>
         piece.drums
@@ -1089,17 +1090,17 @@ describe('compose', () => {
   it('各スタイルはテンポ・グルーヴ既定を持つ(ジャンル=パターン×テンポ×グルーヴの結合)', () => {
     for (const style of STYLES) {
       // UIのBPMスライダー範囲(80..220)に収まること。
-      expect(style.defaultBpm, style.id).toBeGreaterThanOrEqual(80);
-      expect(style.defaultBpm, style.id).toBeLessThanOrEqual(220);
+      expect(style.defaults.bpm, style.id).toBeGreaterThanOrEqual(80);
+      expect(style.defaults.bpm, style.id).toBeLessThanOrEqual(220);
     }
     // ブレイクビーツ系はスナップショット検証と同じ組(2step=132+shuffle16 / dnb=174)。
     const garage = STYLES.find((style) => style.id === 'garage2step')!;
-    expect(garage.defaultBpm).toBe(132);
-    expect(garage.defaultGroove).toBe('shuffle16');
+    expect(garage.defaults.bpm).toBe(132);
+    expect(garage.defaults.groove).toBe('shuffle16');
     const dnb = STYLES.find((style) => style.id === 'dnb')!;
-    expect(dnb.defaultBpm).toBe(174);
+    expect(dnb.defaults.bpm).toBe(174);
     // kmmoはESTi系実測(BPM96-103)の中央値。
-    expect(STYLES.find((style) => style.id === 'kmmo')!.defaultBpm).toBe(100);
+    expect(STYLES.find((style) => style.id === 'kmmo')!.defaults.bpm).toBe(100);
   });
 
   it('持続サブ(dnb)のベースはコードイベント頭で長く鳴り、終止は最後の8分だけ接近音に割く', () => {

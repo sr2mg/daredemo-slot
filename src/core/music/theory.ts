@@ -15,6 +15,7 @@ import type {
   GlidePolicy,
   HarmonicFunction,
   IntroRole,
+  MelodicLanguage,
   TextureStrategy,
 } from './types.js';
 
@@ -633,108 +634,144 @@ export function styleForId(styleId: string): StyleDef | undefined {
   return STYLES.find((style) => style.id === styleId);
 }
 
-export interface StyleDef {
-  id: StyleId;
-  name: string;
-  feel: string;
+/** 16分グリッドの発音強度の譜(kick/snare/hat)。 */
+export interface DrumKitPatterns {
   /**
-   * スタイル既定のテンポ(BPM)。ジャンルはパターン単体でなく「パターン×テンポ×
-   * グルーヴ」の結合で成立するため、UIのスタイル切替はこの値へ追従する。
-   * compose自体は常にopts.bpmを使うので、保存済みの曲には影響しない。
-   */
-  defaultBpm: number;
-  /** スタイル既定のグルーヴ。省略=straight。UIのスタイル切替が追従する。 */
-  defaultGroove?: GrooveFeel;
-  /**
-   * 16 分グリッドの発音強度。値は 0=休符 / 1=通常打 / 中間値=ゴースト(DRUM_GHOST、
-   * ベロシティとして鳴る)。長さは 16 の倍数: 16=1小節ループ、32=2小節フレーズ
-   * (ブレイクビーツ系の小節間変化)。声部ごとに長さが違ってよく、小節をまたぐ参照は
-   * drumPatternStep() が折り返す。
+   * 値は 0=休符 / 1=通常打 / 中間値=ゴースト(DRUM_GHOST、ベロシティとして鳴る)。
+   * 長さは 16 の倍数: 16=1小節ループ、32=2小節フレーズ(ブレイクビーツ系の小節間変化)。
+   * 声部ごとに長さが違ってよく、小節をまたぐ参照は drumPatternStep() が折り返す。
    */
   kick: readonly number[];
   snare: readonly number[];
   hat: readonly number[];
-  /** 16 小節曲の B セクション用。バックビート(強度1のスネア位置)は保ち、密度やシンコペーションだけを変える。 */
-  sectionB: {
-    kick: readonly number[];
-    snare: readonly number[];
-    hat: readonly number[];
-  };
+}
+
+/**
+ * 打楽器ファセット(判別共用体)。
+ * - kit: スタイル譜のドラムを敷く。sectionB は16小節曲のBセクション用で、バックビート
+ *   (強度1のスネア位置)は保ち、密度やシンコペーションだけを変える。
+ * - none: 打楽器なし(弾き語り・室内楽的な編成)。本編・イントロ・フィル・シンバルの全てを
+ *   鳴らさない。譜を持たないので、全休符のダミーを置く必要がない。
+ */
+export type PercussionFacet =
+  | (DrumKitPatterns & { kind: 'kit'; sectionB: DrumKitPatterns })
+  | { kind: 'none' };
+
+/** 低音ファセット: 刻みの様式・終止の作法・アーティキュレーション・ライン装置の既定。 */
+export interface BassFacet {
   /**
-   * ベースの様式軸(compose.tsのベース生成が分岐する):
-   * - octave8 / root8 / rootFifth: 8分・4分の刻み系(従来)。
-   * - sustain: コードイベントごとの持続低音。倍速ドラムに対する低音の持続
-   *   (速度対比)が様式の核であるブレイクビーツ系(DnB)用。
-   * - kickSync: その小節で実際に鳴るキック骨格(A/B/ブレイクダウン)に同置し、
-   *   各キックの8分裏で応答するシンコペ。低域でキックとベースが一体化する
-   *   UKガラージ系用。実音列は列挙せず、キック譜から毎回導出する。
+   * 刻みの様式(bass-voice.ts が分岐する):
+   * - octave8 / root8 / rootFifth: 8分・4分の刻み系。
+   * - sustain: コードイベントごとの持続低音。刻まずイベント長のほぼ全部を鳴らす
+   *   (倍速ドラムとの速度対比を核とするブレイクビーツ、ベース楽器を持たない撥弦の
+   *   低弦など、持続が様式の核である編成用)。
+   * - kickSync: その小節で実際に鳴るキック骨格(A/B/ブレイクダウン)に同置し、各キックの
+   *   8分裏で応答するシンコペ。低域でキックとベースが一体化する編成用。実音列は列挙せず、
+   *   キック譜から毎回導出する(percussion が kit であることが前提)。
    */
-  bass: 'octave8' | 'root8' | 'rootFifth' | 'sustain' | 'kickSync';
-  /** 主旋律の8分グリッド上の語彙。拍節の違いを音色だけでなく作曲へ反映する。 */
-  melody: {
-    /** step 0..7 の発音しやすさ。0・4は生成側で必ず強拍として残す。 */
-    onsetWeights: readonly number[];
-    /** 1小節の音数範囲。 */
-    density: readonly [number, number];
-    /** 音価に対するゲート比。短いほど歯切れがよい。 */
-    gate: number;
-    /** 弱拍で順次進行を選ぶ確率。 */
-    stepwisePercent: number;
-    /** 旋律の目標音域中心(MIDI)。省略=78。テッシトゥーラ変位の基準になる。 */
-    center?: number;
-    /**
-     * 弱拍音の様式的アーティキュレーション。省略=normal。
-     * - offbeatStaccato: 弱拍を常にスタッカートで切る(スカの裏打ち感)。
-     * - longTenuto: 1拍以上残せる音だけテヌートで保続する(ロックの朗々)。
-     */
-    articulation?: 'offbeatStaccato' | 'longTenuto';
-  };
-  /** フレーズ終端で次コードへ接続するベースの作法。 */
-  bassCadence: 'chromatic' | 'chordTone' | 'diatonicPickup';
-  /** ベース刻みのアーティキュレーション既定。省略=staccato(持続サブの長音は常にテヌート)。 */
-  bassArticulation?: 'tenuto' | 'staccato';
+  pattern: 'octave8' | 'root8' | 'rootFifth' | 'sustain' | 'kickSync';
+  /** フレーズ終端で次コードへ接続する作法。 */
+  cadence: 'chromatic' | 'chordTone' | 'diatonicPickup';
+  /** 刻みのアーティキュレーション既定。省略=staccato(持続低音の長音は常にテヌート)。 */
+  articulation?: 'tenuto' | 'staccato';
+  /** ベースライン生成(bassline.ts、分数コード)の既定。省略はoff。 */
+  line?: BassLinePolicy;
+}
+
+/** 主旋律ファセット: 8分グリッド上の語彙。拍節の違いを音色だけでなく作曲へ反映する。 */
+export interface MelodyFacet {
+  /** step 0..7 の発音しやすさ。0・4は生成側で必ず強拍として残す。 */
+  onsetWeights: readonly number[];
+  /** 1小節の音数範囲。 */
+  density: readonly [number, number];
+  /** 音価に対するゲート比。短いほど歯切れがよい。 */
+  gate: number;
+  /** 弱拍で順次進行を選ぶ確率。 */
+  stepwisePercent: number;
+  /** 旋律の目標音域中心(MIDI)。省略=78。テッシトゥーラ変位の基準になる。 */
+  center?: number;
+  /**
+   * 弱拍音の様式的アーティキュレーション。省略=normal。
+   * - offbeatStaccato: 弱拍を常にスタッカートで切る(裏打ち感)。
+   * - longTenuto: 1拍以上残せる音だけテヌートで保続する(朗々と歌う)。
+   */
+  articulation?: 'offbeatStaccato' | 'longTenuto';
+}
+
+/** 編成ファセット: テクスチャ戦略の候補・分散和音と対旋律の役割・イントロ型。 */
+export interface TextureFacet {
   /**
    * 編成戦略の候補(声部予算が十分なバックエンド)。省略=全戦略
    * ['counterDrive','arpDrive','bassDrive','hybrid']。seedは候補内の選択にだけ使う。
    */
-  textureStrategies?: readonly TextureStrategy[];
+  strategies?: readonly TextureStrategy[];
   /** 独立アルペジオの声部予算が無いバックエンドで主導にする戦略。省略=bassDrive。 */
-  compactTextureStrategy?: TextureStrategy;
+  compactStrategy?: TextureStrategy;
+  /**
+   * 分散和音声部の役割。省略=device(テクスチャ戦略が選んだ区間・フレーズ帯だけで鳴る
+   * 推進装置)。accompaniment は撥弦の伴奏型で、全区間・全小節に敷く(編成計画が各区間の
+   * ostinatoDensity を 1 以上に保証し、声部側はフレーズ帯の間引きをしない)。
+   */
+  ostinato?: 'device' | 'accompaniment';
   /**
    * このスタイルが常時イントロ役割候補へ挙げる型(song-plan.tsのintroRoleFor)。
    * グルーヴ・和声条件からの候補追加とは独立に効く。
    */
   introRoles?: readonly IntroRole[];
-  /**
-   * 密な応答句(counterDensity=2)で副旋律が確保する8分ステップ。省略=[6](4拍目表)。
-   * スカは[5,7](裏打ち2打)で裏拍の会話にする。
-   */
-  denseCounterSteps?: readonly number[];
-  /** 対旋律の最大音価(拍)。省略={counterline:0.85, response:0.4}。 */
-  counterMaxDur?: { counterline: number; response: number };
-  /** スタイル既定のテンション方針(tension.ts)。省略はoff=素の和音。 */
+  /** 対旋律の語彙。 */
+  counter?: {
+    /** 密な応答句(counterDensity=2)で副旋律が確保する8分ステップ。省略=[6](4拍目表)。 */
+    denseSteps?: readonly number[];
+    /** 対旋律の最大音価(拍)。省略={counterline:0.85, response:0.4}。 */
+    maxDur?: { counterline: number; response: number };
+  };
+}
+
+/** 装置ファセット: スタイル既定の装置方針。省略はすべてoff(素の和音・骨格のみ)。 */
+export interface DeviceDefaults {
+  /** テンション方針(tension.ts)。 */
   tension?: 'soft' | 'lush';
-  /** スタイル既定のディミニューション密度(diminution.ts)。省略はoff。 */
+  /** ディミニューション密度(diminution.ts)。 */
   diminution?: 'light' | 'rich';
-  /** スタイル既定のハモリ(平行下3度、duet.ts)。省略はoff。 */
+  /** ハモリ(平行下3度、duet.ts)。 */
   duet?: DuetPolicy;
-  /** スタイル既定のスライド(ポルタメント)指示(glide.ts)。省略はoff。 */
+  /** スライド(ポルタメント)指示(glide.ts)。 */
   glide?: GlidePolicy;
-  /** スタイル既定のベースライン生成(bassline.ts、分数コード)。省略はoff。 */
-  bassLine?: BassLinePolicy;
-  /**
-   * 打楽器の有無。省略=kit(スタイル譜のドラムを敷く)。'none' は弾き語り・室内楽的な
-   * 編成で、本編・イントロ・フィル・シンバルの全てを鳴らさない(kick/snare/hat の
-   * 譜は参照されないが、型の完全性のため全休符を置く)。
-   */
-  percussion?: 'kit' | 'none';
-  /**
-   * 分散和音声部の役割。省略=device(テクスチャ戦略が選んだ区間・フレーズ帯だけで鳴る
-   * 推進装置)。'accompaniment' は撥弦の伴奏型で、全区間・全小節に敷く
-   * (編成計画が各区間の ostinatoDensity を 1 以上に保証し、声部側はフレーズ帯の
-   * 間引きをしない)。
-   */
-  ostinatoRole?: 'device' | 'accompaniment';
+}
+
+/**
+ * 様式の既定。UIのスタイル切替が追従する(その後の手動変更は自由)。compose 自体は常に
+ * opts の値を使うので、保存済みの曲には影響しない。ジャンルはパターン単体でなく
+ * 「パターン×テンポ×グルーヴ×旋律語法×進行」の結合で成立するため、様式が自分の
+ * 既定を宣言し、ユーザーが4つの軸を別々に揃える必要をなくす。
+ */
+export interface StyleDefaults {
+  /** テンポ(BPM)。 */
+  bpm: number;
+  /** グルーヴ。省略=straight。 */
+  groove?: GrooveFeel;
+  /** 旋律語法。省略=標準。 */
+  melodicLanguage?: MelodicLanguage;
+  /** 優先する進行(先頭から、現在の調性・尺で使える最初のものを選ぶ)。省略=進行を変えない。 */
+  progressionIds?: readonly string[];
+}
+
+/**
+ * 様式(StyleDef)。独立したファセットの合成で表し、各ファセットは対応する生成器だけが読む:
+ * percussion→drum-voice/intro、bass→bass-voice/intro、melody→phrase-plan/melody-voice、
+ * texture→arrangement/song-plan/ostinato-voice/counter-voice、devices→compose の装置解決。
+ * 様式を足すときは各ファセットの「機構名」で宣言し、様式名での分岐は書かない。
+ */
+export interface StyleDef {
+  id: StyleId;
+  name: string;
+  feel: string;
+  defaults: StyleDefaults;
+  percussion: PercussionFacet;
+  bass: BassFacet;
+  melody: MelodyFacet;
+  texture: TextureFacet;
+  devices?: DeviceDefaults;
 }
 
 export const STYLES: StyleDef[] = [
@@ -742,39 +779,44 @@ export const STYLES: StyleDef[] = [
     id: 'eurobeat',
     name: 'ユーロビート',
     feel: '疾走・パチスロ王道',
-    defaultBpm: 170, // 従来のUI既定を継承(パチスロの疾走文脈)。
-    kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
-    snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-    hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
-    sectionB: {
-      kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0],
+    defaults: { bpm: 170 }, // 従来のUI既定を継承(パチスロの疾走文脈)。
+    percussion: {
+      kind: 'kit',
+      kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
       snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-      hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+      sectionB: {
+        kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0],
+        snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+        hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      },
     },
-    bass: 'octave8',
+    bass: { pattern: 'octave8', cadence: 'chromatic' },
     melody: {
       onsetWeights: [100, 72, 38, 76, 100, 68, 42, 78],
       density: [5, 6],
       gate: 0.78,
       stepwisePercent: 72,
     },
-    bassCadence: 'chromatic',
-    introRoles: ['runup'],
+    texture: { introRoles: ['runup'] },
   },
   {
     id: 'rock',
     name: 'ロックファンファーレ',
     feel: '熱い・獣王系',
-    defaultBpm: 170, // 従来のUI既定を継承(未実測)。
-    kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
-    snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-    hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-    sectionB: {
-      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0],
+    defaults: { bpm: 170 }, // 従来のUI既定を継承(未実測)。
+    percussion: {
+      kind: 'kit',
+      kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
       snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
       hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      sectionB: {
+        kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0],
+        snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+        hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      },
     },
-    bass: 'root8',
+    bass: { pattern: 'root8', cadence: 'chordTone', articulation: 'tenuto' },
     melody: {
       onsetWeights: [100, 24, 82, 28, 100, 22, 78, 34],
       density: [4, 5],
@@ -783,28 +825,31 @@ export const STYLES: StyleDef[] = [
       center: 77,
       articulation: 'longTenuto',
     },
-    bassCadence: 'chordTone',
-    bassArticulation: 'tenuto',
-    textureStrategies: ['bassDrive', 'counterDrive', 'hybrid'],
-    introRoles: ['fanfare'],
-    counterMaxDur: { counterline: 1.25, response: 0.75 },
+    texture: {
+      strategies: ['bassDrive', 'counterDrive', 'hybrid'],
+      introRoles: ['fanfare'],
+      counter: { maxDur: { counterline: 1.25, response: 0.75 } },
+    },
   },
   {
     id: 'kmmo',
     name: '韓国MMO風',
     feel: '寂しげ×疾走・00年代ネトゲ',
-    defaultBpm: 100, // ESTi系実測BPM96-103(下のコメント)の中央値。
+    defaults: { bpm: 100 }, // ESTi系実測BPM96-103(下のコメント)の中央値。
     // 中庸テンポの8ビート+16分ハットの推進。疾走感はBPMでなく細分密度で作る
     // (ESTi系実測: BPM96-103で音符の6割超が16分)。
-    kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-    hat: [1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1],
-    sectionB: {
-      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0],
+    percussion: {
+      kind: 'kit',
+      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
       snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-      hat: [1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0],
+      hat: [1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1],
+      sectionB: {
+        kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0],
+        snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+        hat: [1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0],
+      },
     },
-    bass: 'root8',
+    bass: { pattern: 'root8', cadence: 'diatonicPickup' },
     melody: {
       // 表裏の重みを平滑にし、ラン(ディミニューション)が均等に流れる下地を作る。
       onsetWeights: [100, 64, 58, 70, 100, 62, 60, 74],
@@ -813,28 +858,34 @@ export const STYLES: StyleDef[] = [
       // 実測の旋律語彙は+2/+3セルの順次優勢(P4/P5は彩り)。
       stepwisePercent: 80,
     },
-    bassCadence: 'diatonicPickup',
-    tension: 'lush',
-    diminution: 'rich',
-    // 様式仮説(未検証): 四千年系の3度ハモリ+スライド。測定物のコミットを経るまで
-    // 「実測由来」とは呼ばない(duet.ts / glide.ts の注記を参照)。
-    duet: 'on',
-    glide: 'on',
+    // 編成戦略・イントロ型は全候補のまま(宣言なし=既定)。
+    texture: {},
+    devices: {
+      tension: 'lush',
+      diminution: 'rich',
+      // 様式仮説(未検証): 四千年系の3度ハモリ+スライド。測定物のコミットを経るまで
+      // 「実測由来」とは呼ばない(duet.ts / glide.ts の注記を参照)。
+      duet: 'on',
+      glide: 'on',
+    },
   },
   {
     id: 'ska',
     name: 'スカ',
     feel: '陽気・コミカル',
-    defaultBpm: 170, // 従来のUI既定を継承(未実測)。
-    kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-    hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
-    sectionB: {
-      kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0],
+    defaults: { bpm: 170 }, // 従来のUI既定を継承(未実測)。
+    percussion: {
+      kind: 'kit',
+      kick: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
       snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-      hat: [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
+      hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+      sectionB: {
+        kick: [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0],
+        snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+        hat: [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
+      },
     },
-    bass: 'rootFifth',
+    bass: { pattern: 'rootFifth', cadence: 'diatonicPickup' },
     melody: {
       onsetWeights: [100, 82, 30, 88, 100, 84, 34, 90],
       density: [5, 6],
@@ -843,11 +894,13 @@ export const STYLES: StyleDef[] = [
       center: 79,
       articulation: 'offbeatStaccato',
     },
-    bassCadence: 'diatonicPickup',
-    textureStrategies: ['counterDrive', 'hybrid'],
-    compactTextureStrategy: 'counterDrive',
-    introRoles: ['groove'],
-    denseCounterSteps: [5, 7],
+    texture: {
+      strategies: ['counterDrive', 'hybrid'],
+      compactStrategy: 'counterDrive',
+      introRoles: ['groove'],
+      // 密な応答句は裏打ち2打(5,7)で裏拍の会話にする。
+      counter: { denseSteps: [5, 7] },
+    },
   },
   {
     id: 'garage2step',
@@ -855,33 +908,35 @@ export const STYLES: StyleDef[] = [
     feel: '跳ねる16分・UKガラージ',
     // UKガラージの常用域(130-135)の中央。シャッフルした16分は様式の核なので
     // 既定グルーヴで有効にする(スナップショット検証も同じ組で行う)。
-    defaultBpm: 132,
-    defaultGroove: 'shuffle16',
-    // 2小節フレーズ(32ステップ)。骨格は「4つ打ちから3拍目のキックを抜く」変則:
-    // 1小節目=1拍目+3拍裏、2小節目=1拍目+3拍目直前の16分押し込み(s7)。
-    // シャッフル16分グルーヴと合わせると16分位置(s7・ゴースト)だけが跳ねる。
-    kick: [
-      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
-      1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-    // バックビート(2・4拍=強度1)は2小節とも不変、ゴーストの位置だけが小節間で変わる。
-    snare: [
-      0, 0, 0, 0, 1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 1, 0, 0, 0,
-      0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, DRUM_GHOST,
-    ],
-    // 裏打ち8分+拍4裏の16分足し。16分(s7,s15)がシャッフルの跳ねを聴かせる。
-    hat: [0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1],
-    sectionB: {
-      // Bは4つ打ちへ寄せて持ち上げる(ガラージのハウス的側面)。スネアはAと同一。
-      kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+    defaults: { bpm: 132, groove: 'shuffle16' },
+    percussion: {
+      kind: 'kit',
+      // 2小節フレーズ(32ステップ)。骨格は「4つ打ちから3拍目のキックを抜く」変則:
+      // 1小節目=1拍目+3拍裏、2小節目=1拍目+3拍目直前の16分押し込み(s7)。
+      // シャッフル16分グルーヴと合わせると16分位置(s7・ゴースト)だけが跳ねる。
+      kick: [
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+      ],
+      // バックビート(2・4拍=強度1)は2小節とも不変、ゴーストの位置だけが小節間で変わる。
       snare: [
         0, 0, 0, 0, 1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 1, 0, 0, 0,
         0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, DRUM_GHOST,
       ],
-      hat: [0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0],
+      // 裏打ち8分+拍4裏の16分足し。16分(s7,s15)がシャッフルの跳ねを聴かせる。
+      hat: [0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1],
+      sectionB: {
+        // Bは4つ打ちへ寄せて持ち上げる(ガラージのハウス的側面)。スネアはAと同一。
+        kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+        snare: [
+          0, 0, 0, 0, 1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 1, 0, 0, 0,
+          0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, DRUM_GHOST,
+        ],
+        hat: [0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0],
+      },
     },
     // ベースはキック骨格と同置+8分裏の応答(kickSync)。低域の一体化が様式。
-    bass: 'kickSync',
+    bass: { pattern: 'kickSync', cadence: 'chordTone' },
     melody: {
       // 裏拍(2拍裏・4拍裏)を押すシンコペーション優位の語彙。
       onsetWeights: [100, 55, 40, 90, 100, 50, 45, 92],
@@ -889,40 +944,43 @@ export const STYLES: StyleDef[] = [
       gate: 0.6,
       stepwisePercent: 68,
     },
-    bassCadence: 'chordTone',
+    texture: {},
     // UKガラージの7th/9thボイシングをソフトテンションで近似する。
-    tension: 'soft',
+    devices: { tension: 'soft' },
   },
   {
     id: 'dnb',
     name: 'ドラムンベース',
     feel: '疾走ブレイクビーツ(BPM170前後)',
     // DnBの常用域(170-178)の代表値(スナップショット検証も同値)。
-    defaultBpm: 174,
-    // ツーステップ・ブレイクの骨格: キックは1拍目+3拍裏の1小節ループ。
-    kick: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
-    // 主打(2・4拍=強度1)は不変のまま、ゴーストの位置が2小節で入れ替わり
-    // ブレイクビーツの転がる感じを作る(32ステップ)。
-    snare: [
-      0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, 0,
-      0, 0, 0, 0, 1, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 1, 0, 0, DRUM_GHOST,
-    ],
-    // 拍頭に16分ペアを置くチョップ気味の刻み。
-    hat: [1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0],
-    sectionB: {
-      // Bは2小節目にキックの追い打ちを足して前進させる。スネアはAと同一。
-      kick: [
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
-        1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0,
-      ],
+    defaults: { bpm: 174 },
+    percussion: {
+      kind: 'kit',
+      // ツーステップ・ブレイクの骨格: キックは1拍目+3拍裏の1小節ループ。
+      kick: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+      // 主打(2・4拍=強度1)は不変のまま、ゴーストの位置が2小節で入れ替わり
+      // ブレイクビーツの転がる感じを作る(32ステップ)。
       snare: [
         0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, 0,
         0, 0, 0, 0, 1, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 1, 0, 0, DRUM_GHOST,
       ],
-      hat: [1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1],
+      // 拍頭に16分ペアを置くチョップ気味の刻み。
+      hat: [1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0],
+      sectionB: {
+        // Bは2小節目にキックの追い打ちを足して前進させる。スネアはAと同一。
+        kick: [
+          1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+          1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+        ],
+        snare: [
+          0, 0, 0, 0, 1, 0, 0, DRUM_GHOST, 0, 0, 0, 0, 1, 0, 0, 0,
+          0, 0, 0, 0, 1, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 1, 0, 0, DRUM_GHOST,
+        ],
+        hat: [1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1],
+      },
     },
     // 倍速ドラムの下で低音は持続(sustain)。melodyの速度対比と同じ原則をベースへも適用。
-    bass: 'sustain',
+    bass: { pattern: 'sustain', cadence: 'chordTone' },
     melody: {
       // 速いテンポの上に長い音価で歌うパッド/リード型(ドラムとの速度対比が様式)。
       onsetWeights: [100, 30, 55, 45, 100, 35, 60, 50],
@@ -930,32 +988,28 @@ export const STYLES: StyleDef[] = [
       gate: 0.92,
       stepwisePercent: 60,
     },
-    bassCadence: 'chordTone',
+    texture: {},
     // アトモスフェリックなカラートーン和声(リキッド系)をlushで近似する。
-    tension: 'lush',
+    devices: { tension: 'lush' },
   },
   {
     id: 'acoustic',
     name: 'アコースティック',
     feel: '弾き語り・ナイロン弦と息の長い歌',
-    // 参照音源の実測(analysis/): 拍間隔中央値534ms=112BPM、拍間隔の変動係数4.7%。
-    // 揺れ自体は未実装なので中央値だけを継承する。
-    defaultBpm: 112,
-    // 打楽器なし。譜は型の完全性のための全休符で、percussion:'none' が参照を止める。
-    percussion: 'none',
-    kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    snare: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    sectionB: {
-      kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      snare: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    defaults: {
+      // 参照音源の実測(analysis/): 拍間隔中央値534ms=112BPM、拍間隔の変動係数4.7%。
+      // 揺れ自体は未実装なので中央値だけを継承する。
+      bpm: 112,
+      // 歌は調の第4音をほぼ使わず(六音)、和音は主音に着地しないループで周回する。
+      // 様式の同一性はこの3軸の結合なので、スタイル切替で語法と進行も揃える。
+      melodicLanguage: 'hexatonic',
+      progressionIds: ['drifting-orbit'],
     },
+    // 打楽器なし。譜を持たない(本編・イントロ・フィル・シンバルの全てが無音)。
+    percussion: { kind: 'none' },
     // 低音はギターの低弦が担う持続音(実測: ベース楽器なし、小節ごとの最頻低音が
     // 2小節単位で持続)。刻まず、終止だけ全音階の経過音で次コードへ渡す。
-    bass: 'sustain',
-    bassArticulation: 'tenuto',
-    bassCadence: 'diatonicPickup',
+    bass: { pattern: 'sustain', cadence: 'diatonicPickup', articulation: 'tenuto' },
     melody: {
       // 実測の歌の発音位置は拍頭・8分裏・16分位置に広く分布し、表裏の偏りが小さい。
       // 表(0,4)は生成規則で必ず残るので、裏と拍半ばを平滑に持ち上げる。
@@ -970,14 +1024,18 @@ export const STYLES: StyleDef[] = [
       // 窓の中で最も低い中心を取る。音色側(フルート系)が1オクターブ上を自然に聴かせる。
       center: 75,
     },
-    // 分散和音(撥弦)を常設伴奏にし、対旋律・低音主導へは振らない。
-    textureStrategies: ['arpDrive'],
-    ostinatoRole: 'accompaniment',
-    compactTextureStrategy: 'bassDrive',
-    // 導入はモチーフの断片だけ(打楽器が無いのでグルーヴ提示・カウントインは成立しない)。
-    introRoles: ['motif'],
+    texture: {
+      // 分散和音(撥弦)を常設伴奏にし、対旋律・低音主導へは振らない。
+      strategies: ['arpDrive'],
+      ostinato: 'accompaniment',
+      // 未解決: 独立アルペジオの予算が無いバックエンド(2A03)では compact 戦略が低音主導に
+      // 落ち、様式の核である常設分散和音が失われる(tests/acoustic-style.test.ts 参照)。
+      compactStrategy: 'bassDrive',
+      // 導入はモチーフの断片だけ(打楽器が無いのでグルーヴ提示・カウントインは成立しない)。
+      introRoles: ['motif'],
+    },
     // 色付けは和音トークン側(add9/6/sus)で持つ。テンション装置で b7 を足すと属7の
-    // 牽引力が戻り、主音不在の浮遊が壊れるので off のまま。
+    // 牽引力が戻り、主音不在の浮遊が壊れるので装置は宣言しない(off)。
   },
 ];
 

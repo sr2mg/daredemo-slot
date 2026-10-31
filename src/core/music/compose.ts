@@ -160,19 +160,19 @@ export function compose(opts: ComposeInput): Piece {
   // pulse2の単声が和声の全てを担うため、第3音を追い出すと和声の同一性ごと失われる。
   const tensionPolicy: TensionPolicy = !capabilitiesFor(opts.soundChip).colorTones
     ? 'off'
-    : resolveDevicePolicy<TensionPolicy>(opts.tensionPolicy, style.tension);
+    : resolveDevicePolicy<TensionPolicy>(opts.tensionPolicy, style.devices?.tension);
   const diminutionPolicy: DiminutionPolicy = resolveDevicePolicy<DiminutionPolicy>(
-    opts.diminution, style.diminution,
+    opts.diminution, style.devices?.diminution,
   );
   const backendCaps = capabilitiesFor(opts.soundChip);
   const duetPolicy = backendCaps.duetLayer
-    ? resolveDevicePolicy<DuetPolicy>(opts.duet, style.duet)
+    ? resolveDevicePolicy<DuetPolicy>(opts.duet, style.devices?.duet)
     : 'off';
   const glidePolicy = backendCaps.glide
-    ? resolveDevicePolicy<GlidePolicy>(opts.glide, style.glide)
+    ? resolveDevicePolicy<GlidePolicy>(opts.glide, style.devices?.glide)
     : 'off';
   // ベースラインは全バックエンドで鳴る声部なので能力ゲートは要らない。
-  const bassLinePolicy = resolveDevicePolicy<BassLinePolicy>(opts.bassLine, style.bassLine);
+  const bassLinePolicy = resolveDevicePolicy<BassLinePolicy>(opts.bassLine, style.bass.line);
   const engineRev = engineRevOf(opts);
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)

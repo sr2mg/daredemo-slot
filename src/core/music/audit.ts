@@ -73,8 +73,8 @@ export function auditPieceInvariants(piece: Piece): AuditAnomaly[] {
   }
 
   if (piece.bass.length === 0) anomalies.push({ kind: 'bass-empty', detail: 'ベースが完全に無い' });
-  // 打楽器のない様式(StyleDef.percussion='none')は空が正。それ以外で空なら生成の欠落。
-  if (piece.drums.length === 0 && styleForId(piece.styleId)?.percussion !== 'none') {
+  // 打楽器のない様式(StyleDef.percussion.kind='none')は空が正。それ以外で空なら生成の欠落。
+  if (piece.drums.length === 0 && styleForId(piece.styleId)?.percussion.kind !== 'none') {
     anomalies.push({ kind: 'drums-empty', detail: 'ドラムが完全に無い' });
   }
 

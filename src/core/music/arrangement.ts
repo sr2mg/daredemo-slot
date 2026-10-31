@@ -122,9 +122,9 @@ function textureStrategyFor(
   let candidates: ArrangementPlan['textureStrategy'][];
   if (!capabilitiesFor(plan.soundChip).independentArpeggio) {
     // 独立アルペジオの声部予算が無いバックエンドでは、作って後段で捨てない。
-    candidates = [style?.compactTextureStrategy ?? 'bassDrive', 'classic'];
+    candidates = [style?.texture.compactStrategy ?? 'bassDrive', 'classic'];
   } else {
-    candidates = [...(style?.textureStrategies ?? ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'])];
+    candidates = [...(style?.texture.strategies ?? ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'])];
   }
   if (plan.melodyDensity >= 5.75) candidates = candidates.filter((item) => item !== 'hybrid');
   // 短形式の細分オーバーレイは既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。
@@ -220,7 +220,7 @@ export function arrangementPlanFor(
   const tuplet = resolveTupletOverlay(tupletOverlay, songPlan);
   const planned = planArrangement(bars, seed, progressionId, songPlan, tuplet !== null);
   const style = songPlan ? styleForId(songPlan.styleId) : undefined;
-  const plan = style?.ostinatoRole === 'accompaniment' && capabilitiesFor(songPlan?.soundChip).independentArpeggio
+  const plan = style?.texture.ostinato === 'accompaniment' && capabilitiesFor(songPlan?.soundChip).independentArpeggio
     ? withAccompanimentOstinato(planned, seed)
     : planned;
   return tuplet === null ? plan : withTupletLayer(plan, tuplet, seed, songPlan);

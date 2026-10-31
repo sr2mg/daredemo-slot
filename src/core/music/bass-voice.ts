@@ -21,12 +21,15 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
   // (sectionB/breakdown)を通すことで、ベースが譜面上のAパターンでなく
   // 「聴こえているキック」に同置される。
   const kickStepLevel = (bar: number, step: number): number => {
+    // 打楽器のない様式にはキック骨格が無い(kickSync はキット前提の刻み)。
+    if (style.percussion.kind !== 'kit') return 0;
     const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
     const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
     if (sectionPlan.drum === 'breakdown') return step === 0 || step === 8 ? 1 : 0;
-    const pattern = sectionPlan.drum === 'sectionB' ? style.sectionB.kick : style.kick;
+    const pattern = sectionPlan.drum === 'sectionB' ? style.percussion.sectionB.kick : style.percussion.kick;
     return drumPatternStep(pattern, bar, step);
   };
+  const bassPattern = style.bass.pattern;
   // rev1: アンカーを直前アンカーへの最短連結で選ぶ(固定写像はE/D#間で11半音跳ぶ)。
   // 分数コードのライン(bassLine)は連結が前提なので、装置onならrevに関わらず連結する。
   const linkedAnchors = engineRev >= 1 || bassLinePolicy === 'on';
@@ -42,7 +45,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
         ? nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50) // D#2..D3窓で直前へ最短連結。
         : 40 + ((anchorPc - 4 + 12) % 12); // rev0の通常フォーム: 従来のE2..D#3帯固定写像。
     previousAnchor = root;
-    if (style.bass === 'rootFifth') {
+    if (bassPattern === 'rootFifth') {
       // 五度は和音の品質に追従する（dimは減5度、augは増5度）。機械的な+7で和声外に落とさない。
       // アンカーが転回音でも「アンカーの5度圏上にあるコードトーン」を探す同じ規則で拾う。
       const fifthPc = ([7, 6, 8] as const)
@@ -52,11 +55,11 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
       for (let b = 0; b < c.dur; b++) {
         bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
       }
-    } else if (style.bass === 'sustain') {
+    } else if (bassPattern === 'sustain') {
       // 持続サブ: コードイベントごとに1音を長く保つ。倍速ドラムに対する低音の
       // 持続(速度対比)が様式の核なので、刻まずイベント長のほぼ全部を鳴らす。
       bass.push({ beat: c.beat, dur: Math.max(0.5, c.dur - 0.1), midi: root });
-    } else if (style.bass === 'kickSync') {
+    } else if (bassPattern === 'kickSync') {
       // キック同期シンコペ: 実際に鳴るキックに同置し、各キックの2×16分後
       // (同一コードイベント内のみ)で応答する。応答位置もキック由来なので、
       // 16分押し込み(s7)への応答はシャッフル格子ごと跳ねる。
@@ -77,7 +80,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
       if (pushed === 0) bass.push({ beat: grooveBeat(c.beat, grooveFeel), dur: 0.4, midi: root });
     } else {
       for (let e = 0; e < c.dur * 2; e++) {
-        const midi = style.bass === 'octave8' && e % 2 === 1 ? root + 12 : root;
+        const midi = bassPattern === 'octave8' && e % 2 === 1 ? root + 12 : root;
         const beat = grooveBeat(c.beat + e * 0.5, grooveFeel);
         const nextBeat = grooveBeat(c.beat + (e + 1) * 0.5, grooveFeel);
         bass.push({ beat, dur: Math.min(0.4, Math.max(0.18, (nextBeat - beat) * 0.8)), midi });
@@ -103,7 +106,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     // 長音は保ったまま最後の8分だけを終止音・接近音へ割く。
     const placeSustainedCadenceNote = (midi: number): void => {
       const pickupBeat = grooveBeat(bar * 4 + 3.5, grooveFeel);
-      if (style.bass === 'sustain' && last.beat < pickupBeat - 0.001) {
+      if (bassPattern === 'sustain' && last.beat < pickupBeat - 0.001) {
         last.dur = Math.min(last.dur, pickupBeat - last.beat - 0.05);
         bass.push({
           beat: pickupBeat,
@@ -134,10 +137,10 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
       }
     } else if (barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') {
       // 様式の終止作法(半音接近・和声音接近)は語法が許すときだけ。和風は全音階の経過音へ。
-      if (idiom.allowsStyledBassCadence && style.bassCadence === 'chromatic') {
+      if (idiom.allowsStyledBassCadence && style.bass.cadence === 'chromatic') {
         const approachPc = (nextAnchorPc + (phraseGesture[15]!.direction === 1 ? 11 : 1)) % 12;
         last.midi = nearestWithPc(last.midi, [approachPc], 36, 64);
-      } else if (idiom.allowsStyledBassCadence && style.bassCadence === 'chordTone') {
+      } else if (idiom.allowsStyledBassCadence && style.bass.cadence === 'chordTone') {
         const nextAnchorMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
         const approachMidi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
         placeSustainedCadenceNote(approachMidi);
@@ -196,9 +199,9 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     const barPlan = phrasePlan.bars[Math.min(opts.bars - 1, Math.floor(note.beat / 4))]!;
     note.velocity = Math.min(1, barPlan.dynamic + (note.beat % 1 === 0 ? 0.06 : -0.05));
     // 持続サブの長音はテヌート(終止の接近音など短音はスタッカートのまま)。
-    note.articulation = style.bass === 'sustain' && note.dur >= 0.5
+    note.articulation = bassPattern === 'sustain' && note.dur >= 0.5
       ? 'tenuto'
-      : style.bassArticulation ?? 'staccato';
+      : style.bass.articulation ?? 'staccato';
     note.role = 'structural';
   }
   bass.sort((a, b) => a.beat - b.beat);

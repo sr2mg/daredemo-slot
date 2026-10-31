@@ -69,7 +69,7 @@ export function generateCounterMelody(ctx: ComposeContext, melody: readonly Note
         : barStart + 4;
       const boundary = Math.min(leadAfter?.beat ?? barStart + 4, nextCounterBeat);
       const shortCounterPhrase = barPlan.counterSteps.length >= 3;
-      const counterDurs = style.counterMaxDur ?? { counterline: 0.85, response: 0.4 };
+      const counterDurs = style.texture.counter?.maxDur ?? { counterline: 0.85, response: 0.4 };
       const maxDur = arrangementPlan.counterRole === 'counterline'
         ? shortCounterPhrase ? 0.38 : counterDurs.counterline
         : counterDurs.response;

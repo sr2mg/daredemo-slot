@@ -98,7 +98,8 @@ import type { PcmVoiceOverride } from '../audio/pcm-arrange.js';
 import { exportMp3 } from '../audio/mp3-export.js';
 import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from '../audio/opll-arrange.js';
-import { idiomFor, MELODIC_LANGUAGES } from '../core/music/melodic-idiom.js';
+import { DEFAULT_MELODIC_LANGUAGE, idiomFor, MELODIC_LANGUAGES } from '../core/music/melodic-idiom.js';
+import type { StyleDef } from '../core/music/theory.js';
 import { OPLL_RATE, OPLL_VOICES } from '../audio/opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import {
@@ -280,6 +281,17 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   const selectProg = (id: string) => {
     setProgId(id);
     resetChoice(id, bars);
+  };
+
+  // 様式の既定(StyleDef.defaults)へ追従する。ジャンルは「パターン×テンポ×グルーヴ×旋律語法×
+  // 進行」の結合で成立するため、スタイル切替はテンポ・グルーヴに加えて語法と(宣言があれば)
+  // 進行も揃える。その後の手動変更は自由。
+  const applyStyleDefaults = (nextStyle: StyleDef) => {
+    setBpm(nextStyle.defaults.bpm);
+    setGrooveFeel(nextStyle.defaults.groove ?? DEFAULT_GROOVE_FEEL);
+    setMelodicLanguage(nextStyle.defaults.melodicLanguage ?? DEFAULT_MELODIC_LANGUAGE);
+    const preferred = nextStyle.defaults.progressionIds?.find((id) => progs.some((p) => p.id === id));
+    if (preferred !== undefined && preferred !== prog.id) selectProg(preferred);
   };
 
   const stop = () => {
@@ -856,10 +868,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               // スタイル切替はスタイル既定のBPM/グルーヴへ追従する(その後の手動変更は自由)。
               setStyleId(e.target.value);
               const nextStyle = STYLES.find((s) => s.id === e.target.value);
-              if (nextStyle) {
-                setBpm(nextStyle.defaultBpm);
-                setGrooveFeel(nextStyle.defaultGroove ?? DEFAULT_GROOVE_FEEL);
-              }
+              if (nextStyle) applyStyleDefaults(nextStyle);
             }}
             data-testid="st-style"
           >

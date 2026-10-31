@@ -96,10 +96,10 @@ describe('アコースティック様式', () => {
   const style = STYLES.find((s) => s.id === 'acoustic')!;
 
   it('宣言フィールド: 打楽器なし・分散和音は伴奏役・低音は持続', () => {
-    expect(style.percussion).toBe('none');
-    expect(style.ostinatoRole).toBe('accompaniment');
-    expect(style.bass).toBe('sustain');
-    expect(style.defaultBpm).toBe(112);
+    expect(style.percussion.kind).toBe('none');
+    expect(style.texture.ostinato).toBe('accompaniment');
+    expect(style.bass.pattern).toBe('sustain');
+    expect(style.defaults.bpm).toBe(112);
   });
 
   it('本編にもイントロにもドラムイベントが無い(フィル・シンバル・ブレイクダウン含む)', () => {

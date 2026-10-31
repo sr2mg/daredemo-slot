@@ -370,7 +370,7 @@ function introRoleFor(
   }
   const density = (options.style.melody.density[0] + options.style.melody.density[1]) / 2;
   const candidates: IntroRole[] = [];
-  const styleIntroRoles = options.style.introRoles ?? [];
+  const styleIntroRoles = options.style.texture.introRoles ?? [];
   if (hasGrooveDevice(options.grooveFeel) || styleIntroRoles.includes('groove')) candidates.push('groove');
   if (styleIntroRoles.includes('fanfare')) candidates.push('fanfare');
   if (styleIntroRoles.includes('runup') || entryFunction === 'dominant') candidates.push('runup');

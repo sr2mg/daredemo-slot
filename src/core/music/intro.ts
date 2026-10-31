@@ -202,10 +202,10 @@ export function realizeIntro(
     const chord = chordAt(logicalBeat);
     const def = CHORDS[chord.token]!;
     const rootPc = (def.root + keyRoot) % 12;
-    const alternatePc = style.bass === 'rootFifth' ? fifthPcOf(chord.pcs) : rootPc;
+    const alternatePc = style.bass.pattern === 'rootFifth' ? fifthPcOf(chord.pcs) : rootPc;
     const pc = upper ? alternatePc : rootPc;
     let midi = nearestWithPc(43, [pc], 36, 64);
-    if (upper && style.bass === 'octave8' && midi + 12 <= 64) midi += 12;
+    if (upper && style.bass.pattern === 'octave8' && midi + 12 <= 64) midi += 12;
     const beat = grooveBeat(logicalBeat, grooveFeel);
     bass.push({
       beat,
@@ -235,9 +235,9 @@ export function realizeIntro(
   }
 
   const drums: DrumEvent[] = [];
-  for (const barPlan of plan.barPlans) {
-    // 打楽器のない編成では導入ジェスチャーも低音と旋律だけで作る。
-    if (style.percussion === 'none') break;
+  // 打楽器のない編成では導入ジェスチャーも低音と旋律だけで作る。
+  const kit = style.percussion.kind === 'kit' ? style.percussion : null;
+  for (const barPlan of kit ? plan.barPlans : []) {
     const start = barPlan.bar * 4;
     const addDrum = (beat: number, inst: DrumEvent['inst'], level = 1) => {
       if (beat >= endBeat || level <= 0) return;
@@ -247,13 +247,13 @@ export function realizeIntro(
     if (barPlan.drumGesture === 'groove') {
       for (let step = 0; step < 16; step++) {
         const beat = grooveBeat(start + step * 0.25, grooveFeel);
-        addDrum(beat, 'kick', drumPatternStep(style.kick, barPlan.bar, step));
-        addDrum(beat, 'snare', drumPatternStep(style.snare, barPlan.bar, step));
-        if (hatOverlay === 'none') addDrum(beat, 'hat', drumPatternStep(style.hat, barPlan.bar, step));
+        addDrum(beat, 'kick', drumPatternStep(kit!.kick, barPlan.bar, step));
+        addDrum(beat, 'snare', drumPatternStep(kit!.snare, barPlan.bar, step));
+        if (hatOverlay === 'none') addDrum(beat, 'hat', drumPatternStep(kit!.hat, barPlan.bar, step));
       }
       if (hatOverlay === 'triplet') {
-        const hatWindowStart = (barPlan.bar * 16) % style.hat.length;
-        const hatWindow = style.hat.slice(hatWindowStart, hatWindowStart + 16);
+        const hatWindowStart = (barPlan.bar * 16) % kit!.hat.length;
+        const hatWindow = kit!.hat.slice(hatWindowStart, hatWindowStart + 16);
         for (let quarter = 0; quarter < 4; quarter++) {
           for (const offset of tripletHatOffsets(hatWindow, quarter)) addDrum(start + quarter + offset, 'hat');
         }
