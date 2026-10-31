@@ -127,6 +127,9 @@ describe('アコースティック様式', () => {
   });
 
   it('独立アルペジオの予算が無いバックエンド(2A03)では常設化を強要しない', () => {
+    // 未解決: compact 戦略(texture.compactStrategy='bassDrive')へ落ちると、様式の核である
+    // 常設分散和音が 2A03 では失われる。ここは現状の挙動(床を敷かない)を固定するだけで、
+    // 是認ではない。pulse2 を伴奏から分散和音へ振る編曲が入ったら期待値を変える。
     const piece = compose({ ...base, soundChip: 'nes2a03', bars: 16 });
     expect(piece.ostinato).toEqual([]);
     expect(validatePiece(piece)).toEqual([]);
