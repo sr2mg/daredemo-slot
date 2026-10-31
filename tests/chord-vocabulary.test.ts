@@ -3,7 +3,7 @@ import { compose } from '../src/core/music/compose.js';
 import { digestPiece } from '../src/core/music/piece-diff.js';
 import { approachTokenFor } from '../src/core/music/song-plan.js';
 import {
-  CHORDS, chordOriginsFor, harmonicFunctionForToken, progressionsForTonality,
+  CHORDS, chordOriginsFor, fifthPcOf, harmonicFunctionForToken, progressionsForTonality,
 } from '../src/core/music/theory.js';
 import type { ProgressionTonality } from '../src/core/music/theory.js';
 import type { ComposeOptions, HarmonicFunction } from '../src/core/music/types.js';
@@ -166,5 +166,44 @@ describe('pcmVoicesは編曲層のパラメータでcompose()に影響しない'
     // ComposeOptions(合成型)がそのまま渡っても Piece が不変であることを実行時にも固定する。
     const withVoices: ComposeOptions = { ...base, pcmVoices: { bass: { bank: 0, program: 33 } } };
     expect(digestPiece(compose(withVoices))).toEqual(digestPiece(compose(base)));
+  });
+});
+
+describe('5音の和音(9th/11th/13th)の導出', () => {
+  it('品質表は3度堆積順で、省略法どおり第5音・第11音を抜く', () => {
+    expect([...CHORDS.vi7add11!.tones]).toEqual([9, 0, 4, 7, 2]);
+    expect([...CHORDS.IVM13!.tones]).toEqual([5, 9, 4, 7, 2]);
+    expect([...CHORDS.V69!.tones]).toEqual([7, 11, 2, 4, 9]);
+    expect([...CHORDS.II9sus4!.tones]).toEqual([2, 7, 9, 0, 4]);
+    // IVM13 は第5音(0)を省略し、II9sus4 は長3度(6)を持たない。
+    expect(CHORDS.IVM13!.tones).not.toContain(0);
+    expect(CHORDS.II9sus4!.tones).not.toContain(6);
+  });
+
+  it('相対短調綴りは長調綴りと同じ音集合になる(vi7add11=i7add11 等)', () => {
+    const pairs: [string, string][] = [
+      ['vi7add11', 'i7add11'], ['IVM13', 'VIM13'], ['V69', 'VII69'], ['II9sus4', 'iv9sus4'],
+    ];
+    for (const [major, minor] of pairs) {
+      const shifted = CHORDS[major]!.tones.map((pc) => (pc + 3) % 12).sort((a, b) => a - b);
+      expect([...CHORDS[minor]!.tones].sort((a, b) => a - b), `${major}/${minor}`).toEqual(shifted);
+    }
+  });
+
+  it('第5音は位置でなく音程で引く: 省略和音では補われる完全5度、減三和音では減5度', () => {
+    expect(fifthPcOf(CHORDS.IVM13!.tones)).toBe(0);
+    expect(fifthPcOf(CHORDS.iiDim!.tones)).toBe(8);
+    expect(fifthPcOf(CHORDS.I!.tones)).toBe(7);
+    expect(fifthPcOf(CHORDS.II9sus4!.tones)).toBe(9);
+  });
+
+  it('属7族(短7度あり・短3度なし)の導出: 掛留属9も二次ドミナント解釈を持ち、m7は持たない', () => {
+    // 長調の II9sus4 はダイアトニックなので二次ドミナント扱いにはならない(借用ではない)。
+    expect(chordOriginsFor('II9sus4', 'major')!.diatonic).toBe(true);
+    expect(chordOriginsFor('II9sus4', 'major')!.secondaryDominantOf).toBeNull();
+    // 短調では長6度(9)が自然短音階外 → V(7) への掛留二次ドミナント。
+    expect(chordOriginsFor('II9sus4', 'minor')!.secondaryDominantOf).toBe(7);
+    expect(chordOriginsFor('vi7add11', 'minor')!.secondaryDominantOf).toBeNull();
+    expect(chordOriginsFor('III7', 'major')!.secondaryDominantOf).toBe(9);
   });
 });

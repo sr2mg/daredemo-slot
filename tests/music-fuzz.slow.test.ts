@@ -88,9 +88,13 @@ describe('作曲エンジンの一括ファズ監査', () => {
     // 2026-10: スタイル追加(garage2step/dnb)でスタイル回転が組み替わり loop 2 / harmony 32 が
     // 露出。コーパスを現行engineRev(rev3)へ固定し、rev3の生成側修正(ターンアラウンドの
     // 着地音・倚音の順次解決・開放終止の5度品質追従)後: melody 61 / harmony 3 / counterpoint 22。
+    // 2026-10-31: スタイル追加(acoustic、6→7)で回転が組み替わり(12シード%7で5スタイルは2シード、
+    // dnb/acousticは1シード)、計測 melody 82 / harmony 3 / counterpoint 9。acoustic自体の melody 警告は
+    // 19曲で9件(跳躍>9半音)で他スタイルと同程度。texture の「足し算」「貼り付き」は伴奏型分散和音
+    // (ostinatoRole='accompaniment')を診断側で様式ゲートして0。
     // 予算は計測値+25%。恒常的に超えたら「生成と診断の乖離が広がった」ので原因を調べる
     // （予算を黙って上げない。下げられるときは下げる）。
-    const budget: Record<string, number> = { melody: 80, harmony: 5, counterpoint: 30 };
+    const budget: Record<string, number> = { melody: 103, harmony: 5, counterpoint: 12 };
     for (const [category, count] of warningCounts) {
       expect(count, `${category} 警告が予算超過`).toBeLessThanOrEqual(budget[category] ?? 0);
     }

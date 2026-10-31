@@ -89,6 +89,13 @@ const STYLE_VOICES: Record<StyleId, StyleVoices> = {
   dnb: {
     lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half',
   },
+  // アコースティック: 歌の代役はフルート4、分散和音と伴奏はギター2、低音はアコースティック
+  // ベース14、副旋律はクラリネット5。伴奏は持続(half)で分散和音の邪魔をしない。
+  // 受け渡しパレット: 看板4(フルート)→展開6(オーボエ)→安息1(バイオリン)。
+  acoustic: {
+    lead: 4, backing: 2, bass: 14, counter: 5, ostinato: 2, backingPattern: 'half',
+    leadPalette: [4, 6, 1],
+  },
 };
 const DEFAULT_VOICES: StyleVoices = STYLE_VOICES.eurobeat;
 

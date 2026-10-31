@@ -5,7 +5,7 @@
  */
 
 import {
-  CHORDS, MELODY_HI, MELODY_LO, chordName, drumPatternStep, harmonicFunctionForToken,
+  CHORDS, MELODY_HI, MELODY_LO, chordName, drumPatternStep, fifthPcOf, harmonicFunctionForToken,
   chordScalePcs,
 } from './theory.js';
 import type { StyleDef } from './theory.js';
@@ -204,9 +204,7 @@ export function realizeIntro(
     const chord = chordAt(logicalBeat);
     const def = CHORDS[chord.token]!;
     const rootPc = (def.root + keyRoot) % 12;
-    const alternatePc = style.bass === 'rootFifth'
-      ? chord.pcs[Math.min(2, chord.pcs.length - 1)]!
-      : rootPc;
+    const alternatePc = style.bass === 'rootFifth' ? fifthPcOf(chord.pcs) : rootPc;
     const pc = upper ? alternatePc : rootPc;
     let midi = nearestWithPc(43, [pc], 36, 64);
     if (upper && style.bass === 'octave8' && midi + 12 <= 64) midi += 12;
@@ -240,6 +238,8 @@ export function realizeIntro(
 
   const drums: DrumEvent[] = [];
   for (const barPlan of plan.barPlans) {
+    // 打楽器のない編成では導入ジェスチャーも低音と旋律だけで作る。
+    if (style.percussion === 'none') break;
     const start = barPlan.bar * 4;
     const addDrum = (beat: number, inst: DrumEvent['inst'], level = 1) => {
       if (beat >= endBeat || level <= 0) return;

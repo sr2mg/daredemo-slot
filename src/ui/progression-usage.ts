@@ -17,4 +17,5 @@ export const PROGRESSION_USAGE: Record<string, string> = {
   'minor-incantation': 'AT前兆・ミステリアス演出向き',
   'relative-orbit': '夜フィールド・ゲームBGM向き',
   'minor-drive': 'BIG・ゲームBGM向き',
+  'drifting-orbit': '待機画面・環境BGM向き（主音に着地しない）',
 };

@@ -12,7 +12,7 @@ import type { ComposeContext } from './compose-context.js';
 import type { NoteEvent, PhraseFunction } from './types.js';
 
 export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
-  const { opts, keyRoot, grooveFeel, arrangementPlan, phrasePlan, chordAt } = ctx;
+  const { opts, style, keyRoot, grooveFeel, arrangementPlan, phrasePlan, chordAt } = ctx;
   // --- 分散和音（コード伴奏とは別の、選ばれた区間だけを推進する声部） ---
   // 曲全体のTextureStrategyで有効になった区間だけに置き、常設レイヤーにはしない。
   // chordAtを各打点で引くため、2拍目など小節途中のコード変化にもその場で追従する。
@@ -61,7 +61,9 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
         ? ['departure', 'conclusion']
         : ['conclusion'];
     // 8分型は選ばれたフレーズ帯だけに置き、区間丸ごとの常設を避ける。
-    if (plannedDensity === 1 && !activeFunctions.includes(barPlan.phraseFunction)) continue;
+    // 伴奏型(撥弦の弾き語り)は例外で、全小節に敷く。
+    const accompaniment = style.ostinatoRole === 'accompaniment';
+    if (!accompaniment && plannedDensity === 1 && !activeFunctions.includes(barPlan.phraseFunction)) continue;
     // 16分型の加速点もSongPlanに沿う区間ごとの候補から選び、毎回「展開」に固定しない。
     const density = plannedDensity === 2 && barPlan.phraseFunction === peak ? 2 : 1;
     const contour = [

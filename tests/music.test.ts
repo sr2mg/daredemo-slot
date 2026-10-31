@@ -33,15 +33,24 @@ const base: ComposeOptions = {
   seed: 42,
 };
 
+/**
+ * 進行1周分は全組み合わせ。2周(8小節)は前半の全組み合わせに対し後半を決定的にずらした
+ * 相手を3通り組む(全ペアは選択肢数の2乗で増え、5音の選択肢追加で7万曲を超えた)。
+ * 各選択肢は前半・後半の両方の位置で必ず現れる。
+ */
 function allChoicesFor(prog: (typeof PROGRESSIONS)[number], bars: 4 | 8): number[][] {
-  let choices: number[][] = [[]];
-  for (let bar = 0; bar < bars; bar++) {
-    const optionCount = prog.slots[bar % prog.slots.length]!.length;
-    choices = choices.flatMap((prefix) =>
+  let singles: number[][] = [[]];
+  for (let bar = 0; bar < prog.slots.length; bar++) {
+    const optionCount = prog.slots[bar]!.length;
+    singles = singles.flatMap((prefix) =>
       Array.from({ length: optionCount }, (_, option) => [...prefix, option]),
     );
   }
-  return choices;
+  if (bars === prog.slots.length) return singles;
+  if (prog.slots.length === 8) return singles;
+  return [1, 7, 13].flatMap((offset) => singles.map((first, index) => (
+    [...first, ...singles[(index * offset + offset) % singles.length]!]
+  )));
 }
 
 describe('理論データ', () => {
@@ -84,6 +93,8 @@ describe('理論データ', () => {
     const fullOnsets = (pattern: readonly number[]): number[] =>
       fold(pattern).flatMap((level, index) => (level === 1 ? [index] : []));
     for (const style of STYLES) {
+      // 打楽器のない様式は譜が全休符(型の完全性のため)。骨格契約の対象外。
+      if (style.percussion === 'none') continue;
       const voices = [
         ['kick', style.kick, style.sectionB.kick],
         ['snare', style.snare, style.sectionB.snare],
@@ -966,6 +977,12 @@ describe('compose', () => {
   it('副旋律は全スタイルで主旋律の休符だけに短く応答する', () => {
     for (const style of STYLES) {
       const piece = compose({ ...base, styleId: style.id, bars: 8, seed: 42 });
+      // 対旋律装置を計画しない編成(分散和音だけの弾き語り)は空でよい。計画したなら必ず鳴る。
+      const planned = piece.arrangementPlan.sections.some((section) => section.counterDensity > 0);
+      if (!planned) {
+        expect(piece.counterMelody, style.id).toEqual([]);
+        continue;
+      }
       expect(piece.counterMelody.length, style.id).toBeGreaterThan(0);
       for (const response of piece.counterMelody) {
         expect(Math.floor(response.beat / 4) % 2, `${style.id}/beat=${response.beat}`).toBe(1);
@@ -1017,6 +1034,7 @@ describe('compose', () => {
 
   it('フィル後はスタイル別のBグルーヴへ変わり、最終拍を空けてAへ戻す', () => {
     for (const style of STYLES) {
+      if (style.percussion === 'none') continue;
       const piece = compose({ ...base, progressionId: 'tanaka-manabe', styleId: style.id, bars: 16 });
       const patternAt = (bar: number) =>
         piece.drums

@@ -2,7 +2,7 @@
  * 伴奏ボイシング: 直前の和音から最短声部連結になる密集配置を全探索で選ぶ。
  * compose の和声実音化と intro の逆算ボイシングが共有する。
  */
-
+import { fifthPcOf } from './theory.js';
 
 export function midiCandidatesForPc(pc: number, lo: number, hi: number): number[] {
   const result: number[] = [];
@@ -21,7 +21,7 @@ export function voiceChord(
 ): number[] {
   // 和風モードでは三度・七度を伴奏から抜き、根音－五度－根音の開いた配置にする。
   // 和声機能そのものは ChordEvent.pcs に残すので、進行の意味までは失わない。
-  const voicingPcs = openFifths && pcs.length >= 3 ? [pcs[0]!, pcs[2]!, pcs[0]!] : [...pcs];
+  const voicingPcs = openFifths && pcs.length >= 3 ? [pcs[0]!, fifthPcOf(pcs), pcs[0]!] : [...pcs];
   const choices = voicingPcs.map((pc) => midiCandidatesForPc(pc, 55, 79));
   const candidates: number[][] = [];
   const visit = (index: number, picked: number[]) => {

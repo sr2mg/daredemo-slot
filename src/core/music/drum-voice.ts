@@ -13,6 +13,8 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
   const { opts, style, grooveFeel, arrangementPlan, phrasePlan } = ctx;
   // --- ドラム（16 分グリッドを小節数ぶん敷く） ---
   const drums: DrumEvent[] = [];
+  // 打楽器のない編成(弾き語り)では、フィル・シンバル・ブレイクダウンも含めて何も敷かない。
+  if (style.percussion === 'none') return drums;
   const hatOverlay = grooveFor(grooveFeel).subdivisionOverlay;
   // スタイル譜の強度(0..1)を発音へ写す。中間値はゴースト=ベロシティとして持たせる
   // (強度1は従来と同じ形のイベントになり、既存スタイルの音は1ビットも変わらない)。

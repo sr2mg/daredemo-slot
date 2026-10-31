@@ -81,6 +81,10 @@ const STYLE_PROGRAMS: Record<StyleId, GmProgramMap> = {
   // DnB: ソウレフルなリード+ウォームパッド+サブ寄りシンセベース。
   // キットは加工前提のPower(処理鎖=STYLE_DRUM_BUSでブレイクの質感へ潰す)。
   dnb: { leadPalette: [81, 85], counter: 54, ostinato: 45, backing: 89, bass: 38, drumKit: 16 },
+  // アコースティック弾き語り: 歌の代役は息の音色(パンフルート→フルート→コーラス)、
+  // 分散和音と低音はナイロン弦ギター(低音はギターの低弦の役)、薄い弦が背景。
+  // 参照音源の実測ではギターが伴奏エネルギーのほぼ全て(41%)、弦・その他は6%。
+  acoustic: { leadPalette: [75, 73, 52], counter: 71, ostinato: 24, backing: 48, bass: 24 },
 };
 const DEFAULT_PROGRAMS: GmProgramMap = {
   leadPalette: [0], counter: 73, ostinato: 46, backing: 48, bass: 33,
@@ -109,6 +113,8 @@ const STYLE_DRUM_BUS: Record<StyleId, DrumBusFx | null> = {
     comp: { thresholdDbBelowPeak: 9, ratio: 4, attackMs: 8, releaseBeats: 0.25 },
     crush: { bits: 12, sampleRate: 26040 },
   },
+  // 打楽器なし。ドラムバスを通る音がない。
+  acoustic: null,
 };
 
 /** スタイルのドラムバスFX(なければnull)。テストと描画側の単一参照点。 */

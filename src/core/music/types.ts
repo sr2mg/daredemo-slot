@@ -21,7 +21,11 @@ import type { SoundBackendId } from './sound-capabilities.js';
 
 export type ComposeBars = 4 | 8 | 16 | 40;
 export type Tonality = 'major' | 'minor';
-export type MelodicLanguage = 'standard' | 'japanese' | 'pentatonic';
+/**
+ * 旋律語法。standard=コードスケール追従、japanese=和風3様式(核音・間)、
+ * pentatonic=無半音五音(五度圏5連続)、hexatonic=六音(五度圏6連続、長調は第4音抜き)。
+ */
+export type MelodicLanguage = 'standard' | 'japanese' | 'pentatonic' | 'hexatonic';
 /** @deprecated v1保存曲の互換入力。新規コードはtonalityとmelodicLanguageを使う。 */
 export type MelodyMode = 'major' | 'minor' | 'japanese';
 export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
