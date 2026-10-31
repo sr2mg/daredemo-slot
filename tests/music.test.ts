@@ -33,15 +33,24 @@ const base: ComposeOptions = {
   seed: 42,
 };
 
+/**
+ * 進行1周分は全組み合わせ。2周(8小節)は前半の全組み合わせに対し後半を決定的にずらした
+ * 相手を3通り組む(全ペアは選択肢数の2乗で増え、5音の選択肢追加で7万曲を超えた)。
+ * 各選択肢は前半・後半の両方の位置で必ず現れる。
+ */
 function allChoicesFor(prog: (typeof PROGRESSIONS)[number], bars: 4 | 8): number[][] {
-  let choices: number[][] = [[]];
-  for (let bar = 0; bar < bars; bar++) {
-    const optionCount = prog.slots[bar % prog.slots.length]!.length;
-    choices = choices.flatMap((prefix) =>
+  let singles: number[][] = [[]];
+  for (let bar = 0; bar < prog.slots.length; bar++) {
+    const optionCount = prog.slots[bar]!.length;
+    singles = singles.flatMap((prefix) =>
       Array.from({ length: optionCount }, (_, option) => [...prefix, option]),
     );
   }
-  return choices;
+  if (bars === prog.slots.length) return singles;
+  if (prog.slots.length === 8) return singles;
+  return [1, 7, 13].flatMap((offset) => singles.map((first, index) => (
+    [...first, ...singles[(index * offset + offset) % singles.length]!]
+  )));
 }
 
 describe('理論データ', () => {

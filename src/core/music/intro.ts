@@ -5,7 +5,7 @@
  */
 
 import {
-  CHORDS, MELODY_HI, MELODY_LO, chordName, drumPatternStep, harmonicFunctionForToken,
+  CHORDS, MELODY_HI, MELODY_LO, chordName, drumPatternStep, fifthPcOf, harmonicFunctionForToken,
   chordScalePcs,
 } from './theory.js';
 import type { StyleDef } from './theory.js';
@@ -204,9 +204,7 @@ export function realizeIntro(
     const chord = chordAt(logicalBeat);
     const def = CHORDS[chord.token]!;
     const rootPc = (def.root + keyRoot) % 12;
-    const alternatePc = style.bass === 'rootFifth'
-      ? chord.pcs[Math.min(2, chord.pcs.length - 1)]!
-      : rootPc;
+    const alternatePc = style.bass === 'rootFifth' ? fifthPcOf(chord.pcs) : rootPc;
     const pc = upper ? alternatePc : rootPc;
     let midi = nearestWithPc(43, [pc], 36, 64);
     if (upper && style.bass === 'octave8' && midi + 12 <= 64) midi += 12;

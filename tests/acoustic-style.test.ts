@@ -8,6 +8,7 @@ import {
 import { normalizeComposeOptions } from '../src/core/music/options.js';
 import type { ComposeDraft } from '../src/core/music/options.js';
 
+import { CURRENT_ENGINE_REV } from '../src/core/music/types.js';
 import type { ComposeOptions } from '../src/core/music/types.js';
 
 /**
@@ -19,7 +20,7 @@ import type { ComposeOptions } from '../src/core/music/types.js';
 
 const base: ComposeOptions = {
   progressionId: 'drifting-orbit', styleId: 'acoustic', keyRoot: 9, bpm: 112, bars: 16, seed: 42,
-  melodicLanguage: 'hexatonic', soundChip: 'pcm',
+  melodicLanguage: 'hexatonic', soundChip: 'pcm', engineRev: CURRENT_ENGINE_REV,
 };
 
 describe('音階の導出(五度圏の連続音)', () => {
@@ -162,5 +163,40 @@ describe('アコースティック様式', () => {
     };
     expect(normalizeComposeOptions(draft).melodicLanguage).toBe('hexatonic');
     expect(normalizeComposeOptions({ ...draft, melodicLanguage: 'standard' })).not.toHaveProperty('melodicLanguage');
+  });
+});
+
+describe('5音の開離配置で周回する主音不在ループ', () => {
+  const dense = [2, 3, 3, 3] as const;
+  const choiceFor = (bars: number) => Array.from({ length: bars }, (_, bar) => dense[bar % 4]!);
+
+  it('キーAで参照音源と同じ4和音(F#m7add11 / DM13 / E69 / B9sus4)になり、伴奏は5声の密集配置', () => {
+    const piece = compose({ ...base, bars: 8, seed: 42, choice: choiceFor(8) });
+    const names = piece.chords.slice(0, 4).map((chord) => chord.name);
+    expect(names).toEqual(['F#m7add11', 'DM13', 'E69', 'B9sus4']);
+    for (const chord of piece.chords) {
+      expect(chord.pcs, chord.name).toHaveLength(5);
+      expect(chord.midis, chord.name).toHaveLength(5);
+      expect(chord.midis.at(-1)! - chord.midis[0]!, chord.name).toBeLessThanOrEqual(14);
+      // 5音で密集配置の上限に達するのでカラートーンは足さない。
+      expect(chord.colorPcs ?? [], chord.name).toEqual([]);
+    }
+    // 低音は「A/B」の B を弾く(II9sus4 のルート)。
+    const fourth = piece.chords[3]!;
+    const bassAtFourth = piece.bass.find((note) => Math.abs(note.beat - fourth.beat) < 0.001)!;
+    expect(bassAtFourth.midi % 12).toBe(11);
+  });
+
+  it('5音ループは全バックエンド・両調性・六音語法で生成検証を通る', () => {
+    for (const soundChip of ['pcm', 'opll', 'nes2a03'] as const) {
+      for (const tonality of ['major', 'minor'] as const) {
+        for (const bars of [8, 16] as const) {
+          const piece = compose({ ...base, soundChip, tonality, bars, seed: 7, choice: choiceFor(bars) });
+          expect(validatePiece(piece), `${soundChip}/${tonality}/${bars}`).toEqual([]);
+          const errors = diagnosePiece(piece).issues.filter((issue) => issue.severity === 'error');
+          expect(errors, `${soundChip}/${tonality}/${bars}`).toEqual([]);
+        }
+      }
+    }
   });
 });

@@ -21,7 +21,9 @@ import type {
 /**
  * コード品質。文字列は chordName() の表示接尾辞であり、同時に tones の導出キー。
  */
-export type ChordQuality = '' | 'm' | 'dim' | '7' | 'm7' | 'M7' | '6' | 'sus4' | 'add9' | 'sus2';
+export type ChordQuality =
+  | '' | 'm' | 'dim' | '7' | 'm7' | 'M7' | '6' | 'sus4' | 'add9' | 'sus2'
+  | 'm7add11' | '69' | 'M13' | '9sus4';
 
 /**
  * 品質 → ルートからの相対音程（半音）。tones は root とこの表から導出する。
@@ -40,7 +42,28 @@ const QUALITY_INTERVALS: Record<ChordQuality, readonly number[]> = {
   add9: [0, 4, 7, 2],
   /** 3度を2度へ置き換えた掛留。sus4と同じく第3音を持たず長短両調で使える。並びは5度を[2]に保つ(開放五度化の参照位置)。 */
   sus2: [0, 2, 7],
+  // --- 5音の和音。3度堆積を7thの先(9th/11th/13th)まで続け、伴奏ボイシングは密集配置が
+  // 成立する5声(voicing.ts: 幅≤14半音)で止める。6音以上の堆積は標準の省略法に従い
+  // 第5音(倍音で補われる)と第11音(長3度と短9度で衝突)を抜く。並びは3度堆積順。
+  /** 短7の上に11度を足した m11(9th抜き)。 */
+  m7add11: [0, 3, 7, 10, 5],
+  /** 6度と9度を同時に足した6/9。7thを持たないので属7にも長7にも傾かない。 */
+  '69': [0, 4, 7, 9, 2],
+  /** 長13度和音。長7・9・13を残し、省略法どおり第5音と第11音を抜く。 */
+  M13: [0, 4, 11, 2, 9],
+  /** 掛留4度の属9(3度なし)。分数表記「IVの三和音/IIの低音」と同じ音集合で、第5音込みの綴り。 */
+  '9sus4': [0, 5, 7, 10, 2],
 };
+
+/**
+ * 和音の第5音(絶対pc)。tones[0] がルートという契約のもと、ルートから減5・完全5・増5の
+ * 音程にある構成音を探し、第5音省略の和音(M13 等)では倍音で補われる完全5度を返す。
+ * 「3度堆積順で [2] が第5音」という位置依存を、省略和音でも壊さないための導出。
+ */
+export function fifthPcOf(pcs: readonly number[]): number {
+  const root = pcs[0]!;
+  return pcs.find((pc) => [6, 7, 8].includes((((pc - root) % 12) + 12) % 12)) ?? (root + 7) % 12;
+}
 
 export interface ChordDef {
   /** キー主音からの相対ルート（半音）。変位度数（♭III=3, ♭VII=10 等）もこの値で表す。 */
@@ -124,6 +147,20 @@ export const CHORDS: Record<string, ChordDef> = {
   Isus2: chord(0, 'sus2', 'colour'),
   /** 短調の♭VIIを掛留した形(3度抜き)。相対長調読みのVsus4と同じ音集合。 */
   VIIsus4: chord(10, 'sus4', 'dominant'),
+  // --- 5音の開離配置で周回する主音不在ループの語彙(長調綴り / 相対短調綴り)。
+  /** vi の m11(9th抜き)。11度は調の第2音で、主音なしの浮遊を保つ。 */
+  vi7add11: chord(9, 'm7add11', 'tonic'),
+  i7add11: chord(0, 'm7add11', 'tonic'),
+  /** IV の長13度(5度・11度省略)。構成音はすべてダイアトニック。 */
+  IVM13: chord(5, 'M13', 'predominant'),
+  VIM13: chord(8, 'M13', 'predominant'),
+  /** V の 6/9。b7 を持たないので属7の牽引力が薄い。 */
+  V69: chord(7, '69', 'dominant'),
+  VII69: chord(10, '69', 'dominant'),
+  /** II 上の掛留属9 = 「I の三和音 / II の低音」。V への二次ドミナントの掛留形。 */
+  II9sus4: chord(2, '9sus4', 'dominant'),
+  /** 短調綴りでは iv 上の掛留属9。主調では下属機能として i へ戻る。 */
+  iv9sus4: chord(5, '9sus4', 'predominant'),
 };
 
 /** ローマ数字トークンの和声機能。カタログのメタデータを引く（未知トークンは colour）。 */
@@ -175,7 +212,10 @@ export function chordOriginsFor(
   const scale: readonly number[] = tonality === 'minor' ? NATURAL_MINOR_SCALE : MAJOR_SCALE;
   const diatonic = def.tones.every((pc) => scale.includes(pc));
   const target = (def.root + 5) % 12;
-  const secondaryDominantOf = def.quality === '7' && !diatonic && target !== 0 && scale.includes(target)
+  // 属7族 = 短7度を含み短3度を含まない品質(7/9sus4 等)。m7 は短7度を持つが属機能ではない。
+  const intervals = QUALITY_INTERVALS[def.quality];
+  const dominantSeventhFamily = intervals.includes(10) && !intervals.includes(3);
+  const secondaryDominantOf = dominantSeventhFamily && !diatonic && target !== 0 && scale.includes(target)
     ? target
     : null;
   const modes = (Object.keys(MODAL_SCALES) as ModalSource[])
@@ -470,18 +510,20 @@ export const PROGRESSIONS: ProgressionDef[] = [
       minor: {
         // スロットの選択肢数は長調と揃える(variations の添字を両調性で共有するため)。
         slots: [
-          [['i7'], ['i']],
-          [['VI'], ['VImaj7'], ['iv7']],
-          [['VII'], ['VIIM7'], ['VIIsus4']],
-          [['VIIsus4'], ['VI', 'VIIsus4'], ['VII']],
+          [['i7'], ['i'], ['i7add11']],
+          [['VI'], ['VImaj7'], ['iv7'], ['VIM13']],
+          [['VII'], ['VIIM7'], ['VIIsus4'], ['VII69']],
+          [['VIIsus4'], ['VI', 'VIIsus4'], ['VII'], ['iv9sus4']],
         ],
       },
     },
+    // 各スロットの末尾は5音の開離配置(m11 / M13 / 6-9 / 掛留属9)。参照音源の実測どおり
+    // 9th・11th・13th を含み、末尾は「I の三和音 / II の低音」で vi へ戻る。
     slots: [
-      [['vi7'], ['vi']],
-      [['IVadd9'], ['IV'], ['IVM7']],
-      [['Vadd9'], ['V6'], ['Vsus4']],
-      [['Vsus4'], ['Isus2'], ['IVadd9', 'Vsus4']],
+      [['vi7'], ['vi'], ['vi7add11']],
+      [['IVadd9'], ['IV'], ['IVM7'], ['IVM13']],
+      [['Vadd9'], ['V6'], ['Vsus4'], ['V69']],
+      [['Vsus4'], ['Isus2'], ['IVadd9', 'Vsus4'], ['II9sus4']],
     ],
     defaultChoice: [0, 0, 0, 0],
     variations: [
@@ -489,6 +531,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
       [0, 0, 2, 1], // vi7 → IVadd9 → Vsus4 → Isus2（掛留のまま主音の位置へ）
       [1, 2, 0, 2], // vi → IVM7 → Vadd9 → IVadd9・Vsus4（和声リズムで押す）
       [0, 0, 1, 1], // vi7 → IVadd9 → V6 → Isus2
+      [2, 3, 3, 3], // vi7add11 → IVM13 → V69 → II9sus4（全スロット5音の開離配置）
     ],
   },
 ];
