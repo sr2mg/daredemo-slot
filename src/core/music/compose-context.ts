@@ -12,6 +12,7 @@
 
 import type { StyleDef } from './theory.js';
 import type { GrooveFeel } from './groove.js';
+import type { MelodicIdiom } from './melodic-idiom.js';
 import type {
   ArrangementPlan,
   BassLinePolicy,
@@ -28,7 +29,10 @@ export interface ComposeContext {
   style: StyleDef;
   /** 0..11 に正規化済みのキー主音。 */
   keyRoot: number;
+  /** 語法の識別子(Pieceへそのまま書く)。判断は idiom を参照し、ここでは比較しない。 */
   melodicLanguage: MelodicLanguage;
+  /** 語法の戦略(着地規則・装置抑制・終止作法など、melodic-idiom.ts)。 */
+  idiom: MelodicIdiom;
   /** 旋律語彙の絶対ピッチクラス。 */
   scalePcs: readonly number[];
   grooveFeel: GrooveFeel;

@@ -9,6 +9,7 @@ import {
   chordScalePcs,
 } from './theory.js';
 import type { StyleDef } from './theory.js';
+import type { MelodicIdiom } from './melodic-idiom.js';
 import { grooveBeat, grooveFor, tripletHatOffsets } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
@@ -16,7 +17,6 @@ import { voiceChord } from './voicing.js';
 import type {
   ChordEvent,
   DrumEvent,
-  MelodicLanguage,
   NoteArticulation,
   NoteEvent,
   SongIntroPlan,
@@ -40,7 +40,7 @@ export function realizeIntro(
   style: StyleDef,
   keyRoot: number,
   scalePcs: readonly number[],
-  melodicLanguage: MelodicLanguage,
+  idiom: MelodicIdiom,
   grooveFeel: GrooveFeel,
 ): RealizedIntro {
   if (!plan.enabled || plan.bars === 0) {
@@ -77,7 +77,7 @@ export function realizeIntro(
   let nextVoicing: number[] | null = firstBodyChord.midis;
   for (let index = chords.length - 1; index >= 0; index--) {
     const chord = chords[index]!;
-    chord.midis = voiceChord(chord.pcs, nextVoicing, melodicLanguage === 'japanese');
+    chord.midis = voiceChord(chord.pcs, nextVoicing, idiom.openFifthsVoicing);
     nextVoicing = chord.midis;
   }
   const chordAt = (beat: number): ChordEvent => {
@@ -88,15 +88,13 @@ export function realizeIntro(
     }
     return current;
   };
-  const melodicPcs = (chord: ChordEvent): readonly number[] => {
-    const modal = chord.pcs.filter((pc) => scalePcs.includes(pc));
-    return melodicLanguage === 'japanese' && modal.length > 0 ? modal : chord.pcs;
-  };
+  // 強拍の着地候補は本編と同じ語法規則(melodic-idiom.ts の landingPcs)。
+  const melodicPcs = (chord: ChordEvent): readonly number[] => idiom.landingPcs(chord.pcs, scalePcs);
   // 本編と同じコードスケール法則をイントロの弱拍にも適用する（V7mの導音等）。
   const introChordScaleCache = new Map<string, readonly number[]>();
   const scaleAt = (chord: ChordEvent): readonly number[] => {
     // 本編と同じ規則: 五音系語法は旋律語彙が固定で、コードスケールの上書きを受けない。
-    if (melodicLanguage !== 'standard') return scalePcs;
+    if (!idiom.followsChordScale) return scalePcs;
     let cached = introChordScaleCache.get(chord.token);
     if (!cached) {
       cached = chordScalePcs(scalePcs, chord.pcs, (CHORDS[chord.token]!.root + keyRoot) % 12);

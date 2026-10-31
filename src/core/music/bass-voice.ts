@@ -12,7 +12,7 @@ import type { NoteEvent } from './types.js';
 
 export function generateBass(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, style, keyRoot, melodicLanguage, grooveFeel, engineRev, bassLinePolicy,
+    opts, style, keyRoot, idiom, grooveFeel, engineRev, bassLinePolicy,
     arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
   } = ctx;
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
@@ -133,10 +133,11 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
         last.midi = nearestWithPc(last.midi, [(endRootPc + 7) % 12], 36, 64);
       }
     } else if (barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') {
-      if (melodicLanguage !== 'japanese' && style.bassCadence === 'chromatic') {
+      // 様式の終止作法(半音接近・和声音接近)は語法が許すときだけ。和風は全音階の経過音へ。
+      if (idiom.allowsStyledBassCadence && style.bassCadence === 'chromatic') {
         const approachPc = (nextAnchorPc + (phraseGesture[15]!.direction === 1 ? 11 : 1)) % 12;
         last.midi = nearestWithPc(last.midi, [approachPc], 36, 64);
-      } else if (melodicLanguage !== 'japanese' && style.bassCadence === 'chordTone') {
+      } else if (idiom.allowsStyledBassCadence && style.bassCadence === 'chordTone') {
         const nextAnchorMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
         const approachMidi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
         placeSustainedCadenceNote(approachMidi);

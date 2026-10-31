@@ -98,6 +98,7 @@ import type { PcmVoiceOverride } from '../audio/pcm-arrange.js';
 import { exportMp3 } from '../audio/mp3-export.js';
 import { NES_DUTIES } from '../audio/nes-apu.js';
 import { defaultVoicesFor, OPLL_USER_PATCHES } from '../audio/opll-arrange.js';
+import { idiomFor, MELODIC_LANGUAGES } from '../core/music/melodic-idiom.js';
 import { OPLL_RATE, OPLL_VOICES } from '../audio/opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import {
@@ -163,6 +164,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   const [styleId, setStyleId] = useState(initial.styleId);
   const [tonality, setTonality] = useState<Tonality>(initial.tonality);
   const [melodicLanguage, setMelodicLanguage] = useState<MelodicLanguage>(initial.melodicLanguage);
+  const melodicIdiom = idiomFor(melodicLanguage);
   const [japaneseScale, setJapaneseScale] = useState<JapaneseScaleChoice>(initial.japaneseScale);
   const [grooveFeel, setGrooveFeel] = useState<GrooveFeel>(initial.grooveFeel);
   const [tupletOverlay, setTupletOverlay] = useState<TupletOverlayChoice>(initial.tupletOverlay);
@@ -882,12 +884,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             data-testid="st-melodic-language"
             title="調性とは独立して、旋律の音使い・間・装飾を選びます"
           >
-            <option value="standard">旋律語法: 標準</option>
-            <option value="japanese">旋律語法: 和風五音</option>
-            <option value="pentatonic">旋律語法: 五音ペンタ</option>
-            <option value="hexatonic">旋律語法: 六音(五音+導音)</option>
+            {MELODIC_LANGUAGES.map((language) => (
+              <option key={language} value={language}>旋律語法: {idiomFor(language).label}</option>
+            ))}
           </select>
-          {melodicLanguage === 'japanese' && (
+          {melodicIdiom.hasScaleChoice && (
             <select
               value={japaneseScale}
               onChange={(e) => setJapaneseScale(e.target.value as JapaneseScaleChoice)}
@@ -924,7 +925,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               ))}
             </select>
           )}
-          {melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).colorTones && (
+          {!melodicIdiom.suppressesDevices && capabilitiesFor(soundChip).colorTones && (
             <select
               value={tensionPolicy}
               onChange={(e) => setTensionPolicy(e.target.value as 'auto' | TensionPolicy)}
@@ -936,7 +937,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               ))}
             </select>
           )}
-          {melodicLanguage !== 'japanese' && (
+          {!melodicIdiom.suppressesDevices && (
             <select
               value={diminution}
               onChange={(e) => setDiminution(e.target.value as 'auto' | DiminutionPolicy)}
@@ -948,7 +949,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               ))}
             </select>
           )}
-          {melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).duetLayer && (
+          {!melodicIdiom.suppressesDevices && capabilitiesFor(soundChip).duetLayer && (
             <select
               value={duet}
               onChange={(e) => setDuet(e.target.value as 'auto' | 'off' | 'on')}
@@ -960,7 +961,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               <option value="on">ハモリ: あり（下3度）</option>
             </select>
           )}
-          {melodicLanguage !== 'japanese' && capabilitiesFor(soundChip).glide && (
+          {!melodicIdiom.suppressesDevices && capabilitiesFor(soundChip).glide && (
             <select
               value={glide}
               onChange={(e) => setGlide(e.target.value as 'auto' | 'off' | 'on')}
