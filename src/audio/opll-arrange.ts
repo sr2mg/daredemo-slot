@@ -8,9 +8,9 @@ import { initRhythmMode, SeqBuilder } from './opll-core.js';
 import type { SfxDef } from './opll-core.js';
 
 import { glideDurationSec } from '../core/music/glide.js';
-import { styleLookup } from '../core/music/theory.js';
-import type { StyleId } from '../core/music/theory.js';
 import type { StageRole } from './stage.js';
+import { timbreFor } from './style-timbre.js';
+import type { StyleVoices } from './style-timbre.js';
 import { noteStageEchoFor } from './time-layer.js';
 
 /**
@@ -38,20 +38,8 @@ export interface ArrangedBgm extends SfxDef {
   voiceStats: VoiceAllocationStats;
 }
 
-export interface StyleVoices {
-  lead: number;
-  backing: number;
-  bass: number;
-  counter: number;
-  ostinato: number;
-  /** バッキングの刻み: offbeat = 裏打ち 8 分 / half = 2 分音符サステイン */
-  backingPattern: 'offbeat' | 'half';
-  /**
-   * 主旋律の音色パレット(セクションのleadColorが添字)。省略時は[lead]=全区間同色。
-   * ユーザーが音色を上書きした場合はパレットより上書きが勝つ(全区間固定)。
-   */
-  leadPalette?: readonly number[];
-}
+/** スタイル別の音色定義は style-timbre.ts(1様式1レコード)が持つ。 */
+export type { StyleVoices } from './style-timbre.js';
 
 /** YM2413の音色0番へ書き込める、曲単位のユーザー音色。 */
 export const OPLL_USER_PATCHES: readonly {
@@ -64,44 +52,9 @@ export const OPLL_USER_PATCHES: readonly {
   { id: 'punchBass', label: 'パンチ・ベース', regs: [0x31, 0x21, 0x16, 0x05, 0xf8, 0x81, 0x26, 0x17] },
 ];
 
-/** スタイル → 内蔵音色の割り当て（0〜15。0はユーザー音色） */
-const STYLE_VOICES: Record<StyleId, StyleVoices> = {
-  eurobeat: {
-    lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'offbeat',
-  },
-  rock: {
-    lead: 4, backing: 15, bass: 8, counter: 3, ostinato: 4, backingPattern: 'half',
-  },
-  ska: {
-    lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'offbeat',
-  },
-  // カラートーンを持続和音で聴かせたいので、裏打ちでなくハーフのパッド型。
-  // 受け渡しパレット: 看板4(フルート系)→展開1(バイオリン系)→安息3(クラリネット系)。
-  kmmo: {
-    lead: 4, backing: 8, bass: 8, counter: 3, ostinato: 4, backingPattern: 'half',
-    leadPalette: [4, 1, 3],
-  },
-  // クラブ系2種: リードはシンセ10、ベースはシンセベース13。ガラージはスタブ裏打ち、
-  // DnBはパッド持続でドラムとの速度対比を出す。
-  garage2step: {
-    lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'offbeat',
-  },
-  dnb: {
-    lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half',
-  },
-  // アコースティック: 歌の代役はフルート4、分散和音と伴奏はギター2、低音はアコースティック
-  // ベース14、副旋律はクラリネット5。伴奏は持続(half)で分散和音の邪魔をしない。
-  // 受け渡しパレット: 看板4(フルート)→展開6(オーボエ)→安息1(バイオリン)。
-  acoustic: {
-    lead: 4, backing: 2, bass: 14, counter: 5, ostinato: 2, backingPattern: 'half',
-    leadPalette: [4, 6, 1],
-  },
-};
-const DEFAULT_VOICES: StyleVoices = STYLE_VOICES.eurobeat;
-
 /** スタイルの既定音色（UI の「スタイル既定（○○）」表示用） */
 export function defaultVoicesFor(styleId: string): StyleVoices {
-  return styleLookup(STYLE_VOICES, styleId, DEFAULT_VOICES);
+  return timbreFor(styleId).opll;
 }
 
 /** 上書きから有効な音色（ユーザー音色0〜内蔵15）だけ拾う。 */
@@ -257,7 +210,7 @@ export function arrangePiece(
   override?: VoiceOverride,
   userPatchId: OpllUserPatchId = 'brightLead',
 ): ArrangedBgm {
-  const voices = { ...styleLookup(STYLE_VOICES, styleId, DEFAULT_VOICES), ...pickVoices(override) };
+  const voices = { ...timbreFor(styleId).opll, ...pickVoices(override) };
   const spb = 60 / piece.bpm;
   const duration = piece.beats * spb;
   const loopStart = piece.loopStartBeat * spb;
