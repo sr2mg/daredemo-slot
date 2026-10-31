@@ -11,6 +11,7 @@ import { allowsTupletOverlay, grooveFor } from './groove.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS, styleForId } from './theory.js';
+import type { TextureFacet } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 
 /**
@@ -71,13 +72,25 @@ function returnDeviceFor(
   return caps.echoDoubling ? 'echo' : 'counter1';
 }
 
+/**
+ * 伴奏型の分散和音(撥弦の弾き語り)は推進装置でなく常設伴奏なので、テクスチャ戦略が
+ * 選ばなかった区間にも密度≥1を保証する。密度は区間の厚みに従う(full=16分へ加速する
+ * フレーズ帯を持つ、sparse=8分のみ)。加速点の抽選は装置として選ばれた区間と同じ写像。
+ */
+function withOstinatoFloor(item: ArrangementSectionPlan): ArrangementSectionPlan {
+  if (item.ostinatoDensity > 0) return item;
+  return { ...item, ostinatoDensity: item.backingDensity === 'full' ? 2 : 1 };
+}
+
 function withTransitions(
   source: readonly ArrangementSectionPlan[],
   energies: readonly number[],
   seed: number,
+  ostinatoFloor: boolean,
 ): ArrangementSectionPlan[] {
   const peakChoices = ['restatement', 'departure', 'conclusion'] as const;
-  return source.map((item, index) => {
+  return source.map((planned, index) => {
+    const item = ostinatoFloor ? withOstinatoFloor(planned) : planned;
     const previousEnergy = index > 0 ? energies[index - 1]! : item.backingDensity === 'full' ? 2 : 3;
     const nextEnergy = index + 1 < source.length ? energies[index + 1]! : null;
     const deltaIn = energies[index]! - previousEnergy;
@@ -108,6 +121,7 @@ function textureStrategyFor(
   bars: ComposeBars,
   seed: number,
   plan: SongPlan | undefined,
+  texture: TextureFacet | undefined,
   forceArp: boolean,
 ): ArrangementPlan['textureStrategy'] {
   // 連符レイヤー有効時は、担い手のオスティナート区間が必ず生まれる編成に固定する。
@@ -118,13 +132,12 @@ function textureStrategyFor(
       : ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'] as const;
     return fallback[(seed >>> 1) % fallback.length]!;
   }
-  const style = styleForId(plan.styleId);
   let candidates: ArrangementPlan['textureStrategy'][];
   if (!capabilitiesFor(plan.soundChip).independentArpeggio) {
     // 独立アルペジオの声部予算が無いバックエンドでは、作って後段で捨てない。
-    candidates = [style?.compactTextureStrategy ?? 'bassDrive', 'classic'];
+    candidates = [texture?.compactStrategy ?? 'bassDrive', 'classic'];
   } else {
-    candidates = [...(style?.textureStrategies ?? ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'])];
+    candidates = [...(texture?.strategies ?? ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'])];
   }
   if (plan.melodyDensity >= 5.75) candidates = candidates.filter((item) => item !== 'hybrid');
   // 短形式の細分オーバーレイは既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。
@@ -218,27 +231,9 @@ export function arrangementPlanFor(
   tupletOverlay: TupletOverlayChoice = 'off',
 ): ArrangementPlan {
   const tuplet = resolveTupletOverlay(tupletOverlay, songPlan);
-  const planned = planArrangement(bars, seed, progressionId, songPlan, tuplet !== null);
-  const style = songPlan ? styleForId(songPlan.styleId) : undefined;
-  const plan = style?.ostinatoRole === 'accompaniment' && capabilitiesFor(songPlan?.soundChip).independentArpeggio
-    ? withAccompanimentOstinato(planned, seed)
-    : planned;
+  const texture = songPlan ? styleForId(songPlan.styleId)?.texture : undefined;
+  const plan = planArrangement(bars, seed, progressionId, songPlan, texture, tuplet !== null);
   return tuplet === null ? plan : withTupletLayer(plan, tuplet, seed, songPlan);
-}
-
-/**
- * 伴奏型の分散和音(撥弦の弾き語り)は推進装置でなく常設伴奏なので、テクスチャ戦略が
- * 選ばなかった区間にも密度≥1を保証する。密度は区間の厚みに従う(full=16分へ加速する
- * フレーズ帯を持つ、sparse=8分のみ)。加速点の抽選は withTransitions と同じ写像。
- */
-function withAccompanimentOstinato(plan: ArrangementPlan, seed: number): ArrangementPlan {
-  const peakChoices = ['restatement', 'departure', 'conclusion'] as const;
-  const sections = plan.sections.map((item, index) => (item.ostinatoDensity > 0 ? item : {
-    ...item,
-    ostinatoDensity: item.backingDensity === 'full' ? 2 as const : 1 as const,
-    ostinatoPeak: peakChoices[(seed + index * 5) % peakChoices.length]!,
-  }));
-  return { ...plan, sectionA: sections[0]!, sectionB: sections[1] ?? sections[0]!, sections };
 }
 
 function planArrangement(
@@ -246,9 +241,14 @@ function planArrangement(
   seed: number,
   progressionId: string | undefined,
   songPlan: SongPlan | undefined,
+  texture: TextureFacet | undefined,
   forceArp: boolean,
 ): ArrangementPlan {
-  const textureStrategy = textureStrategyFor(bars, seed, songPlan, forceArp);
+  const textureStrategy = textureStrategyFor(bars, seed, songPlan, texture, forceArp);
+  // 伴奏型の分散和音(様式の宣言 texture.ostinato)は全区間に密度≥1の床を敷く。独立
+  // アルペジオの予算が無いバックエンドでは敷かない(compactStrategy が主導する編成に従う)。
+  const ostinatoFloor = texture?.ostinato === 'accompaniment'
+    && capabilitiesFor(songPlan?.soundChip).independentArpeggio;
   // 対旋律が主役の戦略では counterline と同格（1/2）の抽選対象、2A03では応答の
   // 代替候補（1/4）。それ以外の編成では従来どおり短い応答に限定し、保続ラインを
   // 常設装置にしない。抽選は単一ビット参照でなくハッシュで取り、小さいシード帯でも
@@ -328,7 +328,7 @@ function planArrangement(
         };
       }
     }
-    const plannedSections = withTransitions(sections, energies, seed);
+    const plannedSections = withTransitions(sections, energies, seed, ostinatoFloor);
     plannedSections.forEach((section, index) => {
       section.leadColor = LEAD_COLOR_BY_ROLE[songPlan?.form.sections[index]?.role ?? 'hook'];
     });
@@ -361,12 +361,20 @@ function planArrangement(
         (seed >>> 10) % 3
       ]!;
     }
+    // 伴奏型の床: 装置として選ばれなかった単一区間にも敷く。加速点は区間列の先頭(index 0)
+    // として withTransitions と同じ写像で引く。
+    const single = ostinatoFloor && compact.ostinatoDensity === 0
+      ? {
+        ...withOstinatoFloor(compact),
+        ostinatoPeak: (['restatement', 'departure', 'conclusion'] as const)[seed % 3]!,
+      }
+      : compact;
     return {
       arc: 'compact',
       counterRole,
       textureStrategy,
       bassRole,
-      sectionA: compact, sectionB: compact, sections: [compact],
+      sectionA: single, sectionB: single, sections: [single],
     };
   }
   const energies = songPlan?.form.sections.map((item) => item.energy) ?? [2, 4];
@@ -387,7 +395,7 @@ function planArrangement(
     sections[low] = section('sparse', 'base', 'counter1');
     sections[high] = section('full', 'sectionB', 'arp1');
   } else sections[low] = section('sparse', 'base', 'counter1');
-  const plannedSections = withTransitions(sections, energies, seed);
+  const plannedSections = withTransitions(sections, energies, seed, ostinatoFloor);
   plannedSections.forEach((section, index) => {
     section.leadColor = LEAD_COLOR_BY_ROLE[songPlan?.form.sections[index]?.role ?? 'hook'];
   });

@@ -15,6 +15,7 @@ import { appoggiaturaRatePercent } from './melodic-theme.js';
 import { phraseFunctionFor } from './song-plan.js';
 import { nearestWithPc } from './pitch.js';
 import type { StyleDef } from './theory.js';
+import type { MelodicIdiom } from './melodic-idiom.js';
 import type {
   ArrangementPlan,
   CadenceType,
@@ -22,7 +23,6 @@ import type {
   ComposeBars,
   ComposeInput,
   JapanesePlan,
-  MelodicLanguage,
   MelodicMotif,
   MotifMove,
   OrnamentType,
@@ -159,7 +159,7 @@ export function makePhrasePlan(
   rng: Rng,
   chordAt: (beat: number) => ChordEvent,
   startMidi: number,
-  melodicLanguage: MelodicLanguage,
+  idiom: MelodicIdiom,
   scalePcs: readonly number[],
   japanesePlan: JapanesePlan | null,
   arrangementPlan: ArrangementPlan,
@@ -182,7 +182,7 @@ export function makePhrasePlan(
     [promptD, answerD],
     [promptE, answerE],
   ] as const;
-  const ornaments = melodicLanguage === 'japanese'
+  const ornaments = idiom.ornamentDensity === 'dense'
     ? ornamentPlanFor(opts.bars, opts.seed)
     : sparseOrnamentPlanFor(opts.bars, opts.seed);
   const climaxBar = songPlan.form.climaxBar;
@@ -277,7 +277,7 @@ export function makePhrasePlan(
         for (let step = 5; step < 8; step++) rhythm[step] = false;
         rhythm[4] = true;
         targetStep = 4;
-        const preferred = sectionPlan.counterDensity === 2 ? style.denseCounterSteps ?? [6] : [6];
+        const preferred = sectionPlan.counterDensity === 2 ? style.texture.counter?.denseSteps ?? [6] : [6];
         counterSteps.push(...preferred);
       } else {
         targetStep = rhythm.reduce((last, on, step) => on ? step : last, 4);
@@ -288,13 +288,9 @@ export function makePhrasePlan(
     let targetPc: number | null = null;
     if (targetChord && cadence) {
       const rootPc = targetChord.pcs[0]!;
-      const modalChordPcs = targetChord.pcs.filter((pc) => scalePcs.includes(pc));
-      // 終止の目標音も語法の中から選ぶ。和風は共通音が1音でも核音優先で絞り、六音は
-      // 2音以上残るときだけ絞る(compose の melodyPcsForChord と同じ規則)。
-      const targetPcs = (melodicLanguage === 'japanese' && modalChordPcs.length > 0)
-        || (melodicLanguage === 'hexatonic' && modalChordPcs.length >= 2)
-        ? modalChordPcs
-        : targetChord.pcs;
+      // 終止の目標音も語法の中から選ぶ(強拍の着地候補 melodyPcsForChord と同じ規則を
+      // melodic-idiom.ts の landingPcs が単一の出所として持つ)。
+      const targetPcs = idiom.landingPcs(targetChord.pcs, scalePcs);
       const nuclearTargets = japanesePlan
         ? targetPcs.filter((pc) => japanesePlan.nuclearPcs.includes(pc))
         : [];
@@ -363,7 +359,7 @@ export function makePhrasePlan(
 
     // 「間」は音数の不足ではなく、フレーズ上で意図した空白として記録する。
     const maSteps: number[] = [];
-    if (melodicLanguage === 'japanese' && isAnswer) {
+    if (idiom.usesMa && isAnswer) {
       if (ornamentType && targetStep !== null) {
         const beforeTarget = targetStep - 1;
         if (beforeTarget > 0 && beforeTarget !== 4 && !counterSteps.includes(beforeTarget)) {
@@ -453,12 +449,12 @@ export function makePhrasePlan(
     // 強拍倚音の許可小節。実現側は、テーマ音が3拍目(step4)で非和声かつ半拍〜1拍後の
     // 発音で2度の和声音へ解決できるときだけ倚音として保持する(できなければ従来どおり
     // 和声音へ吸着)。頻度上限はスタイルの順次進行率から導く(melodic-theme.ts)。
-    // 和風は核音・間の体系と衝突するため対象外。ターゲット音を解決音として
+    // 和風は核音・間の体系と衝突するため対象外(語法の宣言)。ターゲット音を解決音として
     // 上書きしないよう、解決ステップが終止目標と重なる小節も外す。
     let appoggiaturaStep: number | null = null;
     const appoggiaturaResolutionStep = [5, 6].find((step) => rhythm[step]);
     if (
-      melodicLanguage !== 'japanese'
+      idiom.allowsAppoggiatura
       && ['statement', 'restatement', 'departure'].includes(phraseFunction)
       && rhythm[4]
       && targetStep !== 4
@@ -479,10 +475,10 @@ export function makePhrasePlan(
     // 弱起(アウフタクト): 次のフレーズ頭へ2度下から掛かる先行音を答句の末尾(step7)へ
     // 置き、フレーズが小節線を跨いで息をする重心を作る。終止目標の確定より後に足す
     // (targetStepが弱起音へ移ってはいけない)。和風は「間」の候補(step7優先)と
-    // 衝突するため対象外。
+    // 衝突するため対象外(語法の宣言)。
     let anacrusis = false;
     if (
-      melodicLanguage !== 'japanese'
+      idiom.allowsAnacrusis
       && isAnswer
       && (cadence === null || cadence === 'open')
       && !sectionBoundary

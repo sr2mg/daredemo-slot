@@ -8,6 +8,7 @@ import type {
 } from './composition-strategy.js';
 import { hasGrooveDevice } from './groove.js';
 import type { GrooveFeel } from './groove.js';
+import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 import { CHORDS, harmonicFunctionForToken } from './theory.js';
 import type { ProgressionDef, StyleDef } from './theory.js';
@@ -49,12 +50,12 @@ export function resolveTonality(options: TonalOptions): Tonality {
 }
 
 export function resolveMelodicLanguage(options: TonalOptions): MelodicLanguage {
-  return options.melodicLanguage ?? (options.melodyMode === 'japanese' ? 'japanese' : 'standard');
+  return options.melodicLanguage ?? (options.melodyMode === 'japanese' ? 'japanese' : DEFAULT_MELODIC_LANGUAGE);
 }
 
 /** Pieceの旧フィールドを埋めるための互換表現。minor+japanese は和風を優先する。 */
 export function legacyMelodyMode(tonality: Tonality, language: MelodicLanguage): MelodyMode {
-  return language === 'japanese' ? 'japanese' : tonality;
+  return idiomFor(language).legacyMelodyMode ?? tonality;
 }
 
 /** 4小節では1小節ずつ、8小節以上では2小節ずつSRDCへ割り当てる。 */
@@ -369,11 +370,13 @@ function introRoleFor(
   }
   const density = (options.style.melody.density[0] + options.style.melody.density[1]) / 2;
   const candidates: IntroRole[] = [];
-  const styleIntroRoles = options.style.introRoles ?? [];
+  const styleIntroRoles = options.style.texture.introRoles ?? [];
   if (hasGrooveDevice(options.grooveFeel) || styleIntroRoles.includes('groove')) candidates.push('groove');
   if (styleIntroRoles.includes('fanfare')) candidates.push('fanfare');
   if (styleIntroRoles.includes('runup') || entryFunction === 'dominant') candidates.push('runup');
-  if (options.melodicLanguage === 'japanese' || harmonicActivity > 0 || density <= 5.5) candidates.push('motif');
+  if (idiomFor(options.melodicLanguage).introPrefersMotif || harmonicActivity > 0 || density <= 5.5) {
+    candidates.push('motif');
+  }
   const compatible = uniqueIntroRoles([...candidates, 'motif']);
   return compatible[((options.seed ^ 0x494e_5452) >>> 0) % compatible.length]!;
 }
@@ -396,7 +399,7 @@ export function approachTokenFor(entryToken: string, tonality: Tonality): string
 }
 
 function introBreakFor(role: IntroRole, language: MelodicLanguage): number {
-  if (role === 'motif') return language === 'japanese' ? 1.5 : 0.5;
+  if (role === 'motif') return idiomFor(language).motifIntroBreakBeats;
   if (role === 'fanfare') return 1;
   return 0;
 }

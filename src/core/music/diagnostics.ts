@@ -592,8 +592,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
   // 伴奏型の分散和音(撥弦の弾き語り)は推進装置でなく常設伴奏なので、「足し算」「貼り付き」の
-  // 装置規則から外す(様式の宣言 StyleDef.ostinatoRole を参照し、idでは分岐しない)。
-  const ostinatoIsAccompaniment = styleForId(piece.styleId)?.ostinatoRole === 'accompaniment';
+  // 装置規則から外す(様式の宣言 StyleDef.texture.ostinato を参照し、idでは分岐しない)。
+  const ostinatoIsAccompaniment = styleForId(piece.styleId)?.texture.ostinato === 'accompaniment';
   textureSections.forEach((section, sectionIndex) => {
     const optionalLayers = Number(section.echo)
       + Number(section.counterDensity > 0)

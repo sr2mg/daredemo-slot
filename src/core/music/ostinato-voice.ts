@@ -62,7 +62,7 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
         : ['conclusion'];
     // 8分型は選ばれたフレーズ帯だけに置き、区間丸ごとの常設を避ける。
     // 伴奏型(撥弦の弾き語り)は例外で、全小節に敷く。
-    const accompaniment = style.ostinatoRole === 'accompaniment';
+    const accompaniment = style.texture.ostinato === 'accompaniment';
     if (!accompaniment && plannedDensity === 1 && !activeFunctions.includes(barPlan.phraseFunction)) continue;
     // 16分型の加速点もSongPlanに沿う区間ごとの候補から選び、毎回「展開」に固定しない。
     const density = plannedDensity === 2 && barPlan.phraseFunction === peak ? 2 : 1;

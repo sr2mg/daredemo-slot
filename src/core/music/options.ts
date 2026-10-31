@@ -14,6 +14,7 @@
 import type { CompositionStrategy } from './composition-strategy.js';
 import { allowsTupletOverlay, DEFAULT_GROOVE_FEEL } from './groove.js';
 import type { GrooveFeel } from './groove.js';
+import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
 import { capabilitiesFor } from './sound-capabilities.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 import { CURRENT_ENGINE_REV } from './types.js';
@@ -75,7 +76,9 @@ export interface ComposeDraft {
  */
 export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
   const caps = capabilitiesFor(draft.soundChip);
-  const japanese = draft.melodicLanguage === 'japanese';
+  const idiom = idiomFor(draft.melodicLanguage);
+  // 装置を抑制する語法(和風)では装置指定を保存JSONへ入れない(エンジン側の無害化と同じ規則)。
+  const japanese = idiom.suppressesDevices;
   // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
   const picked = Object.fromEntries(
     (Object.entries(draft.voices) as [keyof VoiceOverride, number | undefined][])
@@ -96,12 +99,9 @@ export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
     soundChip: draft.soundChip,
     ...(draft.intro ? {} : { intro: false }),
     ...(draft.tonality === 'minor' ? { tonality: draft.tonality } : {}),
-    ...(japanese ? {
-      melodicLanguage: draft.melodicLanguage,
-      ...(draft.japaneseScale !== 'auto' ? { japaneseScale: draft.japaneseScale } : {}),
-    } : draft.melodicLanguage === 'pentatonic' || draft.melodicLanguage === 'hexatonic'
-      ? { melodicLanguage: draft.melodicLanguage }
-      : {}),
+    // 標準語法は省く(旧保存曲と同一キー)。音組織の選択肢を持つ語法は auto 以外の選択も焼く。
+    ...(draft.melodicLanguage !== DEFAULT_MELODIC_LANGUAGE ? { melodicLanguage: draft.melodicLanguage } : {}),
+    ...(idiom.hasScaleChoice && draft.japaneseScale !== 'auto' ? { japaneseScale: draft.japaneseScale } : {}),
     ...(draft.grooveFeel === DEFAULT_GROOVE_FEEL ? {} : { grooveFeel: draft.grooveFeel }),
     // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
     ...(caps.independentArpeggio && allowsTupletOverlay(draft.grooveFeel) && draft.tupletOverlay !== 'off'

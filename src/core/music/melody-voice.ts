@@ -14,7 +14,7 @@ import type { NoteArticulation, NoteEvent } from './types.js';
 
 export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, style, melodicLanguage, scalePcs, grooveFeel, engineRev, songPlan, phrasePlan, phraseGestures,
+    opts, style, scalePcs, grooveFeel, engineRev, songPlan, phrasePlan, phraseGestures,
     chordAt, scaleAt, melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   } = ctx;
   // --- 実音テーマ（melodic-theme.ts） ---

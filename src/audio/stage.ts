@@ -7,8 +7,9 @@
  * 係数・指数の列挙はしない——スタイルが選ぶのは「部屋の大きさ」だけ。
  */
 
-import { styleLookup } from '../core/music/theory.js';
+import { STYLE_IDS, styleLookup } from '../core/music/theory.js';
 import type { StyleId } from '../core/music/theory.js';
+import { STYLE_TIMBRES } from './style-timbre.js';
 
 export interface StereoWave {
   left: Float32Array;
@@ -87,23 +88,10 @@ export function room(rt60Sec: number): RoomModel {
 
 export const DEFAULT_ROOM: RoomModel = room(1.3);
 
-/**
- * スタイル→部屋の大きさ(RT60秒)。
- * kmmoの2.85sは未検証の参照値: かつて「四千年の実測(切れ目20箇所の中央値)」を
- * 名乗っていたが、測定スクリプトも対象音源も本リポジトリに存在しない。
- * 一次資料での測定を成果物としてコミットするまで、実測とは呼ばない。
- */
-export const STYLE_ROOMS: Record<StyleId, RoomModel> = {
-  kmmo: room(2.85),
-  rock: room(0.9),
-  eurobeat: room(1.4),
-  ska: room(1.1),
-  // クラブ系はドラムの輪郭を立てたいので短め。DnBはパッドを泳がせる分だけ広く。
-  garage2step: room(1.0),
-  dnb: room(1.6),
-  // 弾き語りは残響の長い室内(ホール寄り)。参照音源のRT60は未測定で、これは参照値。
-  acoustic: room(1.8),
-};
+/** スタイル→部屋。大きさ(RT60秒)の宣言は style-timbre.ts(1様式1レコード)が持つ。 */
+export const STYLE_ROOMS: Record<StyleId, RoomModel> = Object.fromEntries(
+  STYLE_IDS.map((id) => [id, room(STYLE_TIMBRES[id].roomRt60Sec)]),
+) as Record<StyleId, RoomModel>;
 
 export function roomFor(styleId: string): RoomModel {
   return styleLookup(STYLE_ROOMS, styleId, DEFAULT_ROOM);

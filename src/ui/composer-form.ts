@@ -10,6 +10,7 @@ import {
 } from '../core/music/groove.js';
 import type { GrooveFeel } from '../core/music/groove.js';
 import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
+import { DEFAULT_MELODIC_LANGUAGE, idiomFor, isMelodicLanguage } from '../core/music/melodic-idiom.js';
 import { capabilitiesFor } from '../core/music/sound-capabilities.js';
 import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import { resolveMelodicLanguage, resolveTonality } from '../core/music/song-plan.js';
@@ -66,10 +67,10 @@ export function songSummary(options: ComposeOptions): string {
   const tonality = resolveTonality(options);
   const melodicLanguage = resolveMelodicLanguage(options);
   const tonalLabel = tonality === 'minor' ? ' / 短調' : '';
-  const melody = melodicLanguage === 'japanese'
-    ? ` / 和風五音(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})`
-    : melodicLanguage === 'pentatonic' ? ' / 五音ペンタ'
-      : melodicLanguage === 'hexatonic' ? ' / 六音' : '';
+  const idiom = idiomFor(melodicLanguage);
+  const melody = melodicLanguage === DEFAULT_MELODIC_LANGUAGE
+    ? ''
+    : ` / ${idiom.label}${idiom.hasScaleChoice ? `(${JAPANESE_SCALE_LABELS[options.japaneseScale ?? 'auto']})` : ''}`;
   const groove = options.grooveFeel && options.grooveFeel !== DEFAULT_GROOVE_FEEL
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
@@ -133,11 +134,9 @@ export function loadComposerForm(): ComposerForm {
   const tonality: Tonality = raw.tonality === 'minor'
     ? 'minor'
     : raw.tonality === 'major' ? 'major' : legacyMode === 'minor' ? 'minor' : 'major';
-  const melodicLanguage: MelodicLanguage = raw.melodicLanguage === 'japanese'
-    ? 'japanese'
-    : raw.melodicLanguage === 'pentatonic' || raw.melodicLanguage === 'hexatonic'
-      ? raw.melodicLanguage
-      : raw.melodicLanguage === 'standard' ? 'standard' : legacyMode === 'japanese' ? 'japanese' : 'standard';
+  const melodicLanguage: MelodicLanguage = isMelodicLanguage(raw.melodicLanguage)
+    ? raw.melodicLanguage
+    : legacyMode === 'japanese' ? 'japanese' : DEFAULT_MELODIC_LANGUAGE;
   const availableProgressions = progressionsForTonality(tonality).filter((p) => p.slots.length <= bars);
   const initialProgression = typeof raw.progId === 'string'
     ? availableProgressions.find((p) => p.id === raw.progId) ?? availableProgressions[0]!
