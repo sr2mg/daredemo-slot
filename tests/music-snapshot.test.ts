@@ -41,10 +41,19 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
     },
   },
   {
+    // rev<4 の旧語彙: 'auto'=区間ごと自動。旧保存曲の読み替え経路を固定する。
     name: 'ゲームBGM風16小節 / 連符レイヤーauto',
     options: {
       progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
       seed: 11, tupletOverlay: 'auto',
+    },
+  },
+  {
+    // rev4 の現行語彙: 'bySection'=区間ごと自動(旧 'auto' と同じ音になる)。
+    name: 'ゲームBGM風16小節 / 連符レイヤーbySection / engineRev現行',
+    options: {
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      seed: 11, engineRev: CURRENT_ENGINE_REV, tupletOverlay: 'bySection',
     },
   },
   {
