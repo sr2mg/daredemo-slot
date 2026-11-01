@@ -13,6 +13,7 @@ import {
   TUPLET_OVERLAY_LABELS,
 } from '../core/music/types.js';
 import type {
+  BassLinePolicy,
   ComposeBars,
   ComposeOptions,
   DiminutionPolicy,
@@ -23,7 +24,6 @@ import type {
   Piece,
   TensionPolicy,
   Tonality,
-  TupletDivision,
   TupletOverlayChoice,
   VoiceOverride,
 } from '../core/music/types.js';
@@ -36,10 +36,17 @@ import {
   DEFAULT_GROOVE_FEEL,
   GROOVE_FEELS,
   GROOVE_FEEL_LABELS,
-  allowsTupletOverlay,
 } from '../core/music/groove.js';
 import type { GrooveFeel } from '../core/music/groove.js';
 import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
+import {
+  BASS_LINE_POLICY_LABELS,
+  DEVICE_IDS,
+  DEVICE_LABELS,
+  DUET_POLICY_LABELS,
+  GLIDE_POLICY_LABELS,
+  resolveDevices,
+} from '../core/music/devices.js';
 import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
 import { normalizeComposeOptions } from '../core/music/options.js';
 import { checkPieceStructure, suggestCompositionRepair } from '../core/music/diagnostics.js';
@@ -103,16 +110,22 @@ import type { StyleDef } from '../core/music/theory.js';
 import { OPLL_RATE, OPLL_VOICES } from '../audio/opll-core.js';
 import { loadStored, saveStored } from './persist.js';
 import {
+  BASS_LINE_CHOICES,
   DIMINUTION_CHOICES,
+  DUET_CHOICES,
+  effectiveDevices,
   FORM_KEY,
+  GLIDE_CHOICES,
   loadComposerForm,
   newSeed,
   newSongId,
   songSummary,
   TENSION_CHOICES,
+  TUPLET_CHOICES,
   VOICE_PARTS,
   voiceLabel,
 } from './composer-form.js';
+import { DeviceRow, SettingField, SettingRow, SettingStatus, SettingsLayer } from './composer-settings.js';
 import { CompositionResearchPanel } from './composition-research-panel.js';
 import { DiagnosisPanel } from './diagnosis-panel.js';
 import { PROGRESSION_USAGE } from './progression-usage.js';
@@ -173,6 +186,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   const [diminution, setDiminution] = useState<'auto' | DiminutionPolicy>(initial.diminution);
   const [duet, setDuet] = useState<'auto' | 'off' | 'on'>(initial.duet);
   const [glide, setGlide] = useState<'auto' | 'off' | 'on'>(initial.glide);
+  const [bassLine, setBassLine] = useState<'auto' | BassLinePolicy>(initial.bassLine);
   const [keyRoot, setKeyRoot] = useState(initial.keyRoot);
   const [bpm, setBpm] = useState(initial.bpm);
   const [soundChip, setSoundChip] = useState<SoundBackendId>(initial.soundChip);
@@ -246,12 +260,12 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   useEffect(() => {
     saveStored(FORM_KEY, {
       bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
-      tensionPolicy, diminution, duet, glide,
+      tensionPolicy, diminution, duet, glide, bassLine,
       keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
     });
   }, [
     bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
-    tensionPolicy, diminution, duet, glide,
+    tensionPolicy, diminution, duet, glide, bassLine,
     keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
@@ -294,6 +308,43 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     if (preferred !== undefined && preferred !== prog.id) selectProg(preferred);
   };
 
+  const styleDef = STYLES.find((s) => s.id === styleId) ?? STYLES[0]!;
+  const styleGroove = styleDef.defaults.groove ?? DEFAULT_GROOVE_FEEL;
+  const styleMelodicLanguage = styleDef.defaults.melodicLanguage ?? DEFAULT_MELODIC_LANGUAGE;
+  // 2層の表示は compose() と同じ解決規則(devices.ts)から取る。「様式既定(lush)」の
+  // 解決値も「無効: 2A03は伴奏が単声」の理由も、UI 側で二重に規則を持たない。
+  const devices = useMemo(() => resolveDevices({
+    style: styleDef,
+    melodicLanguage,
+    grooveFeel,
+    soundChip,
+    engineRev: CURRENT_ENGINE_REV,
+    tensionPolicy,
+    diminution,
+    duet,
+    glide,
+    bassLine,
+    tupletOverlay,
+  }), [
+    styleDef, melodicLanguage, grooveFeel, soundChip, tensionPolicy, diminution, duet, glide, bassLine,
+    tupletOverlay,
+  ]);
+  const overrideCount = DEVICE_IDS.filter((id) => devices[id].source === 'explicit').length
+    + Number(melodicLanguage !== styleMelodicLanguage)
+    + Number(grooveFeel !== styleGroove);
+  /** 2層の上書きをすべて解き、様式の既定(語法・グルーヴ・装置)へ戻す。1層(BPM等)は触らない。 */
+  const resetToStyleDefaults = () => {
+    setMelodicLanguage(styleMelodicLanguage);
+    setJapaneseScale('auto');
+    setGrooveFeel(styleGroove);
+    setTupletOverlay('auto');
+    setTensionPolicy('auto');
+    setDiminution('auto');
+    setDuet('auto');
+    setGlide('auto');
+    setBassLine('auto');
+  };
+
   const stop = () => {
     player.stopBgm();
     setPlaying(false);
@@ -326,6 +377,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     diminution,
     duet,
     glide,
+    bassLine,
     voices,
     opllUserPatch,
     pcmVoices,
@@ -821,327 +873,393 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
           </div>
         </details>
 
-        <div className="panel-controls">
-          <select
-            value={soundChip}
-            onChange={(e) => setSoundChip(e.target.value as SoundBackendId)}
-            data-testid="st-sound-chip"
-            title="曲ごとに保存され、BB/RB中の再生にもそのまま使われます"
-          >
-            <option value="opll">OPLL（YM2413・FM音源）</option>
-            <option value="nes2a03">ファミコン 2A03（標準5ch制約）</option>
-            <option value="pcm">PCM（SoundFont・制約最小）</option>
-          </select>
-          <select
-            value={bars}
-            onChange={(e) => selectBars(Number(e.target.value) as ComposeBars)}
-            data-testid="st-bars"
-            title="用途 = 尺。40小節はOPLL BIG向けのA→B→C→D→Eフォーム"
-          >
-            <option value={4}>RB 風（4小節ループ）</option>
-            <option value={8}>BB 風（8小節ループ）</option>
-            <option value={16}>ゲームBGM風（16小節 A→B）</option>
-            <option value={40}>OPLL BIG風（40小節 A→B→C→D→E）</option>
-          </select>
-          <select value={keyRoot} onChange={(e) => setKeyRoot(Number(e.target.value))} data-testid="st-key">
-            {KEYS.map((k) => (
-              <option key={k.root} value={k.root}>
-                キー: {k.label}
-              </option>
-            ))}
-          </select>
-          <label className="st-bpm">
-            BPM
-            <input
-              type="number"
-              min={80}
-              max={220}
-              value={bpm}
-              onChange={(e) => setBpm(Number(e.target.value))}
-              data-testid="st-bpm"
-            />
-          </label>
-          <select
-            value={styleId}
-            onChange={(e) => {
-              // ジャンルは「パターン×テンポ×グルーヴ」の結合で成立するため、
-              // スタイル切替はスタイル既定のBPM/グルーヴへ追従する(その後の手動変更は自由)。
-              setStyleId(e.target.value);
-              const nextStyle = STYLES.find((s) => s.id === e.target.value);
-              if (nextStyle) applyStyleDefaults(nextStyle);
-            }}
-            data-testid="st-style"
-          >
-            {STYLES.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}（{s.feel}）
-              </option>
-            ))}
-          </select>
-          <select
-            value={tonality}
-            onChange={(e) => selectTonality(e.target.value as Tonality)}
-            data-testid="st-tonality"
-            title="コード進行と基礎音階の調性を選びます"
-          >
-            <option value="major">調性: 長調</option>
-            <option value="minor">調性: 短調</option>
-          </select>
-          <select
-            value={melodicLanguage}
-            onChange={(e) => setMelodicLanguage(e.target.value as MelodicLanguage)}
-            data-testid="st-melodic-language"
-            title="調性とは独立して、旋律の音使い・間・装飾を選びます"
-          >
-            {MELODIC_LANGUAGES.map((language) => (
-              <option key={language} value={language}>旋律語法: {idiomFor(language).label}</option>
-            ))}
-          </select>
-          {melodicIdiom.hasScaleChoice && (
-            <select
-              value={japaneseScale}
-              onChange={(e) => setJapaneseScale(e.target.value as JapaneseScaleChoice)}
-              data-testid="st-japanese-scale"
-              title="自動ではシードごとに律・民謡・都節の音組織を選びます"
-            >
-              {(['auto', 'ritsu', 'minyo', 'miyakobushi'] as const).map((id) => (
-                <option key={id} value={id}>和風音組織: {JAPANESE_SCALE_LABELS[id]}</option>
-              ))}
-            </select>
-          )}
-          <select
-            value={grooveFeel}
-            onChange={(e) => setGrooveFeel(e.target.value as GrooveFeel)}
-            data-testid="st-groove-feel"
-            title="旋律様式とは独立。三連は元のハイハット譜を三連位置へ写し、跳ねる8分は裏拍の位置を変えます"
-          >
-            {GROOVE_FEELS.map((feel) => (
-              <option key={feel} value={feel}>グルーヴ: {GROOVE_FEEL_LABELS[feel]}</option>
-            ))}
-          </select>
-          {capabilitiesFor(soundChip).independentArpeggio && allowsTupletOverlay(grooveFeel) && (
-            <select
-              value={String(tupletOverlay)}
-              onChange={(e) => {
-                const v = e.target.value;
-                setTupletOverlay(v === 'off' || v === 'auto' ? v : Number(v) as TupletDivision);
-              }}
-              data-testid="st-tuplet-overlay"
-              title="分散和音だけを1小節div等分の連符へ乗せ、他声部は動かさずに暗示テンポ（BPM×div/4）の錯覚を作ります"
-            >
-              {(['off', 'auto', '5', '6', '7'] as const).map((v) => (
-                <option key={v} value={v}>連符レイヤー: {TUPLET_OVERLAY_LABELS[v]}</option>
-              ))}
-            </select>
-          )}
-          {!melodicIdiom.suppressesDevices && capabilitiesFor(soundChip).colorTones && (
-            <select
-              value={tensionPolicy}
-              onChange={(e) => setTensionPolicy(e.target.value as 'auto' | TensionPolicy)}
-              data-testid="st-tension-policy"
-              title="伴奏ボイシングへ足すカラートーン。アヴェイラブル・テンション理論で自動導出します（和声機能は不変。7th系和音は声部上限により1音まで）"
-            >
-              {TENSION_CHOICES.map((v) => (
-                <option key={v} value={v}>テンション: {TENSION_POLICY_LABELS[v]}</option>
-              ))}
-            </select>
-          )}
-          {!melodicIdiom.suppressesDevices && (
-            <select
-              value={diminution}
-              onChange={(e) => setDiminution(e.target.value as 'auto' | DiminutionPolicy)}
-              data-testid="st-diminution"
-              title="8分骨格の間へ16分の経過音を挿入します（骨格は不変・縮小変奏）"
-            >
-              {DIMINUTION_CHOICES.map((v) => (
-                <option key={v} value={v}>細分: {DIMINUTION_POLICY_LABELS[v]}</option>
-              ))}
-            </select>
-          )}
-          {!melodicIdiom.suppressesDevices && capabilitiesFor(soundChip).duetLayer && (
-            <select
-              value={duet}
-              onChange={(e) => setDuet(e.target.value as 'auto' | 'off' | 'on')}
-              data-testid="st-duet"
-              title="主旋律に下3度で並走するハモリ声部。声部が混雑するチップでは自動的に譲ります"
-            >
-              <option value="auto">ハモリ: スタイル既定</option>
-              <option value="off">ハモリ: なし</option>
-              <option value="on">ハモリ: あり（下3度）</option>
-            </select>
-          )}
-          {!melodicIdiom.suppressesDevices && capabilitiesFor(soundChip).glide && (
-            <select
-              value={glide}
-              onChange={(e) => setGlide(e.target.value as 'auto' | 'off' | 'on')}
-              data-testid="st-glide"
-              title="近接した跳躍へポルタメント（前音からのスライド）を付けます"
-            >
-              <option value="auto">スライド: スタイル既定</option>
-              <option value="off">スライド: なし</option>
-              <option value="on">スライド: あり</option>
-            </select>
-          )}
-        </div>
-
-        {soundChip === 'opll' ? (
-          <div className="panel-controls">
-            {VOICE_PARTS.map(({ part, label }) => (
+        <SettingsLayer
+          step={1}
+          title="決める"
+          note="曲の正体を決める軸。様式を選ぶとテンポ・グルーヴ・語法・進行の既定が追従します"
+          testId="st-layer-identity"
+        >
+          <div className="setting-grid">
+            <SettingField label="音源" hint="曲ごとに保存され、BB/RB中の再生にもそのまま使われます">
               <select
-                key={part}
-                value={voices[part] ?? -1}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setVoices((prev) => {
-                    const next = { ...prev };
-                    if (v === -1) delete next[part];
-                    else next[part] = v;
-                    return next;
-                  });
-                }}
-                data-testid={`st-voice-${part}`}
+                value={soundChip}
+                onChange={(e) => setSoundChip(e.target.value as SoundBackendId)}
+                data-testid="st-sound-chip"
               >
-                <option value={-1}>
-                  {label}: スタイル既定（{voiceLabel(defaultVoicesFor(styleId)[part])}）
-                </option>
-                <option value={0}>{label}: ユーザー音色（曲ごとに1種）</option>
-                {OPLL_VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {label}: {v.label}
+                <option value="opll">OPLL（YM2413・FM音源）</option>
+                <option value="nes2a03">ファミコン 2A03（標準5ch制約）</option>
+                <option value="pcm">PCM（SoundFont・制約最小）</option>
+              </select>
+            </SettingField>
+            <SettingField label="用途・尺" hint="40小節はOPLL BIG向けのA→B→C→D→Eフォーム">
+              <select
+                value={bars}
+                onChange={(e) => selectBars(Number(e.target.value) as ComposeBars)}
+                data-testid="st-bars"
+              >
+                <option value={4}>RB 風（4小節ループ）</option>
+                <option value={8}>BB 風（8小節ループ）</option>
+                <option value={16}>ゲームBGM風（16小節 A→B）</option>
+                <option value={40}>OPLL BIG風（40小節 A→B→C→D→E）</option>
+              </select>
+            </SettingField>
+            <SettingField label="様式" hint="パターン×テンポ×グルーヴ×語法×進行の束。切り替えると2層の既定が入れ替わります">
+              <select
+                value={styleId}
+                onChange={(e) => {
+                  // ジャンルは「パターン×テンポ×グルーヴ」の結合で成立するため、
+                  // スタイル切替はスタイル既定のBPM/グルーヴへ追従する(その後の手動変更は自由)。
+                  setStyleId(e.target.value);
+                  const nextStyle = STYLES.find((s) => s.id === e.target.value);
+                  if (nextStyle) applyStyleDefaults(nextStyle);
+                }}
+                data-testid="st-style"
+              >
+                {STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}（{s.feel}）
                   </option>
                 ))}
               </select>
-            ))}
-            {Object.values(voices).includes(0) && (
+            </SettingField>
+            <SettingField label="調性" hint="コード進行と基礎音階の調性。旋律語法(2層)とは独立です">
               <select
-                value={opllUserPatch}
-                onChange={(e) => setOpllUserPatch(e.target.value as OpllUserPatchId)}
-                data-testid="st-opll-user-patch"
-                title="OPLLの音色0番は、1曲につき1種類だけレジスタ定義できます"
+                value={tonality}
+                onChange={(e) => selectTonality(e.target.value as Tonality)}
+                data-testid="st-tonality"
               >
-                {OPLL_USER_PATCHES.map((patch) => (
-                  <option key={patch.id} value={patch.id}>ユーザー音色: {patch.label}</option>
+                <option value="major">長調</option>
+                <option value="minor">短調</option>
+              </select>
+            </SettingField>
+            <SettingField label="キー">
+              <select value={keyRoot} onChange={(e) => setKeyRoot(Number(e.target.value))} data-testid="st-key">
+                {KEYS.map((k) => (
+                  <option key={k.root} value={k.root}>{k.label}</option>
                 ))}
               </select>
+            </SettingField>
+            <SettingField
+              label={`BPM${bpm !== styleDef.defaults.bpm ? `（様式既定 ${styleDef.defaults.bpm}）` : ''}`}
+              hint="再生速度。音符やコードの並びは変えません"
+            >
+              <input
+                type="number"
+                min={80}
+                max={220}
+                value={bpm}
+                onChange={(e) => setBpm(Number(e.target.value))}
+                data-testid="st-bpm"
+              />
+            </SettingField>
+            <SettingField
+              label={`コード進行${styleDef.defaults.progressionIds ? '（様式が推奨進行を持つ）' : ''}`}
+              hint="小節スロット＋選択肢の方式。選ぶだけで破綻しない進行が組めます"
+            >
+              <select value={prog.id} onChange={(e) => selectProg(e.target.value)} data-testid="st-prog">
+                {progs.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.feel}
+                    {PROGRESSION_USAGE[p.id] ? ` / ${PROGRESSION_USAGE[p.id]}` : ''}
+                  </option>
+                ))}
+              </select>
+            </SettingField>
+          </div>
+
+          {/* コード進行のスロット選択: 選択肢が 1 つの小節は固定表示 */}
+          <div className="slot-sections" data-testid="st-slots">
+            {(bars === 40
+              ? ['A', 'B', 'C', 'D', 'E'].map((label, index) => ({ label, start: index * 8, end: index * 8 + 8 }))
+              : bars === 16
+              ? [
+                  { label: 'A', start: 0, end: 8 },
+                  { label: 'B', start: 8, end: 16 },
+                ]
+              : [{ label: '', start: 0, end: bars }]
+            ).map((section) => (
+              <div key={section.label || 'all'} className="slot-section">
+                {section.label && <div className="slot-section-title">{section.label} セクション</div>}
+                <div className="slot-row">
+                  {Array.from({ length: section.end - section.start }, (_, offset) => section.start + offset).map((bar) => {
+                    const slot = prog.slots[bar % prog.slots.length]!;
+                    const idx = Math.min(choice[bar] ?? 0, slot.length - 1);
+                    return (
+                      <div key={bar} className="slot-item">
+                        <span className="slot-label">{bar + 1}小節</span>
+                        {slot.length === 1 ? (
+                          <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, keyRoot)).join(' ')}</span>
+                        ) : (
+                          <select
+                            value={idx}
+                            onChange={(e) => {
+                              const next = [...choice];
+                              next[bar] = Number(e.target.value);
+                              setChoice(next);
+                              setAutoVary(false);
+                            }}
+                          >
+                            {slot.map((opt, i) => (
+                              <option key={i} value={i}>
+                                {opt.map((t) => chordName(t, keyRoot)).join(' ')}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="panel-controls">
+            <label>
+              <input type="checkbox" checked={autoVary} onChange={(e) => setAutoVary(e.target.checked)} />
+              {bars === 40
+                ? '作曲時、各8小節区間へコード変化レシピを展開する'
+                : bars === 16
+                  ? '作曲時、A・Bへ異なるコード変化レシピを展開する'
+                  : bars === 8
+                    ? '作曲時、異なる2つのコード変化レシピを組み合わせる'
+                    : '作曲時、25%の確率でコード変化レシピを選ぶ'}
+            </label>
+            {(bars === 16 || bars === 40) && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={intro}
+                  onChange={(e) => setIntro(e.target.checked)}
+                  data-testid="st-intro"
+                />
+                2小節イントロを付ける（初回のみ）
+              </label>
             )}
           </div>
-        ) : soundChip === 'nes2a03' ? (
-          <>
-            <div className="panel-controls" data-testid="st-nes-controls">
-              {([
-                ['pulse1Duty', 'パルス1・主旋律'],
-                ['pulse2Duty', 'パルス2・伴奏'],
-              ] as const).map(([part, label]) => (
-                <select
-                  key={part}
-                  value={nes[part] ?? (part === 'pulse1Duty' ? 1 : 2)}
-                  onChange={(e) => {
-                    const duty = Number(e.target.value) as 0 | 1 | 2 | 3;
-                    setNes((prev) => ({ ...prev, [part]: duty }));
-                  }}
-                  data-testid={`st-nes-${part}`}
-                >
-                  {NES_DUTIES.map((duty) => (
-                    <option key={duty.id} value={duty.id}>{label}: {duty.label}</option>
-                  ))}
-                </select>
-              ))}
-            </div>
-            <p className="panel-note nes-budget" data-testid="st-nes-budget">
-              2A03配線: パルス1=主旋律 / パルス2=伴奏 / 三角波=ベース（音量変更不可） /
-              ノイズ=ドラム / DPCM=未使用。1チャンネル1音、整数タイマー音程、15段階音量です。
-              40小節フォームも再生できますが、新しい独立声部の2A03専用間引きは次段階です。
-            </p>
-          </>
-        ) : (
-          <p className="panel-note" data-testid="st-pcm-voice-note">
-            {pcmRenderer
-              ? 'PCMの音色はページ上部のSoundFont設定でパート別に選べます。主旋律はセクション役割（A=看板 / B=展開 / 緩急）ごとに指定でき、未指定ならスタイル既定の受け渡しで自動的に切り替わります。'
-              : 'PCM(SoundFont)は作曲スタジオ（bgm.html）でのみ鳴ります。ここではOPLL編曲で代替再生されます。'}
-          </p>
-        )}
+        </SettingsLayer>
 
-        <div className="panel-controls">
-          <select value={prog.id} onChange={(e) => selectProg(e.target.value)} data-testid="st-prog">
-            {progs.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} — {p.feel}
-                {PROGRESSION_USAGE[p.id] ? ` / ${PROGRESSION_USAGE[p.id]}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* コード進行のスロット選択: 選択肢が 1 つの小節は固定表示 */}
-        <div className="slot-sections" data-testid="st-slots">
-          {(bars === 40
-            ? ['A', 'B', 'C', 'D', 'E'].map((label, index) => ({ label, start: index * 8, end: index * 8 + 8 }))
-            : bars === 16
-            ? [
-                { label: 'A', start: 0, end: 8 },
-                { label: 'B', start: 8, end: 16 },
-              ]
-            : [{ label: '', start: 0, end: bars }]
-          ).map((section) => (
-            <div key={section.label || 'all'} className="slot-section">
-              {section.label && <div className="slot-section-title">{section.label} セクション</div>}
-              <div className="slot-row">
-                {Array.from({ length: section.end - section.start }, (_, offset) => section.start + offset).map((bar) => {
-                  const slot = prog.slots[bar % prog.slots.length]!;
-                  const idx = Math.min(choice[bar] ?? 0, slot.length - 1);
-                  return (
-                    <div key={bar} className="slot-item">
-                      <span className="slot-label">{bar + 1}小節</span>
-                      {slot.length === 1 ? (
-                        <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, keyRoot)).join(' ')}</span>
-                      ) : (
-                        <select
-                          value={idx}
-                          onChange={(e) => {
-                            const next = [...choice];
-                            next[bar] = Number(e.target.value);
-                            setChoice(next);
-                            setAutoVary(false);
-                          }}
-                        >
-                          {slot.map((opt, i) => (
-                            <option key={i} value={i}>
-                              {opt.map((t) => chordName(t, keyRoot)).join(' ')}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="panel-controls">
-          <label>
-            <input type="checkbox" checked={autoVary} onChange={(e) => setAutoVary(e.target.checked)} />
-            {bars === 40
-              ? '作曲時、各8小節区間へコード変化レシピを展開する'
-              : bars === 16
-                ? '作曲時、A・Bへ異なるコード変化レシピを展開する'
-                : bars === 8
-                  ? '作曲時、異なる2つのコード変化レシピを組み合わせる'
-                  : '作曲時、25%の確率でコード変化レシピを選ぶ'}
-          </label>
-          {(bars === 16 || bars === 40) && (
-            <label>
-              <input
-                type="checkbox"
-                checked={intro}
-                onChange={(e) => setIntro(e.target.checked)}
-                data-testid="st-intro"
-              />
-              2小節イントロを付ける（初回のみ）
-            </label>
+        <SettingsLayer
+          step={2}
+          title="様式の既定を上書き"
+          note="様式が既定を持ち、ここで選んだときだけ上書きします。使えない装置は理由を表示します"
+          action={(
+            <>
+              <span data-testid="st-override-count">
+                {overrideCount === 0 ? 'すべて様式既定' : `${overrideCount}件を上書き中`}
+              </span>
+              <button
+                type="button"
+                onClick={resetToStyleDefaults}
+                disabled={overrideCount === 0}
+                data-testid="st-reset-overrides"
+              >
+                様式の既定に戻す
+              </button>
+            </>
           )}
-        </div>
+          testId="st-layer-overrides"
+        >
+          <div className="setting-rows">
+            <SettingRow
+              label="旋律語法"
+              hint="調性とは独立して、旋律の音使い・間・装飾を選びます"
+              status={melodicLanguage === styleMelodicLanguage
+                ? <SettingStatus kind="style">様式既定 → {idiomFor(styleMelodicLanguage).label}</SettingStatus>
+                : <SettingStatus kind="override">上書き → {melodicIdiom.label}（既定: {idiomFor(styleMelodicLanguage).label}）</SettingStatus>}
+            >
+              <select
+                value={melodicLanguage}
+                onChange={(e) => setMelodicLanguage(e.target.value as MelodicLanguage)}
+                data-testid="st-melodic-language"
+              >
+                {MELODIC_LANGUAGES.map((language) => (
+                  <option key={language} value={language}>
+                    {idiomFor(language).label}{language === styleMelodicLanguage ? '（様式既定）' : ''}
+                  </option>
+                ))}
+              </select>
+              {melodicIdiom.hasScaleChoice && (
+                <div className="setting-sub">
+                  <select
+                    value={japaneseScale}
+                    onChange={(e) => setJapaneseScale(e.target.value as JapaneseScaleChoice)}
+                    data-testid="st-japanese-scale"
+                    title="自動ではシードごとに律・民謡・都節の音組織を選びます"
+                  >
+                    {(['auto', 'ritsu', 'minyo', 'miyakobushi'] as const).map((id) => (
+                      <option key={id} value={id}>和風音組織: {JAPANESE_SCALE_LABELS[id]}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </SettingRow>
+            <SettingRow
+              label="グルーヴ"
+              hint="旋律語法とは独立。三連は元のハイハット譜を三連位置へ写し、跳ねる8分は裏拍の位置を変えます"
+              status={grooveFeel === styleGroove
+                ? <SettingStatus kind="style">様式既定 → {GROOVE_FEEL_LABELS[styleGroove]}</SettingStatus>
+                : <SettingStatus kind="override">上書き → {GROOVE_FEEL_LABELS[grooveFeel]}（既定: {GROOVE_FEEL_LABELS[styleGroove]}）</SettingStatus>}
+            >
+              <select
+                value={grooveFeel}
+                onChange={(e) => setGrooveFeel(e.target.value as GrooveFeel)}
+                data-testid="st-groove-feel"
+              >
+                {GROOVE_FEELS.map((feel) => (
+                  <option key={feel} value={feel}>
+                    {GROOVE_FEEL_LABELS[feel]}{feel === styleGroove ? '（様式既定）' : ''}
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+            <DeviceRow
+              label={DEVICE_LABELS.tension}
+              hint="伴奏ボイシングへ足すカラートーン。アヴェイラブル・テンション理論で自動導出します（和声機能は不変。7th系和音は声部上限により1音まで）"
+              state={devices.tension}
+              choice={tensionPolicy}
+              choices={TENSION_CHOICES}
+              labels={TENSION_POLICY_LABELS}
+              onChange={setTensionPolicy}
+              testId="st-tension-policy"
+            />
+            <DeviceRow
+              label={DEVICE_LABELS.diminution}
+              hint="8分骨格の間へ16分の経過音を挿入します（骨格は不変・縮小変奏）"
+              state={devices.diminution}
+              choice={diminution}
+              choices={DIMINUTION_CHOICES}
+              labels={DIMINUTION_POLICY_LABELS}
+              onChange={setDiminution}
+              testId="st-diminution"
+            />
+            <DeviceRow
+              label={DEVICE_LABELS.duet}
+              hint="主旋律に下3度で並走するハモリ声部。声部が混雑するチップでは自動的に譲ります"
+              state={devices.duet}
+              choice={duet}
+              choices={DUET_CHOICES}
+              labels={DUET_POLICY_LABELS}
+              onChange={setDuet}
+              testId="st-duet"
+            />
+            <DeviceRow
+              label={DEVICE_LABELS.glide}
+              hint="近接した跳躍へポルタメント（前音からのスライド）を付けます"
+              state={devices.glide}
+              choice={glide}
+              choices={GLIDE_CHOICES}
+              labels={GLIDE_POLICY_LABELS}
+              onChange={setGlide}
+              testId="st-glide"
+            />
+            <DeviceRow
+              label={DEVICE_LABELS.bassLine}
+              hint="和声計画へ分数コードを書き、ベースを転回・半音経過込みの順次ラインにします"
+              state={devices.bassLine}
+              choice={bassLine}
+              choices={BASS_LINE_CHOICES}
+              labels={BASS_LINE_POLICY_LABELS}
+              onChange={setBassLine}
+              testId="st-bass-line"
+            />
+            <DeviceRow
+              label={DEVICE_LABELS.tupletOverlay}
+              hint="分散和音だけを1小節div等分の連符へ乗せ、他声部は動かさずに暗示テンポ（BPM×div/4）の錯覚を作ります"
+              state={devices.tupletOverlay}
+              choice={tupletOverlay}
+              choices={TUPLET_CHOICES}
+              labels={TUPLET_OVERLAY_LABELS}
+              onChange={setTupletOverlay}
+              testId="st-tuplet-overlay"
+            />
+          </div>
+        </SettingsLayer>
+
+        <SettingsLayer
+          step={3}
+          title="音色"
+          note="編曲層の設定。作曲結果（音の並び）は変えず、曲と一緒に保存されます"
+          testId="st-layer-timbre"
+        >
+          {soundChip === 'opll' ? (
+            <div className="setting-grid">
+              {VOICE_PARTS.map(({ part, label }) => (
+                <SettingField key={part} label={label}>
+                  <select
+                    value={voices[part] ?? -1}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setVoices((prev) => {
+                        const next = { ...prev };
+                        if (v === -1) delete next[part];
+                        else next[part] = v;
+                        return next;
+                      });
+                    }}
+                    data-testid={`st-voice-${part}`}
+                  >
+                    <option value={-1}>
+                      スタイル既定（{voiceLabel(defaultVoicesFor(styleId)[part])}）
+                    </option>
+                    <option value={0}>ユーザー音色（曲ごとに1種）</option>
+                    {OPLL_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>{v.label}</option>
+                    ))}
+                  </select>
+                </SettingField>
+              ))}
+              {Object.values(voices).includes(0) && (
+                <SettingField label="ユーザー音色" hint="OPLLの音色0番は、1曲につき1種類だけレジスタ定義できます">
+                  <select
+                    value={opllUserPatch}
+                    onChange={(e) => setOpllUserPatch(e.target.value as OpllUserPatchId)}
+                    data-testid="st-opll-user-patch"
+                  >
+                    {OPLL_USER_PATCHES.map((patch) => (
+                      <option key={patch.id} value={patch.id}>{patch.label}</option>
+                    ))}
+                  </select>
+                </SettingField>
+              )}
+            </div>
+          ) : soundChip === 'nes2a03' ? (
+            <>
+              <div className="setting-grid" data-testid="st-nes-controls">
+                {([
+                  ['pulse1Duty', 'パルス1・主旋律'],
+                  ['pulse2Duty', 'パルス2・伴奏'],
+                ] as const).map(([part, label]) => (
+                  <SettingField key={part} label={label}>
+                    <select
+                      value={nes[part] ?? (part === 'pulse1Duty' ? 1 : 2)}
+                      onChange={(e) => {
+                        const duty = Number(e.target.value) as 0 | 1 | 2 | 3;
+                        setNes((prev) => ({ ...prev, [part]: duty }));
+                      }}
+                      data-testid={`st-nes-${part}`}
+                    >
+                      {NES_DUTIES.map((duty) => (
+                        <option key={duty.id} value={duty.id}>{duty.label}</option>
+                      ))}
+                    </select>
+                  </SettingField>
+                ))}
+              </div>
+              <p className="panel-note nes-budget" data-testid="st-nes-budget">
+                2A03配線: パルス1=主旋律 / パルス2=伴奏 / 三角波=ベース（音量変更不可） /
+                ノイズ=ドラム / DPCM=未使用。1チャンネル1音、整数タイマー音程、15段階音量です。
+                40小節フォームも再生できますが、新しい独立声部の2A03専用間引きは次段階です。
+              </p>
+            </>
+          ) : (
+            <p className="panel-note" data-testid="st-pcm-voice-note">
+              {pcmRenderer
+                ? 'PCMの音色はページ上部のSoundFont設定でパート別に選べます。主旋律はセクション役割（A=看板 / B=展開 / 緩急）ごとに指定でき、未指定ならスタイル既定の受け渡しで自動的に切り替わります。'
+                : 'PCM(SoundFont)は作曲スタジオ（bgm.html）でのみ鳴ります。ここではOPLL編曲で代替再生されます。'}
+            </p>
+          )}
+        </SettingsLayer>
 
         <div className="panel-controls">
           <button onClick={() => composeAndPlay(newSeed())} disabled={progress !== null} data-testid="st-compose">
@@ -1433,6 +1551,23 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               {' ／ '}モチーフ: {[...new Set(piece.phrasePlan.bars.map((plan) => plan.phraseFunction))]
                 .map((phraseFunction) => PHRASE_FUNCTION_LABELS[phraseFunction]).join('→')}
             </p>
+            {lastOpts && (() => {
+              const effective = effectiveDevices(lastOpts);
+              if (!effective) return null;
+              const labelsOf: Record<string, Record<string, string>> = {
+                tension: TENSION_POLICY_LABELS, diminution: DIMINUTION_POLICY_LABELS, duet: DUET_POLICY_LABELS,
+                glide: GLIDE_POLICY_LABELS, bassLine: BASS_LINE_POLICY_LABELS, tupletOverlay: TUPLET_OVERLAY_LABELS,
+              };
+              return (
+                <p className="panel-note" data-testid="st-effective-devices">
+                  この曲で効いた装置: {DEVICE_IDS.map((id) => {
+                    const state = effective[id];
+                    const value = labelsOf[id]![String(state.value)] ?? String(state.value);
+                    return `${DEVICE_LABELS[id]}=${value}${state.source === 'explicit' ? '(上書き)' : ''}`;
+                  }).join(' ／ ')}
+                </p>
+              );
+            })()}
             {diagnosis && (
               <DiagnosisPanel
                 diagnosis={diagnosis}

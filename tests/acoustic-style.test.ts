@@ -160,8 +160,8 @@ describe('アコースティック様式', () => {
     const draft: ComposeDraft = {
       progressionId: 'drifting-orbit', styleId: 'acoustic', keyRoot: 9, bpm: 112, bars: 16, seed: 42,
       choice: [0, 0, 0, 0], soundChip: 'pcm', intro: true, tonality: 'major',
-      melodicLanguage: 'hexatonic', japaneseScale: 'auto', grooveFeel: 'straight', tupletOverlay: 'off',
-      tensionPolicy: 'auto', diminution: 'auto', duet: 'auto', glide: 'auto',
+      melodicLanguage: 'hexatonic', japaneseScale: 'auto', grooveFeel: 'straight', tupletOverlay: 'auto',
+      tensionPolicy: 'auto', diminution: 'auto', duet: 'auto', glide: 'auto', bassLine: 'auto',
       voices: {}, opllUserPatch: 'brightLead', nes: {},
     };
     expect(normalizeComposeOptions(draft).melodicLanguage).toBe('hexatonic');

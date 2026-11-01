@@ -9,6 +9,8 @@ import {
   DEFAULT_GROOVE_FEEL, GROOVE_FEEL_LABELS, isGrooveFeel,
 } from '../core/music/groove.js';
 import type { GrooveFeel } from '../core/music/groove.js';
+import { BASS_LINE_POLICY_LABELS, DUET_POLICY_LABELS, GLIDE_POLICY_LABELS, resolveDevices } from '../core/music/devices.js';
+import type { ResolvedDevices } from '../core/music/devices.js';
 import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor, isMelodicLanguage } from '../core/music/melodic-idiom.js';
 import { capabilitiesFor } from '../core/music/sound-capabilities.js';
@@ -17,10 +19,12 @@ import { resolveMelodicLanguage, resolveTonality } from '../core/music/song-plan
 import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
 import { KEYS, PROGRESSIONS, progressionsForTonality, STYLES } from '../core/music/theory.js';
 import {
+  engineRevOf,
   JAPANESE_SCALE_LABELS,
   TUPLET_OVERLAY_LABELS,
 } from '../core/music/types.js';
 import type {
+  BassLinePolicy,
   ComposeBars,
   ComposeOptions,
   DiminutionPolicy,
@@ -55,6 +59,36 @@ export const voiceLabel = (id: number): string =>
 /** 選択肢の唯一の出所はLABELS。型・バリデータ・selectの選択肢がここから同期する。 */
 export const TENSION_CHOICES = Object.keys(TENSION_POLICY_LABELS) as ('auto' | TensionPolicy)[];
 export const DIMINUTION_CHOICES = Object.keys(DIMINUTION_POLICY_LABELS) as ('auto' | DiminutionPolicy)[];
+export const DUET_CHOICES = Object.keys(DUET_POLICY_LABELS) as ('auto' | 'off' | 'on')[];
+export const GLIDE_CHOICES = Object.keys(GLIDE_POLICY_LABELS) as ('auto' | 'off' | 'on')[];
+export const BASS_LINE_CHOICES = Object.keys(BASS_LINE_POLICY_LABELS) as ('auto' | BassLinePolicy)[];
+/**
+ * 連符の選択肢(表示順)。ラベル表のキーは文字列で、JS は整数風キーを先頭へ並べ替えるため
+ * Object.keys に頼らず明示する。ラベル表との網羅性はテストで固定する。
+ */
+export const TUPLET_CHOICES: readonly TupletOverlayChoice[] = ['auto', 'off', 'bySection', 5, 6, 7];
+
+/**
+ * 保存曲・プリセットの options から実効の装置を解く(表示用)。compose() と同じ規則
+ * (devices.ts)なので、「この曲で実際に効いている装置」をそのまま示せる。
+ */
+export function effectiveDevices(options: ComposeOptions): ResolvedDevices | null {
+  const style = STYLES.find((s) => s.id === options.styleId);
+  if (!style) return null;
+  return resolveDevices({
+    style,
+    melodicLanguage: resolveMelodicLanguage(options),
+    grooveFeel: options.grooveFeel ?? DEFAULT_GROOVE_FEEL,
+    soundChip: options.soundChip,
+    engineRev: engineRevOf(options),
+    tensionPolicy: options.tensionPolicy,
+    diminution: options.diminution,
+    duet: options.duet,
+    glide: options.glide,
+    bassLine: options.bassLine,
+    tupletOverlay: options.tupletOverlay,
+  });
+}
 /** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
 export function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
@@ -74,8 +108,8 @@ export function songSummary(options: ComposeOptions): string {
   const groove = options.grooveFeel && options.grooveFeel !== DEFAULT_GROOVE_FEEL
     ? ` / ${GROOVE_FEEL_LABELS[options.grooveFeel]}`
     : '';
-  const tuplet = options.tupletOverlay && options.tupletOverlay !== 'off'
-    ? ` / 連符${TUPLET_OVERLAY_LABELS[String(options.tupletOverlay) as keyof typeof TUPLET_OVERLAY_LABELS]}`
+  const tuplet = options.tupletOverlay !== undefined && options.tupletOverlay !== 'auto'
+    ? ` / 連符:${TUPLET_OVERLAY_LABELS[String(options.tupletOverlay) as keyof typeof TUPLET_OVERLAY_LABELS]}`
     : '';
   const tension = options.tensionPolicy && options.tensionPolicy !== 'auto'
     ? ` / テンション:${TENSION_POLICY_LABELS[options.tensionPolicy]}`
@@ -83,8 +117,11 @@ export function songSummary(options: ComposeOptions): string {
   const diminution = options.diminution && options.diminution !== 'auto'
     ? ` / 細分:${DIMINUTION_POLICY_LABELS[options.diminution]}`
     : '';
+  const bassLine = options.bassLine && options.bassLine !== 'auto'
+    ? ` / ベースライン:${BASS_LINE_POLICY_LABELS[options.bassLine]}`
+    : '';
   const edits = options.melodyEdits?.length ? ` / 局所修正${options.melodyEdits.length}` : '';
-  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${tension}${diminution}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
+  const base = `${chip} / ${form}${intro}${tonalLabel}${melody}${groove}${tuplet}${tension}${diminution}${bassLine}${edits} / ${prog} / キー${key} / BPM${options.bpm}`;
   if (options.soundChip && options.soundChip !== 'opll') return base;
   const overridden = VOICE_PARTS.filter(({ part }) => options.voices?.[part] !== undefined);
   if (overridden.length === 0) return base;
@@ -107,6 +144,7 @@ export interface ComposerForm {
   diminution: 'auto' | DiminutionPolicy;
   duet: 'auto' | 'off' | 'on';
   glide: 'auto' | 'off' | 'on';
+  bassLine: 'auto' | BassLinePolicy;
   keyRoot: number;
   bpm: number;
   soundChip: SoundBackendId;
@@ -142,6 +180,7 @@ export function loadComposerForm(): ComposerForm {
     ? availableProgressions.find((p) => p.id === raw.progId) ?? availableProgressions[0]!
     : availableProgressions[0]!;
   const progId = initialProgression.id;
+  const legacyForm = raw.bassLine === undefined;
   const voices: VoiceOverride = {};
   if (raw.voices !== null && typeof raw.voices === 'object') {
     for (const part of ['lead', 'backing', 'bass', 'counter', 'ostinato'] as const) {
@@ -159,9 +198,16 @@ export function loadComposerForm(): ComposerForm {
       ? raw.japaneseScale as JapaneseScaleChoice
       : 'auto',
     grooveFeel: isGrooveFeel(raw.grooveFeel) ? raw.grooveFeel : DEFAULT_GROOVE_FEEL,
-    tupletOverlay: raw.tupletOverlay === 'auto' || [5, 6, 7].includes(raw.tupletOverlay as number)
-      ? raw.tupletOverlay as TupletOverlayChoice
-      : 'off',
+    // 旧フォーム(bassLine 欄を持たない世代)の連符は 'off'=既定・'auto'=区間ごと自動だった。
+    // 現行は 'auto'=様式既定・'off'=明示の上書きなので、旧世代の値だけ読み替える。
+    tupletOverlay: legacyForm
+      ? (raw.tupletOverlay === 'auto'
+        ? 'bySection'
+        : [5, 6, 7].includes(raw.tupletOverlay as number) ? raw.tupletOverlay as TupletOverlayChoice : 'auto')
+      : (raw.tupletOverlay === 'auto' || raw.tupletOverlay === 'off' || raw.tupletOverlay === 'bySection'
+          || [5, 6, 7].includes(raw.tupletOverlay as number)
+        ? raw.tupletOverlay as TupletOverlayChoice
+        : 'auto'),
     tensionPolicy: TENSION_CHOICES.includes(raw.tensionPolicy as 'auto' | TensionPolicy)
       ? raw.tensionPolicy as 'auto' | TensionPolicy
       : 'auto',
@@ -170,6 +216,7 @@ export function loadComposerForm(): ComposerForm {
       : 'auto',
     duet: raw.duet === 'off' || raw.duet === 'on' ? raw.duet : 'auto',
     glide: raw.glide === 'off' || raw.glide === 'on' ? raw.glide : 'auto',
+    bassLine: raw.bassLine === 'off' || raw.bassLine === 'on' ? raw.bassLine : 'auto',
     keyRoot: KEYS.some((k) => k.root === raw.keyRoot) ? (raw.keyRoot as number) : 0,
     bpm: typeof raw.bpm === 'number' && raw.bpm >= 80 && raw.bpm <= 220 ? raw.bpm : 170,
     soundChip: raw.soundChip === 'nes2a03' || raw.soundChip === 'pcm'

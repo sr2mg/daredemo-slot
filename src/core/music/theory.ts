@@ -17,6 +17,7 @@ import type {
   IntroRole,
   MelodicLanguage,
   TextureStrategy,
+  TupletOverlayPolicy,
 } from './types.js';
 
 /**
@@ -737,6 +738,11 @@ export interface DeviceDefaults {
   duet?: DuetPolicy;
   /** スライド(ポルタメント)指示(glide.ts)。 */
   glide?: GlidePolicy;
+  /**
+   * 連符レイヤー(arrangement.ts の withTupletLayer)。bySection は区間エネルギーを
+   * 分割数へ写し、数値は全区間同値。独立した分散和音声部の予算がある音源だけで効く。
+   */
+  tuplet?: Exclude<TupletOverlayPolicy, 'off'>;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
+import { CURRENT_ENGINE_REV } from '../src/core/music/types.js';
 import type { ComposeOptions, Piece, TupletDivision } from '../src/core/music/types.js';
 import { diagnosePiece } from '../src/core/music/diagnostics.js';
 
@@ -13,6 +14,7 @@ import { diagnosePiece } from '../src/core/music/diagnostics.js';
 
 const base: ComposeOptions = {
   progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16, seed: 11,
+  engineRev: CURRENT_ENGINE_REV,
 };
 
 interface SectionRange {
@@ -33,8 +35,17 @@ function sectionRanges(piece: Piece): SectionRange[] {
 const nearInteger = (value: number): boolean => Math.abs(value - Math.round(value)) < 1e-6;
 
 describe('連符オーバーレイ', () => {
-  it('省略とoffは同一の曲になる', () => {
+  it('省略・auto・offは様式既定(eurobeatは宣言なし=off)で同一の曲になる', () => {
     expect(compose({ ...base, tupletOverlay: 'off' })).toEqual(compose(base));
+    expect(compose({ ...base, tupletOverlay: 'auto' })).toEqual(compose(base));
+  });
+
+  it('旧語彙(rev<4)の保存曲: auto=区間ごと自動、省略=off として読む', () => {
+    const legacy = { ...base, engineRev: 3 } as const;
+    expect(compose({ ...legacy, tupletOverlay: 'auto' })).toEqual(compose({ ...base, tupletOverlay: 'bySection' }));
+    expect(compose({ ...legacy })).toEqual(compose({ ...base, tupletOverlay: 'off' }));
+    const legacyAuto = compose({ ...legacy, tupletOverlay: 'auto' });
+    expect(legacyAuto.arrangementPlan.sections.some((s) => s.ostinatoTuplet !== null)).toBe(true);
   });
 
   it('分割数を変えても基準面（旋律・低音・ドラム・コード・副旋律）は1音も動かない', () => {
@@ -88,10 +99,10 @@ describe('連符オーバーレイ', () => {
     expect(uniformBars.length).toBeGreaterThan(0);
   });
 
-  it('autoは区間エネルギーで段階づけ、頂点のオスティナート区間が7連になる', () => {
+  it('bySectionは区間エネルギーで段階づけ、頂点のオスティナート区間が7連になる', () => {
     const piece = compose({
       progressionId: 'minor-pedal', styleId: 'eurobeat', keyRoot: 0, bpm: 150,
-      bars: 40, tonality: 'minor', seed: 42, tupletOverlay: 'auto',
+      bars: 40, tonality: 'minor', seed: 42, tupletOverlay: 'bySection',
     });
     const arpSections = piece.arrangementPlan.sections
       .map((section, index) => ({ section, energy: piece.songPlan.form.sections[index]!.energy }))
@@ -124,7 +135,7 @@ describe('連符オーバーレイ', () => {
   it('和声が動く区間では転回形の窓が選ばれ、毎小節ルートへ戻らない', () => {
     const piece = compose({
       progressionId: 'minor-pedal', styleId: 'eurobeat', keyRoot: 0, bpm: 150,
-      bars: 40, tonality: 'minor', seed: 42, tupletOverlay: 'auto',
+      bars: 40, tonality: 'minor', seed: 42, tupletOverlay: 'bySection',
     });
     const chordAt = (beat: number) => piece.chords.filter((c) => c.beat <= beat).at(-1)!;
     const lowestByBar = new Map<number, { beat: number; midi: number }>();
@@ -152,12 +163,12 @@ describe('連符オーバーレイ', () => {
   });
 
   it('決定論: 同一オプションは同一の曲になる', () => {
-    const options: ComposeOptions = { ...base, tupletOverlay: 'auto' };
+    const options: ComposeOptions = { ...base, tupletOverlay: 'bySection' };
     expect(compose(options)).toEqual(compose(options));
   });
 
   it('診断エラーを出さない', () => {
-    for (const tupletOverlay of ['auto', 5, 6, 7] as const) {
+    for (const tupletOverlay of ['bySection', 5, 6, 7] as const) {
       const report = diagnosePiece(compose({ ...base, tupletOverlay }));
       expect(report.issues.filter((issue) => issue.severity === 'error')).toEqual([]);
     }

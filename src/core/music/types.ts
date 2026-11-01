@@ -32,7 +32,17 @@ export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
 export type JapaneseScaleChoice = 'auto' | JapaneseScale;
 export type OrnamentType = 'grace' | 'turn' | 'shake';
 export type TupletDivision = 5 | 6 | 7;
-export type TupletOverlayChoice = 'off' | 'auto' | TupletDivision;
+/**
+ * 連符レイヤーの方針(装置)。bySection は区間エネルギーを分割数へ写す(頂点=7連)。
+ * 数値は全区間同値。他の装置(TensionPolicy 等)と同じく 'off' を含む実効値の型。
+ */
+export type TupletOverlayPolicy = 'off' | 'bySection' | TupletDivision;
+/**
+ * 連符レイヤーの指定。'auto' は様式既定(DeviceDefaults.tuplet)へ委譲する。
+ * engineRev<4 の保存曲では 'auto' が旧語彙「区間ごと自動」(=bySection)を意味する
+ * (devices.ts が rev で読み替える)。
+ */
+export type TupletOverlayChoice = 'auto' | TupletOverlayPolicy;
 export type PhraseFunction = 'statement' | 'restatement' | 'departure' | 'conclusion';
 export type IntroRole = 'motif' | 'groove' | 'fanfare' | 'runup';
 export type CadenceType = 'open' | 'half' | 'closed' | 'turnaround';
@@ -99,9 +109,10 @@ export const ORNAMENT_LABELS: Record<OrnamentType, string> = {
   shake: '揺り',
 };
 
-export const TUPLET_OVERLAY_LABELS: Record<'off' | 'auto' | '5' | '6' | '7', string> = {
+export const TUPLET_OVERLAY_LABELS: Record<'auto' | 'off' | 'bySection' | '5' | '6' | '7', string> = {
+  auto: 'スタイル既定',
   off: 'なし',
-  auto: '自動（区間ごと）',
+  bySection: '区間ごとに自動（頂点=7連）',
   '5': '5連符（暗示×1.25）',
   '6': '6連符（暗示×1.5）',
   '7': '7連符（暗示×1.75）',
@@ -190,8 +201,9 @@ export interface ComposeInput {
   /**
    * 分散和音を基準グリッドから外し、1小節をdiv等分した連符に乗せるレイヤー。
    * div個の打点が暗示テンポ（bpm×div/4）の4分音符として機能し、不動の基準面
-   * （他声部）との摩擦でテンポが変わったように聴かせる。OPLL専用で、
-   * 三連オーバーレイとは併用しない（該当時は無効化される）。省略時はoff。
+   * （他声部）との摩擦でテンポが変わったように聴かせる。独立した分散和音声部の
+   * 予算があるバックエンド(independentArpeggio)だけで、三連オーバーレイとは併用しない。
+   * 省略/autoはスタイル既定(他の装置と同じ規則、devices.ts)。
    */
   tupletOverlay?: TupletOverlayChoice;
   /**
@@ -289,8 +301,11 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  *   目標音級ごと差し替える(melody-voice.ts)。(b) 倚音の解決先を順次(scaleStepMax以内)に
  *   限り、コードスケールの増2度で解決しない(melody-voice.ts)。(c) 開放終止のベース5度を
  *   和音の品質に追従させ(dim=減5度)、持続サブは長音を保って最後の8分だけを割く(bass-voice.ts)。
+ * - rev4: 連符レイヤーを他の装置と同じ解決規則(様式既定→明示→語法抑制→能力)へ統合。
+ *   旧語彙では tupletOverlay 省略=off、'auto'=区間ごと自動だったので、rev<4 の保存曲は
+ *   その読みを保つ(devices.ts)。rev4 から 省略/'auto'=様式既定(DeviceDefaults.tuplet)。
  */
-export const CURRENT_ENGINE_REV = 3;
+export const CURRENT_ENGINE_REV = 4;
 
 /**
  * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。

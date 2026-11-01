@@ -31,6 +31,7 @@ import type { GrooveFeel } from './groove.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
 import { selectTensionPcs } from './tension.js';
 import { capabilitiesFor } from './sound-capabilities.js';
+import { resolveDevices } from './devices.js';
 import { applyDiminution } from './diminution.js';
 import { applyDrumArticulation } from './drum-articulation.js';
 import { duetLayerFor } from './duet.js';
@@ -146,34 +147,27 @@ export function compose(opts: ComposeInput): Piece {
     return chordScaleForToken(chord.token, chord.pcs);
   };
   const grooveFeel = opts.grooveFeel ?? DEFAULT_GROOVE_FEEL;
-  // カラートーンとディミニューションはスタイル既定を土台に上書き。和風五音は
-  // 開放五度・間の美学と衝突するため両方とも常にoffへ落とす(語法の宣言)。
-  const resolveDevicePolicy = <T extends string>(
-    choice: 'auto' | T | undefined,
-    styleDefault: T | undefined,
-  ): T | 'off' => {
-    if (idiom.suppressesDevices) return 'off';
-    if (choice === undefined || choice === 'auto') return styleDefault ?? 'off';
-    return choice;
-  };
-  // テンションは伴奏がカラートーンを担える(colorTones)バックエンドだけ。2A03は
-  // pulse2の単声が和声の全てを担うため、第3音を追い出すと和声の同一性ごと失われる。
-  const tensionPolicy: TensionPolicy = !capabilitiesFor(opts.soundChip).colorTones
-    ? 'off'
-    : resolveDevicePolicy<TensionPolicy>(opts.tensionPolicy, style.devices?.tension);
-  const diminutionPolicy: DiminutionPolicy = resolveDevicePolicy<DiminutionPolicy>(
-    opts.diminution, style.devices?.diminution,
-  );
-  const backendCaps = capabilitiesFor(opts.soundChip);
-  const duetPolicy = backendCaps.duetLayer
-    ? resolveDevicePolicy<DuetPolicy>(opts.duet, style.devices?.duet)
-    : 'off';
-  const glidePolicy = backendCaps.glide
-    ? resolveDevicePolicy<GlidePolicy>(opts.glide, style.devices?.glide)
-    : 'off';
-  // ベースラインは全バックエンドで鳴る声部なので能力ゲートは要らない。
-  const bassLinePolicy = resolveDevicePolicy<BassLinePolicy>(opts.bassLine, style.bass.line);
   const engineRev = engineRevOf(opts);
+  // 装置(テンション・細分・ハモリ・スライド・ベースライン・連符)は devices.ts の一本の
+  // 規則で解決する(様式既定→明示→語法の抑制→音源の能力)。ここでは実効値だけを読む。
+  const devices = resolveDevices({
+    style,
+    melodicLanguage,
+    grooveFeel,
+    soundChip: opts.soundChip,
+    engineRev,
+    tensionPolicy: opts.tensionPolicy,
+    diminution: opts.diminution,
+    duet: opts.duet,
+    glide: opts.glide,
+    bassLine: opts.bassLine,
+    tupletOverlay: opts.tupletOverlay,
+  });
+  const tensionPolicy = devices.tension.value;
+  const diminutionPolicy = devices.diminution.value;
+  const duetPolicy = devices.duet.value;
+  const glidePolicy = devices.glide.value;
+  const bassLinePolicy = devices.bassLine.value;
   const choice = opts.choice ?? (opts.bars >= 8
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
     : defaultChoiceFor(prog, opts.bars));
@@ -192,7 +186,7 @@ export function compose(opts: ComposeInput): Piece {
     ...(opts.compositionStrategy ? { compositionStrategy: opts.compositionStrategy } : {}),
   });
   const arrangementPlan = arrangementPlanFor(
-    opts.bars, opts.seed, opts.progressionId, songPlan, opts.tupletOverlay ?? 'off',
+    opts.bars, opts.seed, opts.progressionId, songPlan, devices.tupletOverlay.value,
   );
 
   // --- SongPlanで確定した和声機能と変化位置を、実コードへ展開する。 ---

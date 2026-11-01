@@ -9,7 +9,8 @@ import { LOOP_BOUNDARY_MAX_SEMITONES, progressionsForTonality } from '../src/cor
 /**
  * engineRevの一点式バージョニングの回帰テスト。
  * rev2 = 主題ジェスチャー抽選を主系列rngから区間ごとの独立ストリームへ分離。
- * rev3 = ファズ監査(現行rev)で露出した生成と診断の乖離3点を生成側で閉じる。
+ * rev3 = ファズ監査で露出した生成と診断の乖離3点を生成側で閉じる。
+ * rev4 = 連符レイヤーを装置の共通規則へ統合(現行rev)。旧語彙の保存曲は読み替えで保つ。
  * 保存曲(旧リビジョン)の再現性と、新経路の健全性を固定する。
  */
 
@@ -35,8 +36,17 @@ function loopBoundary(piece: Piece): number {
 }
 
 describe('engineRevゲート(rev3: ファズ監査の乖離を生成側で閉じる)', () => {
-  it('現行リビジョンはrev3(保存曲の焼き込み値の前提)', () => {
-    expect(CURRENT_ENGINE_REV).toBe(3);
+  it('現行リビジョンはrev4(保存曲の焼き込み値の前提)', () => {
+    expect(CURRENT_ENGINE_REV).toBe(4);
+  });
+
+  it('rev4: 連符以外の生成はrev3と同一(語彙の読み替えだけで音は変えない)', () => {
+    for (const base of [
+      corpusCase('canon', 'major', 'rock', 'memoryArc', 7920, 5),
+      corpusCase('royal-pop', 'minor', 'kmmo', 'premiseArc', 63353, 4),
+    ]) {
+      expect(compose({ ...base, engineRev: 4 })).toEqual(compose({ ...base, engineRev: 3 }));
+    }
   });
 
   it('ターンアラウンドの着地音はループ頭の実音に合わせ、境界跳躍が許容内になる', () => {

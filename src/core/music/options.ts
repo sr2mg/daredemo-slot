@@ -12,13 +12,15 @@
  */
 
 import type { CompositionStrategy } from './composition-strategy.js';
-import { allowsTupletOverlay, DEFAULT_GROOVE_FEEL } from './groove.js';
+import { deviceAvailable, resolveDevices } from './devices.js';
+import { DEFAULT_GROOVE_FEEL } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
-import { capabilitiesFor } from './sound-capabilities.js';
 import type { SoundBackendId } from './sound-capabilities.js';
+import { STYLES } from './theory.js';
 import { CURRENT_ENGINE_REV } from './types.js';
 import type {
+  BassLinePolicy,
   ComposeBars,
   ComposeOptions,
   DiminutionPolicy,
@@ -58,6 +60,7 @@ export interface ComposeDraft {
   diminution: 'auto' | DiminutionPolicy;
   duet: 'auto' | DuetPolicy;
   glide: 'auto' | GlidePolicy;
+  bassLine: 'auto' | BassLinePolicy;
   /** パート別 OPLL 音色。undefined のパートは「スタイル既定のまま」。 */
   voices: VoiceOverride;
   opllUserPatch: OpllUserPatchId;
@@ -75,10 +78,18 @@ export interface ComposeDraft {
  *   エンジン側は「入っていても無害化する防衛」で役割が違う)
  */
 export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
-  const caps = capabilitiesFor(draft.soundChip);
   const idiom = idiomFor(draft.melodicLanguage);
-  // 装置を抑制する語法(和風)では装置指定を保存JSONへ入れない(エンジン側の無害化と同じ規則)。
-  const japanese = idiom.suppressesDevices;
+  // 装置の可用性(語法の抑制・音源の能力・グルーヴとの併用可否)は devices.ts の規則を
+  // そのまま使う。効かない装置の明示指定は保存JSONへ入れず、キャッシュ同一性を保つ。
+  const style = STYLES.find((s) => s.id === draft.styleId);
+  if (!style) throw new Error(`未知のスタイル: ${draft.styleId}`);
+  const devices = resolveDevices({
+    style,
+    melodicLanguage: draft.melodicLanguage,
+    grooveFeel: draft.grooveFeel,
+    soundChip: draft.soundChip,
+    engineRev: CURRENT_ENGINE_REV,
+  });
   // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
   const picked = Object.fromEntries(
     (Object.entries(draft.voices) as [keyof VoiceOverride, number | undefined][])
@@ -103,17 +114,20 @@ export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
     ...(draft.melodicLanguage !== DEFAULT_MELODIC_LANGUAGE ? { melodicLanguage: draft.melodicLanguage } : {}),
     ...(idiom.hasScaleChoice && draft.japaneseScale !== 'auto' ? { japaneseScale: draft.japaneseScale } : {}),
     ...(draft.grooveFeel === DEFAULT_GROOVE_FEEL ? {} : { grooveFeel: draft.grooveFeel }),
-    // 実際に効かない組合せでは保存JSONへ入れず、キャッシュ同一性を保つ(能力参照)
-    ...(caps.independentArpeggio && allowsTupletOverlay(draft.grooveFeel) && draft.tupletOverlay !== 'off'
+    // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)。
+    // 効かない装置(語法の抑制・能力不足・グルーヴ併用不可)の明示指定も入れない。
+    ...(draft.tupletOverlay !== 'auto' && deviceAvailable(devices, 'tupletOverlay')
       ? { tupletOverlay: draft.tupletOverlay }
       : {}),
-    // autoはスタイル既定に委譲するのでJSONへ入れない(既存保存曲と同一キーを保つ)
-    ...(draft.tensionPolicy !== 'auto' && !japanese && caps.colorTones
+    ...(draft.tensionPolicy !== 'auto' && deviceAvailable(devices, 'tension')
       ? { tensionPolicy: draft.tensionPolicy }
       : {}),
-    ...(draft.diminution !== 'auto' && !japanese ? { diminution: draft.diminution } : {}),
-    ...(draft.duet !== 'auto' && !japanese && caps.duetLayer ? { duet: draft.duet } : {}),
-    ...(draft.glide !== 'auto' && !japanese && caps.glide ? { glide: draft.glide } : {}),
+    ...(draft.diminution !== 'auto' && deviceAvailable(devices, 'diminution')
+      ? { diminution: draft.diminution }
+      : {}),
+    ...(draft.duet !== 'auto' && deviceAvailable(devices, 'duet') ? { duet: draft.duet } : {}),
+    ...(draft.glide !== 'auto' && deviceAvailable(devices, 'glide') ? { glide: draft.glide } : {}),
+    ...(draft.bassLine !== 'auto' && deviceAvailable(devices, 'bassLine') ? { bassLine: draft.bassLine } : {}),
     ...(draft.soundChip === 'opll' && Object.keys(picked).length > 0 ? { voices: picked } : {}),
     ...(draft.soundChip === 'opll' && Object.values(picked).includes(0)
       ? { opllUserPatch: draft.opllUserPatch }

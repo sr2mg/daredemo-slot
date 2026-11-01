@@ -723,6 +723,172 @@ button:disabled {
   font-family: 'Consolas', monospace;
 }
 
+/* 作曲フォームの3層(決める / 様式の既定を上書き / 音色) */
+.composer-layer {
+  margin-bottom: 14px;
+  padding: 10px 12px 4px;
+  border: 1px solid #3a3a55;
+  border-radius: 10px;
+  background: #171721;
+}
+
+.composer-layer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.composer-layer-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #ffd54f;
+}
+
+.composer-layer-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #3949ab;
+  color: #fff;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.composer-layer-note {
+  font-size: 12px;
+  color: #888;
+}
+
+.composer-layer-action {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.composer-layer-action button {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: #2a2a38;
+  color: #ddd;
+  border: 1px solid #3a3a55;
+}
+
+.setting-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.setting-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.setting-field-label {
+  font-size: 11px;
+  color: #888;
+}
+
+.setting-field select,
+.setting-field input[type='number'] {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.setting-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) minmax(200px, 1fr) minmax(0, 1.4fr);
+  gap: 6px 12px;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px dashed #2e2e44;
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-row-label {
+  font-size: 13px;
+  color: #c7c9d9;
+}
+
+.setting-row-control select {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.setting-row-control select:disabled {
+  color: #777;
+  background: #20202a;
+  cursor: not-allowed;
+}
+
+.setting-row-status {
+  font-size: 12px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.setting-status-style {
+  color: #888;
+}
+
+.setting-status-override {
+  color: #ffd54f;
+}
+
+.setting-status-unavailable {
+  color: #ff9e80;
+}
+
+.setting-sub {
+  margin: 6px 0 0 8px;
+  padding-left: 10px;
+  border-left: 2px solid #2e2e44;
+}
+
+@media (max-width: 720px) {
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
 .slot-row {
   display: flex;
   gap: 10px;

@@ -4,10 +4,10 @@ import type {
   ComposeBars,
   Piece,
   TupletDivision,
-  TupletOverlayChoice,
+  TupletOverlayPolicy,
 } from './types.js';
 import type { SectionRole, SongPlan } from './types.js';
-import { allowsTupletOverlay, grooveFor } from './groove.js';
+import { grooveFor } from './groove.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';
 import { CHORDS, styleForId } from './theory.js';
@@ -156,18 +156,6 @@ function textureStrategyFor(
   return candidates[(seed >>> 1) % candidates.length]!;
 }
 
-/** 連符レイヤーの発動判定。声部予算のないバックエンド・細分オーバーレイ併用時は静かに無効へ落とす。 */
-function resolveTupletOverlay(
-  choice: TupletOverlayChoice,
-  songPlan: SongPlan | undefined,
-): TupletDivision | 'auto' | null {
-  if (choice === 'off' || !songPlan) return null;
-  // 連符レイヤーは独立オスティナート声部が担い手。予算のないバックエンドでは畳む。
-  if (!capabilitiesFor(songPlan.soundChip).independentArpeggio) return null;
-  if (!allowsTupletOverlay(songPlan.grooveFeel)) return null;
-  return choice;
-}
-
 /**
  * 連符レイヤーを担う区間を確定する。数値指定は全区間同値。autoは区間エネルギーの
  * 順位を拍節的不協和の緊張度順位（metric-modulation.tsのカタログ順）へ写す:
@@ -175,7 +163,7 @@ function resolveTupletOverlay(
  */
 function withTupletLayer(
   plan: ArrangementPlan,
-  tuplet: TupletDivision | 'auto',
+  tuplet: Exclude<TupletOverlayPolicy, 'off'>,
   seed: number,
   songPlan: SongPlan | undefined,
 ): ArrangementPlan {
@@ -204,7 +192,7 @@ function withTupletLayer(
   const tensest = byTension[byTension.length - 1]!.division;
   const mapped = sections.map((item, i) => {
     if (item.ostinatoDensity === 0) return item;
-    const division: TupletDivision = tuplet !== 'auto'
+    const division: TupletDivision = tuplet !== 'bySection'
       ? tuplet
       : sections.length === 1
         ? calmest
@@ -228,12 +216,12 @@ export function arrangementPlanFor(
   seed: number,
   progressionId?: string,
   songPlan?: SongPlan,
-  tupletOverlay: TupletOverlayChoice = 'off',
+  /** 解決済みの連符方針(devices.ts)。能力・グルーヴのゲートは解決側が済ませている。 */
+  tupletOverlay: TupletOverlayPolicy = 'off',
 ): ArrangementPlan {
-  const tuplet = resolveTupletOverlay(tupletOverlay, songPlan);
   const texture = songPlan ? styleForId(songPlan.styleId)?.texture : undefined;
-  const plan = planArrangement(bars, seed, progressionId, songPlan, texture, tuplet !== null);
-  return tuplet === null ? plan : withTupletLayer(plan, tuplet, seed, songPlan);
+  const plan = planArrangement(bars, seed, progressionId, songPlan, texture, tupletOverlay !== 'off');
+  return tupletOverlay === 'off' ? plan : withTupletLayer(plan, tupletOverlay, seed, songPlan);
 }
 
 function planArrangement(
