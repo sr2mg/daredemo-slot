@@ -42,7 +42,9 @@ export interface SoundCapabilities {
   /**
    * ドラム語彙。chip5 = kick/snare/tom/cymbal/hat の5音(YM2413リズムモード由来)。
    * gm はさらにハットのopen/closeと拍節アクセント(DrumEvent.open/velocity、
-   * drum-articulation.tsが導出)を鳴らし分ける。chip5は両フィールドを無視して劣化。
+   * drum-articulation.tsが導出)を鳴らし分ける。chip5はopenを無視して劣化し、velocityは
+   * OPLLの様式が rhythm(style-timbre.ts の OpllRhythmMix)を宣言した場合だけ3dB段の
+   * 音量レジスタへ写す(opll-arrange.ts)。2A03は両方無視。
    */
   drumVocabulary: 'chip5' | 'gm';
 }

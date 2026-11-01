@@ -14,6 +14,32 @@
 import { styleLookup } from '../core/music/theory.js';
 import type { StyleId } from '../core/music/theory.js';
 import type { DrumBusFx } from './bus-fx.js';
+import type { DrumEvent } from '../core/music/types.js';
+
+/**
+ * OPLL リズムモードの鳴らし方(様式が宣言したときだけ有効)。
+ * 省略した様式は従来の固定値(BD/SD -12dB, HH -6dB, BD 109Hz)でベロシティも無視し、
+ * 音は 1 サンプルも変わらない。宣言した様式は opll-arrange が
+ * (1) 5 音の音量を様式のバランスで持ち、(2) 打点ごとのベロシティ(ゴースト・拍節アクセント)を
+ * 3dB/段の音量レジスタへ写し、(3) BD を打点ごとにベースの根音へ調律する。全てレジスタ領域の
+ * 操作で、実機ドライバが当時やっていた範囲を出ない。
+ */
+export interface OpllRhythmMix {
+  /** 5 音の音量(0 = 最大、3dB/段)。 */
+  levels: Record<DrumEvent['inst'], number>;
+  /**
+   * BD の調律。リズムモード BD は 2op の FM 音で ch6 の fnum/blk の高さにはっきり鳴るので、
+   * 固定(既定 109Hz)のままだとベースと別の音程がキックごとに重なる。'bassRoot' は打点ごとに
+   * その瞬間のベース音(無ければコードのベース音)の音名をサブ帯(E1〜D#2)へ畳んで ch6 を
+   * 書き換える。低くするほど減衰も伸びる(KSR)ので、100Hz 以下の成分も同時に増える。
+   */
+  kickTuning: 'bassRoot';
+  /**
+   * 旋律 ch へ重ねるサブキック(BD と同じ音高へ落ちるピッチスイープ)の音色。省略 = 重ねない。
+   * リズムモード BD(アタック)の下に胴を足す、実機ドライバのハイブリッド型。
+   */
+  subKickVoice?: number;
+}
 
 /** OPLL(YM2413)の内蔵音色割り当て(0〜15。0はユーザー音色)。 */
 export interface StyleVoices {
@@ -29,6 +55,13 @@ export interface StyleVoices {
    * ユーザーが音色を上書きした場合はパレットより上書きが勝つ(全区間固定)。
    */
   leadPalette?: readonly number[];
+  /** リズムモードの様式別の鳴らし方。省略 = 従来の固定値(OpllRhythmMix を参照)。 */
+  rhythm?: OpllRhythmMix;
+  /**
+   * ベースのゲート。legato = 次の低音打点の直前まで伸ばす(OPLL 編曲の中だけ)。
+   * 短い刻み(kickSync の 0.18〜0.4 拍)をそのまま鳴らすと低域が「点」になる様式向け。
+   */
+  bassGate?: 'legato';
 }
 
 /** PCM(SoundFont)のGMプログラム(0基点)。 */
@@ -94,7 +127,14 @@ export const STYLE_TIMBRES: Record<StyleId, StyleTimbre> = {
   // DnBはパッド持続でドラムとの速度対比を出す。部屋はドラムの輪郭を立てたいので短め
   // (DnBはパッドを泳がせる分だけ広く)。
   garage2step: {
-    opll: { lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'offbeat' },
+    opll: {
+      lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'offbeat',
+      // キックを基準(0)に、バックビート -6dB、ハットは 2 ステップの跳ねの担い手なので
+      // DnB より前(-12dB)。BD 55Hz はベース床 E2 の 1 オクターブ下近辺で、実測では
+      // 100Hz 以下が -1dB・60Hz 以下が -3dB(既定 109Hz の -6 / -12dB から)に増え、長さも 80ms へ伸びる。
+      rhythm: { levels: { kick: 0, snare: 2, hat: 4, tom: 3, cymbal: 4 }, kickTuning: 'bassRoot', subKickVoice: 14 },
+      bassGate: 'legato',
+    },
     // UKガラージ: ボイスリード+EP/オルガンスタブ+シンセベース。キットはハウス系譜のDance。
     pcm: { leadPalette: [85, 80], counter: 54, ostinato: 4, backing: 17, bass: 39, drumKit: 26 },
     // 軽めの3:1バスコンプ+薄いサチュレーション。クラッシュなし
@@ -107,7 +147,11 @@ export const STYLE_TIMBRES: Record<StyleId, StyleTimbre> = {
     roomRt60Sec: 1.0,
   },
   dnb: {
-    opll: { lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half' },
+    opll: {
+      lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half',
+      // ブレイクビーツはキックとスネアが対等に近い(-3dB)、ハットは後ろ(-15dB)。
+      rhythm: { levels: { kick: 0, snare: 1, hat: 5, tom: 3, cymbal: 4 }, kickTuning: 'bassRoot', subKickVoice: 14 },
+    },
     // ソウレフルなリード+ウォームパッド+サブ寄りシンセベース。
     // キットは加工前提のPower(処理鎖=drumBusでブレイクの質感へ潰す)。
     pcm: { leadPalette: [81, 85], counter: 54, ostinato: 45, backing: 89, bass: 38, drumKit: 16 },

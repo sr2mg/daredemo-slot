@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
 import { variedChoiceFor } from '../src/core/music/harmony-plan.js';
 import { PROGRESSIONS } from '../src/core/music/theory.js';
-import { arrangePiece, defaultVoicesFor, OPLL_USER_PATCHES } from '../src/audio/opll-arrange.js';
+import { arrangePiece, defaultVoicesFor, kickMidiAt, legatoBass, OPLL_USER_PATCHES } from '../src/audio/opll-arrange.js';
+import { freqToFnum } from '../src/audio/opll-core.js';
+import { midiFreq } from '../src/audio/pitch.js';
 
 const piece = compose({
   progressionId: 'royal-pop',
@@ -180,5 +182,89 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
       expect(custom.events.some((event) => event.at === 0 && event.reg === reg && event.val === value)).toBe(true);
     });
     expect(melodicKeyOns(custom.events).some((event) => event.val >> 4 === 0)).toBe(true);
+  });
+});
+
+describe('クラブ系様式のOPLLリズム(レジスタ領域の工夫。コンプ等の後段処理は入れない)', () => {
+  const club = compose({
+    progressionId: 'royal-pop', styleId: 'garage2step', keyRoot: 0, bpm: 132, bars: 4, seed: 11,
+    grooveFeel: 'shuffle16', engineRev: 4,
+  });
+  const arranged = arrangePiece(club, 'garage2step');
+  const spb132 = 60 / 132;
+  const kicks = club.drums.filter((drum) => drum.inst === 'kick').sort((a, b) => a.beat - b.beat);
+
+  it('BDは打点ごとにベースの根音(サブ帯E1〜D#2)へ調律され、5音の音量は様式のバランスで初期化される', () => {
+    const bassAt = (beat: number) => club.bass.find((n) => n.beat <= beat && beat < n.beat + n.dur)
+      ?? [...club.bass].filter((n) => n.beat <= beat).sort((a, b) => b.beat - a.beat)[0];
+    const midis = kicks.map((kick) => kickMidiAt(club, kick.beat));
+    expect(new Set(midis).size).toBeGreaterThan(1); // 進行に沿って動く
+    kicks.forEach((kick, i) => {
+      const midi = midis[i]!;
+      expect(midi).toBeGreaterThanOrEqual(28);
+      expect(midi).toBeLessThan(40);
+      expect((bassAt(kick.beat)!.midi - midi) % 12).toBe(0); // ベースと同じ音名
+      const { fnum, blk } = freqToFnum(midiFreq(midi));
+      const at = kick.beat * spb132;
+      const lo = arranged.events.filter((e) => e.reg === 0x16 && e.at <= at).sort((a, b) => a.at - b.at).at(-1)!.val;
+      const hi = arranged.events.filter((e) => e.reg === 0x26 && e.at <= at).sort((a, b) => a.at - b.at).at(-1)!.val;
+      expect(lo).toBe(fnum & 0xff);
+      expect(hi).toBe((blk << 1) | ((fnum >> 8) & 1));
+    });
+    const init36 = arranged.events.filter((e) => e.at === 0 && e.reg === 0x36).map((e) => e.val);
+    expect(init36.at(-1)).toBe(0); // kick は基準(最大)
+    const init37 = arranged.events.filter((e) => e.at === 0 && e.reg === 0x37).map((e) => e.val);
+    expect(init37.at(-1)).toBe((4 << 4) | 2); // hat -12dB(上位) / snare -6dB(下位)
+  });
+
+  it('ゴーストスネアは主打より3段(約-10dB)小さい音量レジスタでキーオンされる', () => {
+    const snares = club.drums.filter((drum) => drum.inst === 'snare');
+    const ghost = snares.find((drum) => (drum.velocity ?? 1) < 0.5);
+    const main = snares.find((drum) => (drum.velocity ?? 1) >= 0.99);
+    expect(ghost).toBeDefined();
+    expect(main).toBeDefined();
+    const snareLevelAt = (beat: number): number => {
+      const at = beat * spb132;
+      const writes = arranged.events.filter((e) => e.reg === 0x37 && e.at <= at).sort((a, b) => a.at - b.at);
+      return writes.at(-1)!.val & 0x0f;
+    };
+    expect(snareLevelAt(main!.beat)).toBe(2);
+    expect(snareLevelAt(ghost!.beat)).toBe(5);
+  });
+
+  it('サブキックは旋律chで音色14をBDと同じ音高の2オクターブ上からスイープさせ、主旋律とベースを落とさない', () => {
+    expect(arranged.voiceStats.parts.subKick.assigned).toBe(kicks.length);
+    expect(arranged.voiceStats.parts.subKick.dropped).toBe(0);
+    expect(arranged.voiceStats.parts.lead.dropped).toBe(0);
+    expect(arranged.voiceStats.parts.bass.dropped).toBe(0);
+    const at = kicks[0]!.beat * spb132;
+    const keyOn = arranged.events.find((e) => e.at === at && e.reg >= 0x30 && e.reg <= 0x35 && e.val >> 4 === 14);
+    expect(keyOn).toBeDefined();
+    const ch = keyOn!.reg - 0x30;
+    const pitches = arranged.events.filter((e) => e.reg === 0x10 + ch && e.at >= at && e.at <= at + 0.045);
+    expect(pitches.length).toBeGreaterThanOrEqual(8); // 5ms 刻み × 40ms
+    // 着地点は BD と同じ音高(fnum 下位 8bit が一致)
+    const { fnum } = freqToFnum(midiFreq(kickMidiAt(club, kicks[0]!.beat)));
+    expect(pitches.at(-1)!.val).toBe(fnum & 0xff);
+  });
+
+  it('ベースは次の低音打点の直前まで伸び、譜面より短くならない', () => {
+    const legato = legatoBass(club.bass, club.beats);
+    const sorted = [...club.bass].sort((a, b) => a.beat - b.beat);
+    expect(legato.length).toBe(sorted.length);
+    legato.forEach((note, index) => {
+      expect(note.dur).toBeGreaterThanOrEqual(sorted[index]!.dur);
+      const next = sorted[index + 1]?.beat ?? club.beats;
+      expect(note.beat + note.dur).toBeLessThanOrEqual(next + 1e-9);
+    });
+    expect(legato.some((note, index) => note.dur > sorted[index]!.dur)).toBe(true);
+  });
+
+  it('rhythm を宣言しない様式は従来どおり: 音量レジスタは t=0 の固定値だけで、サブキックも鳴らない', () => {
+    const levelWrites = def.events.filter((e) => e.reg >= 0x36 && e.reg <= 0x38);
+    expect(levelWrites.every((e) => e.at === 0)).toBe(true);
+    expect(levelWrites.map((e) => e.val)).toEqual([0x04, 0x24, 0x24]);
+    expect(def.events.filter((e) => e.at === 0 && e.reg === 0x26).map((e) => e.val)).toEqual([0x05]);
+    expect(def.voiceStats.parts.subKick.assigned).toBe(0);
   });
 });

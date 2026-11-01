@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { compileDrums, compileMmlTrack, compileSong } from './helpers/mml.js';
 import type { OpllExports } from '../src/audio/opll-core.js';
 import {
+  BGM_NORMALIZATION,
   freqToFnum,
+  normalizationGain,
   OPLL_CLOCK,
   OPLL_IMPORTS,
   OPLL_RATE,
@@ -106,5 +108,19 @@ describe('効果音プリセット（レシピ生成 + OPLL）', () => {
     const synth = renderSequence(exports, opll, arrangeSfx({ ...PRESET_SFX.bet, voice: 10 }));
     const clarinet = renderSequence(exports, opll, arrangeSfx({ ...PRESET_SFX.bet, voice: 5 }));
     expect(synth).not.toEqual(clarinet);
+  });
+});
+
+describe('BGM のラウドネス正規化(ゲイン1本。波形の形は変えない)', () => {
+  it('波高率15dB以下の素材はピーク0.65のまま、疎な素材はRMSを合わせつつピーク0.95で止まる', () => {
+    const dense = normalizationGain(1, 10 ** (-15 / 20), BGM_NORMALIZATION);
+    expect(dense).toBeCloseTo(0.65, 6);
+    const medium = normalizationGain(1, 10 ** (-17 / 20), BGM_NORMALIZATION);
+    expect(medium * 10 ** (-17 / 20)).toBeCloseTo(BGM_NORMALIZATION.targetRms, 6);
+    expect(medium).toBeLessThan(0.95);
+    const sparse = normalizationGain(1, 10 ** (-20 / 20), BGM_NORMALIZATION);
+    expect(sparse).toBeCloseTo(0.95, 6);
+    expect(normalizationGain(0.5, 0.1, { peak: 0.65 })).toBeCloseTo(1.3, 9);
+    expect(normalizationGain(0, 0, BGM_NORMALIZATION)).toBe(0);
   });
 });
