@@ -1,12 +1,13 @@
 import {
-  SECTION_BARS_CHOICES, SECTION_ROLES, SECTION_ROLE_LABELS, SONG_ENDINGS, SONG_ENDING_LABELS,
+  SECTION_BARS_CHOICES, SECTION_ROLES, SECTION_ROLE_LABELS, SECTION_TEXTURES, SECTION_TEXTURE_LABELS,
+  SONG_ENDINGS, SONG_ENDING_LABELS,
 } from '../core/music/form.js';
 import type { FormIssue } from '../core/music/form.js';
 import { BAR_GROUPINGS, BAR_GROUPING_LABELS, DEFAULT_GROUPING } from '../core/music/grid.js';
 import { KEYS, PROGRESSIONS, progressionForTonality } from '../core/music/theory.js';
 import type {
-  BarGrouping, MotifTransform, SectionBars, SectionEnergy, SectionRole, SectionSpec, SongEnding, SongFormSpec,
-  Tonality,
+  BarGrouping, MotifTransform, SectionBars, SectionEnergy, SectionRole, SectionSpec, SectionTexture, SongEnding,
+  SongFormSpec, Tonality,
 } from '../core/music/types.js';
 
 /**
@@ -91,6 +92,7 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
             <th>小節</th>
             <th>拍</th>
             <th>BPM</th>
+            <th>質感</th>
             <th>力</th>
             <th>主題</th>
             <th>変形</th>
@@ -162,6 +164,20 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
                     style={{ width: '4em' }}
                     data-testid={`st-section-tempo-${index}`}
                   />
+                </td>
+                <td>
+                  <select
+                    value={section.texture ?? 'normal'}
+                    onChange={(e) => update(index, {
+                      texture: e.target.value === 'normal' ? undefined : e.target.value as SectionTexture,
+                    })}
+                    title="ロングトーン=区間頭の1音を保続し伴奏は再打鍵しない・ドラム無し。パワーコード連打=旋律を休ませ開放五度を刻む"
+                    data-testid={`st-section-texture-${index}`}
+                  >
+                    {SECTION_TEXTURES.map((texture) => (
+                      <option key={texture} value={texture}>{SECTION_TEXTURE_LABELS[texture]}</option>
+                    ))}
+                  </select>
                 </td>
                 <td>
                   <select value={section.energy} onChange={(e) => update(index, { energy: Number(e.target.value) as SectionEnergy })}>

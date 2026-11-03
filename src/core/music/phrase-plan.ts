@@ -252,7 +252,10 @@ export function makePhrasePlan(
   if (sectionCount > 1 && leapRng.nextInt(100) < 60) {
     const leapSection = sections.find((section) => section.role === 'relief') ?? sections[1]!;
     const candidateBar = leapSection.startBar + 4;
-    if (candidateBar !== climaxBar && candidateBar < bars) signatureLeapBar = candidateBar;
+    // 旋律を持たない区間(テクスチャ)には跳躍を置けない。
+    if (candidateBar !== climaxBar && candidateBar < bars && leapSection.texture === 'normal') {
+      signatureLeapBar = candidateBar;
+    }
   }
 
   let pendingSustainEntry = false;
@@ -293,6 +296,28 @@ export function makePhrasePlan(
     const sectionBoundary = sectionCount > 1
       && offsetInSection === sectionDesign.bars - 1
       && bar !== bars - 1;
+    const energy = harmonyBar.energy;
+    // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
+    const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
+    const dynamic = Math.min(1, dynamicFloor + energy * 0.07 + (sectionPlan.backingDensity === 'full' ? 0.04 : 0));
+
+    // テクスチャ区間: sustain は区間頭の 1 音を区間末尾まで保続、pulse は旋律を休ませる。
+    // 表現デバイス(終止・対旋律・装飾・間・タイ・倚音・弱起)は持たず、前小節からの持ち越しも切る。
+    if (sectionDesign.texture !== 'normal') {
+      const holds = sectionDesign.texture === 'sustain' && offsetInSection === 0;
+      pendingSustainEntry = false;
+      pendingAnacrusis = false;
+      barPlans.push({
+        bar, section, grouping, role: 'statement',
+        rhythm: Array.from({ length: steps }, (_, step) => holds && step === 0),
+        counterSteps: [], ornamentSteps: [], ornamentType: null, maSteps: [],
+        phraseFunction, motifSourceBar: bar, cadence: null, targetPc: null, targetStep: null,
+        energy, dynamic, restStart: false, sustainedEntry: false, longToneStep: null, anchorTie: false,
+        anacrusis: false, appoggiaturaStep: null, registerOffset: registerOffsets[sectionIndex] ?? 0,
+        holdUntilBeat: holds ? (sectionDesign.startBar + sectionDesign.bars) * 4 : null,
+      });
+      continue;
+    }
     const cadence = isAnswer ? harmonyBar.cadence : null;
 
     const counterSteps: number[] = [];
@@ -547,6 +572,8 @@ export function makePhrasePlan(
       && targetStep <= anchorStep + 1
       && bar + 1 < bars
       && bar + 1 !== signatureLeapBar
+      // 次小節が旋律を持たない区間なら掛かる先が無い。
+      && sections[sectionIndexAt(form, bar + 1)]!.texture === 'normal'
       && bar - lastAnacrusisBar >= 4
       && anacrusisRng.nextInt(100) < 35
     ) {
@@ -556,10 +583,6 @@ export function makePhrasePlan(
       pendingAnacrusis = true;
     }
 
-    const energy = harmonyBar.energy;
-    // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
-    const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
-    const dynamic = Math.min(1, dynamicFloor + energy * 0.07 + (sectionPlan.backingDensity === 'full' ? 0.04 : 0));
     const role: PhraseBarPlan['role'] = cadence && cadence !== 'open'
       ? 'cadence'
       : isAnswer
@@ -572,6 +595,7 @@ export function makePhrasePlan(
       phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
       restStart, sustainedEntry, longToneStep, anchorTie, anacrusis, appoggiaturaStep,
       registerOffset: registerOffsets[sectionIndex] ?? 0,
+      holdUntilBeat: null,
     });
   }
   return { climaxBar, signatureLeapBar, rhythmFamilies, bars: barPlans };

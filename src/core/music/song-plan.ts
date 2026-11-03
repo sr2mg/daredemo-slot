@@ -469,7 +469,9 @@ function introPlanFor(
 /** クライマックス小節: 先頭以外(2区間以下なら全区間)の最大エネルギー区間の中盤。 */
 function climaxBarFor(sections: readonly SongSectionPlan[], seed: number): number {
   const lateClimax = (seed & 1) === 1;
-  const candidates = sections.length > 2 ? sections.slice(1) : sections;
+  // 旋律を持たない区間(ロングトーン・パワーコード)は頂点を置けない。
+  const melodic = (sections.length > 2 ? sections.slice(1) : sections).filter((section) => section.texture === 'normal');
+  const candidates = melodic.length > 0 ? melodic : sections.length > 2 ? sections.slice(1) : sections;
   const peakEnergy = Math.max(...candidates.map((section) => section.energy));
   const peaks = candidates.filter((section) => section.energy === peakEnergy);
   const peak = peaks[(seed >>> 10) % peaks.length]!;
@@ -535,6 +537,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       progressionId: sectionProgression.id,
       progressionBars: sectionProgression.slots.length,
       grouping: spec.grouping ?? DEFAULT_GROUPING,
+      texture: spec.texture ?? 'normal',
       ...motifPlans[index]!,
     };
   });

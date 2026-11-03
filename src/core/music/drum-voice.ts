@@ -42,6 +42,8 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
   for (let bar = 0; bar < bars; bar++) {
     const barPlan = phrasePlan.bars[bar]!;
     const sectionIndex = sectionIndexAt(form, bar);
+    // ロングトーンの区間はドラムを置かない(合図のシンバルも)。
+    if (ctx.songPlan.form.sections[sectionIndex]!.texture === 'sustain') continue;
     const offsetInSection = barInSection(form, bar);
     const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sections[0]!;
     const pattern = sectionPlan.drum === 'sectionB' ? kit.sectionB : kit;

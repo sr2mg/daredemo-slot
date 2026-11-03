@@ -132,15 +132,42 @@ export function arrangeSf2Parts(
   ): Sf2Note[] => events.map((event) => noteFor(event, ref, gain));
 
   const backing = refFor('backing');
-  const backingNotes: Sf2Note[] = piece.chords.flatMap((chord) => chord.midis.map((midi) => ({
+  const backingNoteAt = (midi: number, beat: number, dur: number, velocity = 68): Sf2Note => ({
     program: backing.program,
     bank: backing.bank,
     midi,
-    velocity: 68,
-    startSec: toSec(chord.beat),
-    durSec: Math.max(0.05, (toSec(chord.beat + chord.dur) - toSec(chord.beat)) * 0.97),
+    velocity,
+    startSec: toSec(beat),
+    durSec: Math.max(0.05, (toSec(beat + dur) - toSec(beat)) * 0.97),
     gain: PART_GAINS.backing,
-  })));
+  });
+  const backingNotes: Sf2Note[] = [];
+  // sustain テクスチャ: 同じボイシングが続く間は再打鍵せず、直前の和音の音を延ばす。
+  let sustained: { startBeat: number; endBeat: number; midis: string; notes: Sf2Note[] } | null = null;
+  for (const chord of piece.chords) {
+    const section = arrangementSectionFor(piece, chord.beat);
+    const rhythm = chord.beat >= piece.loopStartBeat ? section.backingRhythm : 'normal';
+    if (rhythm === 'stab') {
+      const grid = gridAtBeat(piece.songPlan.form, piece.loopStartBeat, chord.beat);
+      const count = Math.round(chord.dur / grid.stepBeats);
+      for (let step = 0; step < count; step++) {
+        for (const midi of chord.midis) backingNotes.push(backingNoteAt(midi, chord.beat + step * grid.stepBeats, grid.stepBeats * 0.6, 84));
+      }
+      sustained = null;
+      continue;
+    }
+    const midisKey = chord.midis.join(',');
+    if (rhythm === 'sustain' && sustained && Math.abs(sustained.endBeat - chord.beat) < 1e-6 && sustained.midis === midisKey) {
+      sustained.endBeat = chord.beat + chord.dur;
+      for (const note of sustained.notes) {
+        note.durSec = Math.max(0.05, (toSec(sustained.endBeat) - toSec(sustained.startBeat)) * 0.97);
+      }
+      continue;
+    }
+    const notes = chord.midis.map((midi) => backingNoteAt(midi, chord.beat, chord.dur));
+    backingNotes.push(...notes);
+    sustained = rhythm === 'sustain' ? { startBeat: chord.beat, endBeat: chord.beat + chord.dur, midis: midisKey, notes } : null;
+  }
   const drumNotes: Sf2Note[] = [];
   for (const drum of piece.drums) {
     const open = drum.inst === 'hat' && drum.open === true;

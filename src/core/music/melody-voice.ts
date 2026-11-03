@@ -470,7 +470,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
             return grooveBeat((bar + 1) * 4 + stepBeat(nextGrid, boundary), grooveFeel);
           })()
         : null;
-      const articulation: NoteArticulation = tiesOverAnchor
+      const articulation: NoteArticulation = tiesOverAnchor || barPlan.holdUntilBeat !== null
         ? 'tenuto'
         : barPlan.targetStep === step
         ? barPlan.ornamentType === 'shake' ? 'ornament' : 'tenuto'
@@ -492,7 +492,10 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       const velocity = Math.min(1, barPlan.dynamic + (strong ? 0.08 : 0) + (articulation === 'accent' ? 0.08 : 0));
       melody.push({
         beat,
-        dur: longToneBoundary !== null
+        // sustain テクスチャの区間頭は区間末尾まで保続する(小節線は格子に依らず整数拍)。
+        dur: barPlan.holdUntilBeat !== null
+          ? Math.max(0.1, barPlan.holdUntilBeat - beat)
+          : longToneBoundary !== null
           ? Math.max(0.1, longToneBoundary - beat)
           // タイはアンカーを跨いで次の発音まで途切れず保続する(ゲート比を掛けない)。
           : tiesOverAnchor

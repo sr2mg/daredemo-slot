@@ -360,9 +360,42 @@ export function arrangePiece(
     const colorVoice = chord.midis.find((midi) => (chord.colorPcs ?? []).includes(midi % 12));
     const lowerVoice = chordToneMidis[1] ?? chordToneMidis[0] ?? chord.midis[1] ?? chord.midis[0]!;
     const upperVoice = colorVoice ?? chordToneMidis[2] ?? lowerVoice;
-    const thin = chord.beat < piece.loopStartBeat
-      || arrangementSectionFor(piece, chord.beat).backingDensity === 'sparse';
-    if (voices.backingPattern === 'offbeat') {
+    const backingSection = arrangementSectionFor(piece, chord.beat);
+    const thin = chord.beat < piece.loopStartBeat || backingSection.backingDensity === 'sparse';
+    const texturedBacking = chord.beat >= piece.loopStartBeat && backingSection.backingRhythm !== 'normal';
+    if (texturedBacking) {
+      // sustain: 同じ下声部が続く間は再打鍵せず前の音を延ばす。stab: 格子の各ステップで短く刻む。
+      const riff = offbeatBackingRiff(piece, chord, 'chordStart');
+      const stepDur = backingSection.backingRhythm === 'stab'
+        ? gridAt(chord.beat).stepBeats * 0.6
+        : chord.dur * 0.98;
+      for (const step of riff) {
+        let previous: Candidate | undefined;
+        if (backingSection.backingRhythm === 'sustain') {
+          for (let index = candidates.length - 1; index >= 0; index--) {
+            if (candidates[index]!.part === 'backing') {
+              previous = candidates[index];
+              break;
+            }
+          }
+        }
+        if (previous && previous.midi === lowerVoice && Math.abs(previous.beat + previous.dur / 0.98 - step.beat) < 0.05) {
+          previous.dur = (step.beat + chord.dur - previous.beat) * 0.98;
+          continue;
+        }
+        candidates.push({
+          part: 'backing',
+          beat: step.beat,
+          dur: stepDur,
+          midi: lowerVoice,
+          voice: voices.backing,
+          volume: 7,
+          vibrato: false,
+          shake: false,
+          priority: PART_PRIORITY.backing,
+        });
+      }
+    } else if (voices.backingPattern === 'offbeat') {
       for (const step of offbeatBackingRiff(piece, chord, 'chordStart')) {
         candidates.push({
           part: 'backing',

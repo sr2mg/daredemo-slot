@@ -20,6 +20,7 @@ import type {
   SectionBars,
   SectionRole,
   SectionSpec,
+  SectionTexture,
   SongEnding,
   SongFormRef,
   SongFormSpec,
@@ -56,6 +57,14 @@ export const SONG_ENDING_LABELS: Record<SongEnding, string> = {
   loop: 'ループ（最終小節で頭へ渡す）',
   final: '終止（V→I で閉じる）',
   ritardando: '終止＋リタルダンド（最終 2 小節を減速して閉じる）',
+};
+
+export const SECTION_TEXTURES: readonly SectionTexture[] = ['normal', 'sustain', 'pulse'];
+
+export const SECTION_TEXTURE_LABELS: Record<SectionTexture, string> = {
+  normal: '通常',
+  sustain: 'ロングトーン',
+  pulse: 'パワーコード連打',
 };
 
 /** 終止で閉じる終わり方(final / ritardando)。ループでないことの判定はこれを使う。 */
@@ -297,6 +306,12 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     if (spec.tempo !== undefined && !(Number.isFinite(spec.tempo) && spec.tempo >= 30 && spec.tempo <= 400)) {
       error(id, `テンポは 30〜400(${String(spec.tempo)})`);
     }
+    if (spec.texture !== undefined && !(SECTION_TEXTURES as readonly string[]).includes(spec.texture)) {
+      error(id, `テクスチャが不正: ${String(spec.texture)}`);
+    }
+    const textureOf = (candidate: SectionSpec): SectionTexture => candidate.texture ?? 'normal';
+    // 先頭区間はイントロが主題を借りる(intro.ts)ので旋律が要る。
+    if (index === 0 && textureOf(spec) !== 'normal') error(id, '先頭区間のテクスチャは通常であること(イントロが主題を借りる)');
     const grouping = isBarGrouping(spec.grouping) ? spec.grouping : DEFAULT_GROUPING;
     const groupingOf = (candidate: SectionSpec): string => candidate.grouping ?? DEFAULT_GROUPING;
     const groupingLabel = (value: string): string => (isBarGrouping(value) ? BAR_GROUPING_LABELS[value] : value);
@@ -310,6 +325,10 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     if (themeSource && groupingOf(themeSource) !== grouping) {
       error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${groupingLabel(groupingOf(themeSource))})と拍の割り方が違う`);
     }
+    // 旋律を持たない(ロングトーン・パワーコード)区間は主題の元になれない。
+    if (themeSource && textureOf(themeSource) !== 'normal') {
+      error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」が${SECTION_TEXTURE_LABELS[textureOf(themeSource)]}で旋律を持たない`);
+    }
     if (spec.quote) {
       if (themeSource) error(id, '主題の再登場と部分引用は併用できない(引用はフレーズ0の借用と排他)');
       const source = seen.get(spec.quote.from);
@@ -317,6 +336,8 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
       else if (source.bars !== spec.bars) error(id, `引用元「${source.id}」と小節数が違う`);
       else if (groupingOf(source) !== grouping) {
         error(id, `引用元「${source.id}」(${groupingLabel(groupingOf(source))})と拍の割り方が違う`);
+      } else if (textureOf(source) !== 'normal') {
+        error(id, `引用元「${source.id}」が${SECTION_TEXTURE_LABELS[textureOf(source)]}で旋律を持たない`);
       }
       const phrases = Array.isArray(spec.quote.phrases) ? spec.quote.phrases : [];
       if (phrases.length === 0) error(id, '引用するフレーズが空');

@@ -32,12 +32,18 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     const pattern = drumPatternFor(grid, sectionPlan.drum === 'sectionB' ? style.percussion.sectionB.kick : style.percussion.kick);
     return pattern[(bar * grid.sixteenthSteps + step) % pattern.length] ?? 0;
   };
-  const bassPattern = style.bass.pattern;
+  // 刻み様式は様式の宣言を区間のテクスチャで上書きする(sustain=持続低音、pulse=オクターブ 8 分)。
+  const textureAt = (bar: number) => songPlan.form.sections[sectionIndexAt(form, bar)]!.texture;
+  const patternAt = (bar: number): typeof style.bass.pattern => {
+    const texture = textureAt(bar);
+    return texture === 'sustain' ? 'sustain' : texture === 'pulse' ? 'octave8' : style.bass.pattern;
+  };
   let previousAnchor: number | null = null;
   for (const c of chords) {
     const chordBar = Math.floor(c.beat / 4);
     const grid = gridAt(chordBar);
     const feel = feelAt(chordBar);
+    const bassPattern = patternAt(chordBar);
     // ペダル低音は進行名だけで常設せず、曲全体で低音主導を選んだ場合にだけ使う。
     // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
     // ペダルは区間の主音(区間ごとの転調に追従)。
@@ -98,6 +104,9 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
 
   for (const barPlan of phrasePlan.bars) {
     const bar = barPlan.bar;
+    // テクスチャ区間は終止も接近音も持たない(持続低音・連打をそのまま保つ)。
+    if (textureAt(bar) !== 'normal') continue;
+    const bassPattern = patternAt(bar);
     const grid = gridAt(bar);
     const feel = feelAt(bar);
     // ピックアップ(接近音)は小節の最終ステップ(4x2 では 8 分裏の 3.5 拍)。
@@ -212,7 +221,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     const onPulse = step !== null && isPulseStep(grid, step);
     note.velocity = Math.min(1, barPlan.dynamic + (onPulse ? 0.06 : -0.05));
     // 持続サブの長音はテヌート(終止の接近音など短音はスタッカートのまま)。
-    note.articulation = bassPattern === 'sustain' && note.dur >= 0.5
+    note.articulation = patternAt(noteBar) === 'sustain' && note.dur >= 0.5
       ? 'tenuto'
       : style.bass.articulation ?? 'staccato';
     note.role = 'structural';

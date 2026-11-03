@@ -296,8 +296,10 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const previous = piece.chords[index - 1];
     if (!previous || previous.beat < bodyStart && chord.beat >= bodyStart) continue;
     // テンションで声部数が和音ごとに変わると固定インデックスは別声部を比べてしまう。
-    // 同数のときだけ声部対応が取れているとみなして測る。
+    // 同数のときだけ声部対応が取れているとみなして測る。パワーコード(開放五度)との対は
+    // 配置の種類が違うので測らない。
     if (chord.midis.length !== previous.midis.length) continue;
+    if (chord.voicing === 'power' || previous.voicing === 'power') continue;
     for (const voice of [1, 2]) {
       if (chord.midis[voice] === undefined || previous.midis[voice] === undefined) continue;
       if (Math.abs(chord.midis[voice]! - previous.midis[voice]!) > 7) {
@@ -323,7 +325,10 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   if (loopChords.length > 1) {
     const firstChord = loopChords[0]!;
     const lastChord = loopChords.at(-1)!;
-    if (piece.ending === 'loop' && firstChord.midis.length === lastChord.midis.length) {
+    if (
+      piece.ending === 'loop' && firstChord.midis.length === lastChord.midis.length
+      && firstChord.voicing !== 'power' && lastChord.voicing !== 'power'
+    ) {
       for (const voice of [1, 2]) {
         if (firstChord.midis[voice] === undefined || lastChord.midis[voice] === undefined) continue;
         if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > 7) {
@@ -506,7 +511,12 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       );
       return source ? `${source.index}:${section.index}` : '';
     }));
+  const texturedSection = (index: number): boolean => (
+    (piece.songPlan.form.sections[index]?.texture ?? 'normal') !== 'normal'
+  );
   const excessiveMelodicCopies = melodicSectionSimilarities(piece).filter((comparison) => {
+    // 旋律を持たない区間同士は空の指紋が一致するだけなので比べない。
+    if (texturedSection(comparison.firstSection) || texturedSection(comparison.secondSection)) return false;
     const scores = literalReturnPairs.has(`${comparison.firstSection}:${comparison.secondSection}`)
       ? comparison.phraseScores.slice(1)
       : comparison.phraseScores;
@@ -543,7 +553,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   );
   if (piece.bars >= 8) {
     for (const section of piece.songPlan.form.sections) {
-      if (section.bars < 8) continue;
+      if (section.bars < 8 || section.texture !== 'normal') continue;
       // 提示が外部借用(リテラル帰還等でリズム族が異なる)区間は、区間内の反復類似を要求しない。
       if (section.externalMotifPhrases.includes(0)) continue;
       // デバイスが答句だけを変えた場合は問い小節1小節で比較する(2小節要求のままだと
@@ -563,6 +573,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
     for (const section of piece.songPlan.form.sections) {
       if (section.motifTransform !== 'literal' || section.motifSourceSection === null) continue;
+      if (section.texture !== 'normal') continue;
       const source = piece.songPlan.form.sections.find(
         (candidate) => candidate.id === section.motifSourceSection,
       );
@@ -706,6 +717,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const barStart = bodyStart + barPlan.bar * 4;
     const grid = gridAt(piece, barStart);
     const feel = grooveAt(piece, barStart);
+    // テクスチャ区間(ロングトーン・パワーコード)は頭打ちもアンカーも要求しない。
+    const textured = texturedSection(sectionIndexAt(piece.songPlan.form, barPlan.bar));
     const expectedSteps = barPlan.rhythm
       .map((on, step) => on ? step : -1)
       .filter((step) => step >= 0);
@@ -720,7 +733,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (expectedSteps.join(',') !== actualSteps.join(',')) {
       add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目がPhrasePlanのリズムと不一致`);
     }
-    if (!actualSteps.includes(0)) {
+    if (!textured && !actualSteps.includes(0)) {
       // 意図した休符始まり、または前小節のロングトーンが頭拍を覆う小節は頭打ちを要求しない。
       const barStartBeat = bodyStart + barPlan.bar * 4;
       const coveredBySustain = barPlan.sustainedEntry && piece.melody.some((note) => (
@@ -730,7 +743,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         add('rhythm', 'error', barStartBeat, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
       }
     }
-    if (!actualSteps.includes(grid.anchorStep)) {
+    if (!textured && !actualSteps.includes(grid.anchorStep)) {
       // 半小節タイ(anchorTie)の小節は、直前の発音がアンカー(4x2 の 3 拍目)を跨いで保続していれば頭打ち不要。
       // ただし保続音は先取音の定義どおり、跨いだ先(アンカー時点)の和音の構成音であること。
       const anchorBeat = barStart + stepBeat(grid, grid.anchorStep);

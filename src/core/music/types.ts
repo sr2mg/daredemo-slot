@@ -397,6 +397,8 @@ export interface ChordEvent {
   midis: number[];
   /** テンション方針で声部へ足したカラートーン(絶対pc)。機能はpcsのまま。 */
   colorPcs?: number[];
+  /** power=開放五度(根音・5度・根音)。pulse テクスチャの区間。省略=密集配置。 */
+  voicing?: 'power';
   /**
    * 分数コードのベース音(絶対pc)。省略=ルートポジション=ベース声部がrootを弾く
    * (伴奏ボイシングmidisは従来どおり転回を許す密集配置で、このフィールドと無関係)。
@@ -466,6 +468,8 @@ export interface PhraseBarPlan {
   appoggiaturaStep: number | null;
   /** セクション別テッシトゥーラ変位（半音）。旋律の目標高さへ加算する。 */
   registerOffset: number;
+  /** sustain テクスチャの区間頭: step 0 の音をこの本編拍まで保続する(他は null)。 */
+  holdUntilBeat: number | null;
 }
 
 export interface PhrasePlan {
@@ -488,6 +492,11 @@ export type RhythmFamilies = ReadonlyArray<readonly [readonly boolean[], readonl
 
 export interface ArrangementSectionPlan {
   backingDensity: 'sparse' | 'full';
+  /**
+   * 伴奏の刻み方。normal=様式どおり(パッド/裏打ち)。sustain=同じボイシングが続く間は再打鍵しない。
+   * stab=格子の各ステップで短く刻む(パワーコードの連打)。区間テクスチャから導く。
+   */
+  backingRhythm: 'normal' | 'sustain' | 'stab';
   echo: boolean;
   drum: 'base' | 'sectionB' | 'breakdown';
   /** セクション頭の合図。エネルギー上昇時も毎回同じシンバルにはしない。 */
@@ -591,7 +600,15 @@ export interface SectionSpec {
   grouping?: BarGrouping;
   /** 省略=曲の bpm。区間頭でテンポを切り替える(tempo.ts の写像の点になる)。 */
   tempo?: number;
+  /**
+   * 省略=normal。sustain=区間頭の 1 音を区間末尾まで保続し、伴奏は再打鍵せず、ベースは持続、
+   * ドラム無し。pulse=旋律を休ませ、パワーコード(開放五度)を格子の各ステップで刻む。
+   * 先頭区間と、主題・引用の元になる区間は normal であること(validateForm)。
+   */
+  texture?: SectionTexture;
 }
+
+export type SectionTexture = 'normal' | 'sustain' | 'pulse';
 
 export interface SongFormSpec {
   sections: readonly SectionSpec[];
@@ -660,6 +677,8 @@ export interface SongSectionPlan {
   progressionBars: number;
   /** 区間の拍格子(SectionSpec.grouping の実効値)。小節→格子は compose-context が引く。 */
   grouping: BarGrouping;
+  /** 区間のテクスチャ(SectionSpec.texture の実効値)。 */
+  texture: SectionTexture;
   /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
   rhythmVariant: RhythmVariant;
   /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */
