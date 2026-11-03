@@ -101,9 +101,13 @@ describe('作曲エンジンの一括ファズ監査', () => {
     // 頂点未満に限り、9半音超なら直前から6半音以内の和声音で受ける)、和声の過剰固定の検査を
     // 区間列へ一般化(隣接区間の完全コピーを追加、不在区間の前後半一致は設計なので除外)。
     // 計測 melody 38 / harmony 10 / counterpoint 3。
+    // 同日: 進行 aeolian-ladder(短調8スロット)・mixture-rise(長調4スロット、短調実体あり)を追加し
+    // コーパス 228→264 曲。計測 melody 44 / harmony 16 / counterpoint 3。harmony の増分 6 は全て
+    // aeolian-ladder × premiseArc(seed 5/8/11)の「隣接区間が同じ進行」で、8スロット進行の不在区間の
+    // トニック回避(absenceChoiceIndex)が隣の区間の列と一致する canon と同じ機構(canon 8 件)。
     // 予算は計測値+25%。恒常的に超えたら「生成と診断の乖離が広がった」ので原因を調べる
     // （予算を黙って上げない。下げられるときは下げる）。
-    const budget: Record<string, number> = { melody: 48, harmony: 13, counterpoint: 4 };
+    const budget: Record<string, number> = { melody: 55, harmony: 20, counterpoint: 4 };
     for (const [category, count] of warningCounts) {
       expect(count, `${category} 警告が予算超過`).toBeLessThanOrEqual(budget[category] ?? 0);
     }

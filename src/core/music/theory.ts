@@ -25,7 +25,10 @@ import type {
  */
 export type ChordQuality =
   | '' | 'm' | 'dim' | '7' | 'm7' | 'M7' | '6' | 'sus4' | 'add9' | 'sus2'
-  | 'm7add11' | '69' | 'M13' | '9sus4';
+  | 'm7add11' | '69' | 'M13' | '9sus4' | 'm7b5';
+
+/** 表示だけ品質文字列と違う綴り(品質は導出キーなので記号を含めない)。 */
+const QUALITY_LABELS: Partial<Record<ChordQuality, string>> = { m7b5: 'm7♭5' };
 
 /**
  * 品質 → ルートからの相対音程（半音）。tones は root とこの表から導出する。
@@ -55,6 +58,8 @@ const QUALITY_INTERVALS: Record<ChordQuality, readonly number[]> = {
   M13: [0, 4, 11, 2, 9],
   /** 掛留4度の属9(3度なし)。分数表記「IVの三和音/IIの低音」と同じ音集合で、第5音込みの綴り。 */
   '9sus4': [0, 5, 7, 10, 2],
+  /** 半減七(ハーフディミニッシュ)。短調の iiø7、長調では vii ø7。 */
+  m7b5: [0, 3, 6, 10],
 };
 
 /**
@@ -122,6 +127,13 @@ export const CHORDS: Record<string, ChordDef> = {
   VImaj7: chord(8, 'M7', 'predominant'),
   VII: chord(10, '', 'dominant'),
   VIIm7: chord(10, 'm7', 'predominant'),
+  /**
+   * 和声的短音階の導音上の減三和音(vii°)。V7(♭9)の根音省略形で、短調の i へ半音で引っ張る
+   * 属機能。カタログで初めて「根音が音階外」になる和音(chordScalePcs が下主音を導音へ置換する)。
+   */
+  viiDim: chord(11, 'dim', 'dominant'),
+  /** 短調の iiø7(自然短音階のダイアトニック)。ii–V の短調版で、下属機能。 */
+  iim7b5: chord(2, 'm7b5', 'predominant'),
   // --- カラーコード（M7/6th/add9/sus4）と借用和音。7thチェーン・順次ベース様式の語彙。 ---
   // 借用元は列挙せず chordOriginsFor() が旋法照合で導出する。既存進行カタログは
   // まだ使わないため追加しても音は変わらない（進行への供給はステップ3の生成器から）。
@@ -536,6 +548,65 @@ export const PROGRESSIONS: ProgressionDef[] = [
       [2, 3, 3, 3], // vi7add11 → IVM13 → V69 → II9sus4（全スロット5音の開離配置）
     ],
   },
+  {
+    id: 'aeolian-ladder',
+    name: 'エオリアン階段',
+    feel: '短調の8小節ループ・半音の導音で戻る',
+    tonality: 'minor',
+    // i i iv iv VI VI VII vii° の8小節。自然短音階のダイアトニックを2小節ずつ上り、
+    // 末尾だけ和声的短音階の導音(vii°=V7♭9の根音省略)で i へ半音で引っ張る。
+    // VII(♮7)と vii°(導音)を同じ曲で併用するのがエオリアン＋和声的短音階の混用。
+    slots: [
+      [['i']],
+      [['i']],
+      [['iv']],
+      [['iv']],
+      [['VI']],
+      [['VI'], ['VI', 'VII']],
+      [['VII'], ['iim7b5']],
+      [['viiDim'], ['V7m'], ['VII', 'viiDim']],
+    ],
+    defaultChoice: [0, 0, 0, 0, 0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 0, 0, 0, 0, 1], // 末尾を V7 へ（ループ頭へ強く引く）
+      [0, 0, 0, 0, 0, 1, 0, 0], // VI・VII で和声リズムを押す
+      [0, 0, 0, 0, 0, 0, 1, 0], // iiø7 → vii°（短調の ii–V 相当）
+      [0, 0, 0, 0, 0, 1, 0, 2], // VI・VII → VII・vii°（終端で半音の梯子）
+    ],
+  },
+  {
+    id: 'mixture-rise',
+    name: '借用の上行',
+    feel: '♭VI→♭VII→I の全音上行・壮大',
+    tonality: 'major',
+    // 同主短調から借りた ♭VI・♭VII を全音で上って I へ着く(ゲーム音楽の決め台詞)。
+    // 前半は同じ借用元の iv(iv→♭VII→I のバックドア進行)にも置き換えられる。
+    // 末尾は V / IV・V で次の頭へ、または I で止める。
+    realizations: {
+      minor: {
+        slots: [
+          [['VI'], ['iv']],
+          [['VII'], ['iv', 'VII']],
+          [['i'], ['i', 'VI']],
+          [['V7m'], ['iv', 'V7m'], ['i']],
+        ],
+      },
+    },
+    slots: [
+      [['VI'], ['iv']],
+      [['VII'], ['iv', 'VII']],
+      [['I'], ['I', 'vi']],
+      [['V'], ['IV', 'V'], ['I']],
+    ],
+    defaultChoice: [0, 0, 0, 0],
+    variations: [
+      [0, 0, 0, 1], // ♭VI → ♭VII → I → IV・V（押して戻る）
+      [0, 0, 1, 1], // ♭VI → ♭VII → I・vi → IV・V（陰らせてから押す）
+      [0, 0, 0, 2], // ♭VI → ♭VII → I → I（単発の決め）
+      [1, 0, 0, 0], // iv → ♭VII → I → V（バックドア）
+      [1, 1, 1, 0], // iv → iv・♭VII → I・vi → V（和声リズムを詰める）
+    ],
+  },
 ];
 
 const progressionRealizationCache = new WeakMap<
@@ -603,9 +674,11 @@ export function chordScalePcs(
   for (const tone of chordPcs) {
     if (result.has(tone)) continue;
     const family = memberFamily(intervalFromRoot(tone));
-    const candidates = [(tone + 1) % 12, (tone + 11) % 12]
+    // 変位音が根音そのもの(vii° の導音など)は度数ファミリーで相手を探せないので、
+    // 下隣の音階音(下主音)を導音が置き換える、と読む(和声的短音階の導出と同じ向き)。
+    const candidates = (family === 0 ? [(tone + 11) % 12, (tone + 1) % 12] : [(tone + 1) % 12, (tone + 11) % 12])
       .filter((pc) => scalePcs.includes(pc) && !chordPcs.includes(pc));
-    const displaced = candidates.find((pc) => memberFamily(intervalFromRoot(pc)) === family)
+    const displaced = candidates.find((pc) => family !== 0 && memberFamily(intervalFromRoot(pc)) === family)
       ?? candidates[0];
     if (displaced !== undefined) result.delete(displaced);
     result.add(tone);
@@ -1116,7 +1189,7 @@ export const COUNTER_HI = 76;
 export function chordName(token: string, keyRoot: number): string {
   const def = CHORDS[token];
   if (!def) return token;
-  return NOTE_NAMES[(def.root + keyRoot) % 12]! + def.quality;
+  return NOTE_NAMES[(def.root + keyRoot) % 12]! + (QUALITY_LABELS[def.quality] ?? def.quality);
 }
 
 /** MIDI ノート番号 → 表示名（例: 76 → 'E5'） */

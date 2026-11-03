@@ -8,6 +8,8 @@
  */
 
 import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { gridAtBeat } from '../core/music/form.js';
+import { effectiveGroove, pulseBeats, stepBeat } from '../core/music/grid.js';
 import { grooveBeat } from '../core/music/groove.js';
 import type { ChordEvent, Piece } from '../core/music/types.js';
 
@@ -32,10 +34,29 @@ export function offbeatBackingRiff(
   thinFrom: 'chordStart' | 'onset',
 ): BackingRiffStep[] {
   const steps: BackingRiffStep[] = [];
-  const chordThin = chord.beat < piece.loopStartBeat
-    || arrangementSectionFor(piece, chord.beat).backingDensity === 'sparse';
-  for (let beat = 0; beat + 0.5 < chord.dur - 0.001; beat++) {
-    const groovedBeat = grooveBeat(chord.beat + beat + 0.5, piece.grooveFeel);
+  const section = arrangementSectionFor(piece, chord.beat);
+  const chordThin = chord.beat < piece.loopStartBeat || section.backingDensity === 'sparse';
+  // テクスチャ区間: sustain は和音頭の 1 打だけ、stab は格子の各ステップで下声部を刻む。
+  if (chord.beat >= piece.loopStartBeat && section.backingRhythm !== 'normal') {
+    const textureGrid = gridAtBeat(piece.songPlan.form, piece.loopStartBeat, chord.beat);
+    if (section.backingRhythm === 'sustain') return [{ beat: chord.beat, slot: 'lower', thin: false }];
+    const count = Math.round(chord.dur / textureGrid.stepBeats);
+    for (let step = 0; step < count; step++) {
+      steps.push({ beat: chord.beat + step * textureGrid.stepBeats, slot: 'lower', thin: false });
+    }
+    return steps;
+  }
+  // 裏打ちは各拍頭(格子のもの)から「拍の半分以上の最初のステップ」後(4x2 では 8 分裏、
+  // ×3 の格子では 3 連の 3 つ目=2/3)。コードは小節を跨がない。
+  const grid = gridAtBeat(piece.songPlan.form, piece.loopStartBeat, chord.beat);
+  const feel = effectiveGroove(piece.grooveFeel, grid.grouping);
+  const barStart = Math.floor(chord.beat / 4) * 4;
+  const chordOffset = chord.beat - barStart;
+  const offbeat = stepBeat(grid, Math.ceil(grid.subdivision / 2));
+  const pulses = pulseBeats(grid)
+    .filter((pulse) => pulse >= chordOffset - 1e-6 && pulse + offbeat < chordOffset + chord.dur - 0.001);
+  for (let beat = 0; beat < pulses.length; beat++) {
+    const groovedBeat = grooveBeat(barStart + pulses[beat]! + offbeat, feel);
     const thin = thinFrom === 'chordStart'
       ? chordThin
       : groovedBeat < piece.loopStartBeat

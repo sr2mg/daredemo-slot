@@ -16,6 +16,7 @@
  *   サイズより、テスト・外部ツールでのバイト列検査のしやすさを取る
  */
 import type { Piece } from '../core/music/types.js';
+import { secondsToBeat, tempoMapOf } from '../core/music/tempo.js';
 import { arrangeSf2Parts } from './pcm-arrange.js';
 import type { PcmPart, PcmVoiceOverride } from './pcm-arrange.js';
 import { ROLE_STAGE } from './stage.js';
@@ -73,7 +74,7 @@ function trackChunk(events: MidiEvent[]): number[] {
 const meta = (type: number, data: readonly number[]): number[] => [0xff, type, ...vlq(data.length), ...data];
 const ascii = (text: string): number[] => [...text].map((ch) => ch.charCodeAt(0) & 0x7f);
 
-function partTrack(part: PcmPart, notes: readonly Sf2Note[], spb: number): number[] {
+function partTrack(part: PcmPart, notes: readonly Sf2Note[], toBeat: (sec: number) => number): number[] {
   const channel = PART_CHANNELS[part];
   const events: MidiEvent[] = [
     { tick: 0, order: 1, bytes: meta(0x03, ascii(part)) },
@@ -85,8 +86,10 @@ function partTrack(part: PcmPart, notes: readonly Sf2Note[], spb: number): numbe
   let lastProgram = -1;
   const sorted = [...notes].sort((a, b) => a.startSec - b.startSec);
   for (const note of sorted) {
-    const tick = Math.round((note.startSec / spb) * PPQ);
-    const durTicks = Math.max(1, Math.round((note.durSec / spb) * PPQ));
+    // 秒→拍は写像の逆で(減速区間では秒あたりの拍が減る)。
+    const startBeat = toBeat(note.startSec);
+    const tick = Math.round(startBeat * PPQ);
+    const durTicks = Math.max(1, Math.round((toBeat(note.startSec + note.durSec) - startBeat) * PPQ));
     if (note.program !== lastProgram || note.bank !== lastBank) {
       // ドラム(bank128)はチャンネル自体が語彙なのでバンクセレクトを送らない。
       if (note.bank !== lastBank && note.bank < 128) {
@@ -106,27 +109,33 @@ function partTrack(part: PcmPart, notes: readonly Sf2Note[], spb: number): numbe
 
 /** PieceをSMF(format 1)のバイト列へ変換する。overridesは試聴と同じPCM音色上書き。 */
 export function pieceToSmf(piece: Piece, overrides: PcmVoiceOverride = {}): Uint8Array {
-  const spb = 60 / piece.bpm;
+  const tempo = tempoMapOf(piece);
+  const toBeat = (sec: number): number => secondsToBeat(tempo, sec);
   const parts = arrangeSf2Parts(piece, overrides);
-  const microsecondsPerQuarter = Math.round(60_000_000 / piece.bpm);
-  const conductor = trackChunk([
-    { tick: 0, order: 1, bytes: meta(0x03, ascii('daredemo-slot bgm')) },
-    {
-      tick: 0,
+  // テンポ写像の各点をテンポイベント(0x51)に。一定テンポなら先頭の 1 つだけ(従来と同じバイト列)。
+  const tempoEvent = (point: { beat: number; bpm: number }): MidiEvent => {
+    const microsecondsPerQuarter = Math.round(60_000_000 / point.bpm);
+    return {
+      tick: Math.round(point.beat * PPQ),
       order: 1,
       bytes: meta(0x51, [
         (microsecondsPerQuarter >>> 16) & 0xff,
         (microsecondsPerQuarter >>> 8) & 0xff,
         microsecondsPerQuarter & 0xff,
       ]),
-    },
+    };
+  };
+  const conductor = trackChunk([
+    { tick: 0, order: 1, bytes: meta(0x03, ascii('daredemo-slot bgm')) },
+    ...tempo.map(tempoEvent),
+    // 拍子は 4/4 のまま(12/8・6/4 の区間も小節長 4 拍で書く。拍子記号の切り替えは未対応)。
     { tick: 0, order: 1, bytes: meta(0x58, [4, 2, 24, 8]) }, // 4/4
     { tick: Math.round(piece.loopStartBeat * PPQ), order: 1, bytes: meta(0x06, ascii('loopStart')) },
     { tick: Math.round(piece.beats * PPQ), order: 1, bytes: meta(0x06, ascii('loopEnd')) },
   ]);
   const partTracks = (Object.entries(parts) as [PcmPart, Sf2Note[]][])
     .filter(([, notes]) => notes.length > 0)
-    .map(([part, notes]) => partTrack(part, notes, spb));
+    .map(([part, notes]) => partTrack(part, notes, toBeat));
   const trackCount = 1 + partTracks.length;
   const header = [
     0x4d, 0x54, 0x68, 0x64, // 'MThd'

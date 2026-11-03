@@ -4,6 +4,8 @@ import type {
 import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { gridAtBeat } from '../core/music/form.js';
+import { nearBeat, pulseBeats, strongBeatOffsets } from '../core/music/grid.js';
 import {
   freqToFnum, initRhythmMode, RHYTHM_DEFAULT_LEVELS, RHYTHM_LEVEL_SLOT, rhythmLevelRegs, SeqBuilder,
 } from './opll-core.js';
@@ -14,6 +16,7 @@ import type { StageRole } from './stage.js';
 import { timbreFor } from './style-timbre.js';
 import type { StyleVoices } from './style-timbre.js';
 import { noteStageEchoFor } from './time-layer.js';
+import { beatToSeconds, bpmAt, tempoMapOf } from '../core/music/tempo.js';
 
 /**
  * OPLLの旋律パート語彙 = ミックスの役割語彙(stage.ts)からドラム(リズムモード担当)を
@@ -273,9 +276,10 @@ export function arrangePiece(
   userPatchId: OpllUserPatchId = 'brightLead',
 ): ArrangedBgm {
   const voices = { ...timbreFor(styleId).opll, ...pickVoices(override) };
-  const spb = 60 / piece.bpm;
-  const duration = piece.beats * spb;
-  const loopStart = piece.loopStartBeat * spb;
+  const tempo = tempoMapOf(piece);
+  const toSec = (beat: number): number => beatToSeconds(tempo, beat);
+  const duration = toSec(piece.beats);
+  const loopStart = toSec(piece.loopStartBeat);
   const b = new SeqBuilder();
   const selectedPatch = OPLL_USER_PATCHES.find((patch) => patch.id === userPatchId) ?? OPLL_USER_PATCHES[0]!;
   selectedPatch.regs.forEach((value, reg) => b.raw(reg, value, 0));
@@ -288,14 +292,18 @@ export function arrangePiece(
     leadPalette[(arrangementSectionFor(piece, beat).leadColor ?? 0) % leadPalette.length]!;
 
   const candidates: Candidate[] = [];
+  const gridAt = (beat: number) => gridAtBeat(piece.songPlan.form, piece.loopStartBeat, beat);
+  const isStrong = (beat: number): boolean => (
+    strongBeatOffsets(gridAt(beat)).some((offset) => nearBeat(((beat % 4) + 4) % 4, offset))
+  );
   for (const note of piece.melody) {
-    const strong = note.beat % 4 === 0 || note.beat % 4 === 2;
+    const strong = isStrong(note.beat);
     candidates.push(noteCandidate('lead', note, leadVoiceAt(note.beat), strong ? 2 : 4));
     const section = arrangementSectionFor(piece, note.beat);
     if (note.beat >= piece.loopStartBeat && section.echo && note.role !== 'ornament') {
       // 遅延則は二重時間軸のMIDI段(time-layer.ts)と同じ関数を参照する。タップ数と
       // 減衰だけは声部予算の都合でOPLL固有(1タップの音量+3ダブリング)。
-      const delay = noteStageEchoFor(piece.grooveFeel).delayBeats;
+      const delay = noteStageEchoFor(piece.grooveFeel, gridAt(note.beat)).delayBeats;
       let beat = note.beat + delay;
       if (beat >= piece.beats) beat = piece.loopStartBeat + beat - piece.beats;
       const dur = Math.min(note.dur, piece.beats - beat);
@@ -325,7 +333,7 @@ export function arrangePiece(
     const kicks = piece.drums.filter((drum) => drum.inst === 'kick').sort((a, b) => a.beat - b.beat);
     kicks.forEach((kick, index) => {
       const next = kicks[index + 1]?.beat ?? piece.beats;
-      const dur = Math.min(SUB_KICK_BODY_SEC / spb, next - kick.beat - LEGATO_GAP_BEATS);
+      const dur = Math.min(SUB_KICK_BODY_SEC * bpmAt(tempo, kick.beat) / 60, next - kick.beat - LEGATO_GAP_BEATS);
       if (dur < 0.05) return;
       const midi = kickMidiAt(piece, kick.beat);
       candidates.push({
@@ -352,9 +360,42 @@ export function arrangePiece(
     const colorVoice = chord.midis.find((midi) => (chord.colorPcs ?? []).includes(midi % 12));
     const lowerVoice = chordToneMidis[1] ?? chordToneMidis[0] ?? chord.midis[1] ?? chord.midis[0]!;
     const upperVoice = colorVoice ?? chordToneMidis[2] ?? lowerVoice;
-    const thin = chord.beat < piece.loopStartBeat
-      || arrangementSectionFor(piece, chord.beat).backingDensity === 'sparse';
-    if (voices.backingPattern === 'offbeat') {
+    const backingSection = arrangementSectionFor(piece, chord.beat);
+    const thin = chord.beat < piece.loopStartBeat || backingSection.backingDensity === 'sparse';
+    const texturedBacking = chord.beat >= piece.loopStartBeat && backingSection.backingRhythm !== 'normal';
+    if (texturedBacking) {
+      // sustain: 同じ下声部が続く間は再打鍵せず前の音を延ばす。stab: 格子の各ステップで短く刻む。
+      const riff = offbeatBackingRiff(piece, chord, 'chordStart');
+      const stepDur = backingSection.backingRhythm === 'stab'
+        ? gridAt(chord.beat).stepBeats * 0.6
+        : chord.dur * 0.98;
+      for (const step of riff) {
+        let previous: Candidate | undefined;
+        if (backingSection.backingRhythm === 'sustain') {
+          for (let index = candidates.length - 1; index >= 0; index--) {
+            if (candidates[index]!.part === 'backing') {
+              previous = candidates[index];
+              break;
+            }
+          }
+        }
+        if (previous && previous.midi === lowerVoice && Math.abs(previous.beat + previous.dur / 0.98 - step.beat) < 0.05) {
+          previous.dur = (step.beat + chord.dur - previous.beat) * 0.98;
+          continue;
+        }
+        candidates.push({
+          part: 'backing',
+          beat: step.beat,
+          dur: stepDur,
+          midi: lowerVoice,
+          voice: voices.backing,
+          volume: 7,
+          vibrato: false,
+          shake: false,
+          priority: PART_PRIORITY.backing,
+        });
+      }
+    } else if (voices.backingPattern === 'offbeat') {
       for (const step of offbeatBackingRiff(piece, chord, 'chordStart')) {
         candidates.push({
           part: 'backing',
@@ -369,15 +410,25 @@ export function arrangePiece(
         });
       }
     } else {
-      for (let beat = 0; beat < chord.dur; beat += 2) {
-        if (thin && beat > 0) continue;
+      // パッドは和音内の拍頭を 1 つおき(4x2 では 2 拍ごと)に再打鍵する。拍頭は小節の格子のもの。
+      const padGrid = gridAt(chord.beat);
+      const padBarStart = Math.floor(chord.beat / 4) * 4;
+      const chordOffset = chord.beat - padBarStart;
+      const chordEnd = chordOffset + chord.dur;
+      const padPulses = pulseBeats(padGrid)
+        .filter((pulse) => pulse >= chordOffset - 1e-6 && pulse < chordEnd - 1e-6)
+        .filter((_, index) => index % 2 === 0);
+      for (const [index, pulse] of padPulses.entries()) {
+        const beat = pulse - chordOffset;
+        if (thin && index > 0) continue;
+        const span = (padPulses[index + 1] ?? chordEnd) - pulse;
         candidates.push({
           part: 'backing',
           beat: chord.beat + beat,
           // パッドは頭でコードトーンを確立し、後半だけカラートーンへ差し替える
           // （掛留の作法。カラー無しの曲では従来と同一の音）。
-          midi: beat > 0 && colorVoice !== undefined ? colorVoice : lowerVoice,
-          dur: Math.min(2, chord.dur - beat) * 0.75,
+          midi: index > 0 && colorVoice !== undefined ? colorVoice : lowerVoice,
+          dur: span * 0.75,
           voice: voices.backing,
           volume: thin ? 9 : 7,
           vibrato: false,
@@ -392,8 +443,8 @@ export function arrangePiece(
   allocation.notes.sort((a, b) => a.beat - b.beat || b.priority - a.priority);
   for (const note of allocation.notes) {
     if (note.endBeat - note.beat < 0.02) continue;
-    const start = note.beat * spb;
-    const end = note.endBeat * spb;
+    const start = toSec(note.beat);
+    const end = toSec(note.endBeat);
     const freq = midiFreq(note.midi);
     // ポルタメント近似: 前音の音高でキーオンし、共有規則(glide.ts)の時間で
     // 10ms刻みのピッチイベントで目標へ等比スライドする。
@@ -434,7 +485,7 @@ export function arrangePiece(
   }
   const hits = new Map<number, { bits: number; levels: Partial<Record<DrumEvent['inst'], number>>; kickMidi?: number }>();
   for (const drum of piece.drums) {
-    const at = drum.beat * spb;
+    const at = toSec(drum.beat);
     const hit = hits.get(at) ?? { bits: 0, levels: {} };
     hit.bits |= DRUM_BITS[drum.inst];
     if (mix) {

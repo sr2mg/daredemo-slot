@@ -36,6 +36,7 @@ const section = (
   device: SectionDevice = 'none',
 ): ArrangementSectionPlan => ({
   backingDensity,
+  backingRhythm: 'normal',
   drum,
   entrance: 'none',
   exitFill: 'none',
@@ -218,7 +219,31 @@ export function arrangementPlanFor(
 ): ArrangementPlan {
   const texture = songPlan ? styleForId(songPlan.styleId)?.texture : undefined;
   const plan = planArrangement(form, seed, progressionId, songPlan, texture, tupletOverlay !== 'off');
-  return tupletOverlay === 'off' ? plan : withTupletLayer(plan, tupletOverlay, seed, songPlan);
+  return withSectionTextures(tupletOverlay === 'off' ? plan : withTupletLayer(plan, tupletOverlay, seed, songPlan), form);
+}
+
+/**
+ * 区間テクスチャ(SectionSpec.texture)を編成へ写す。旋律を持たない区間は副旋律・分散和音・連符・
+ * エコーを持たず、sustain は伴奏を再打鍵せずドラムを落とし、pulse は厚い伴奏を格子で刻む。
+ */
+function withSectionTextures(plan: ArrangementPlan, form: SongFormSpec): ArrangementPlan {
+  if (!form.sections.some((spec) => spec.texture !== undefined && spec.texture !== 'normal')) return plan;
+  const sections = plan.sections.map((section, index) => {
+    const texture = form.sections[index]?.texture ?? 'normal';
+    if (texture === 'normal') return section;
+    return {
+      ...section,
+      backingRhythm: texture === 'sustain' ? 'sustain' as const : 'stab' as const,
+      backingDensity: 'full' as const,
+      drum: texture === 'sustain' ? 'breakdown' as const : section.drum,
+      echo: false,
+      counterDensity: 0 as const,
+      ostinatoDensity: 0 as const,
+      ostinatoPeak: null,
+      ostinatoTuplet: null,
+    };
+  });
+  return { ...plan, sections };
 }
 
 function planArrangement(

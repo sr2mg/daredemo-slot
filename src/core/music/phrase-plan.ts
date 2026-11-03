@@ -13,11 +13,16 @@ import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import { appoggiaturaRatePercent } from './melodic-theme.js';
 import { barInSection, sectionIndexAt, totalBars } from './form.js';
+import {
+  DEFAULT_GROUPING, densityFor, gridFor, lastPulseStep, offPulseSteps, onsetWeightsFor, stepBeat,
+} from './grid.js';
+import type { GridDef } from './grid.js';
 import { nearestWithPc } from './pitch.js';
 import type { StyleDef } from './theory.js';
 import type { MelodicIdiom } from './melodic-idiom.js';
 import type {
   ArrangementPlan,
+  BarGrouping,
   CadenceType,
   ChordEvent,
   ComposeInput,
@@ -26,23 +31,30 @@ import type {
   OrnamentType,
   PhraseBarPlan,
   PhrasePlan,
+  RhythmFamilies,
   SongFormSpec,
   SongPlan,
 } from './types.js';
 
 export type PhraseMove = MotifMove;
 
-/** スタイル固有の拍節アクセントから、8分グリッドのモチーフを作る。 */
-function makeMotifRhythm(style: StyleDef, rng: Rng, contrastFrom?: readonly boolean[]): boolean[] {
-  const optional = [1, 2, 3, 5, 6, 7];
+/** 必須打点(小節頭とアンカー)以外のステップ。4x2 では [1,2,3,5,6,7]。 */
+const optionalStepsOf = (grid: GridDef): number[] => (
+  Array.from({ length: grid.steps }, (_, step) => step).filter((step) => step !== 0 && step !== grid.anchorStep)
+);
+
+/** スタイル固有の拍節アクセント(8分格子の宣言を格子へ写したもの)から、格子上のモチーフを作る。 */
+function makeMotifRhythm(style: StyleDef, grid: GridDef, rng: Rng, contrastFrom?: readonly boolean[]): boolean[] {
+  const optional = optionalStepsOf(grid);
+  const weights = onsetWeightsFor(grid, style.melody.onsetWeights);
   const scored = optional.map((step) => {
     const roll = rng.nextInt(100);
-    return { step, score: style.melody.onsetWeights[step]! - roll, on: roll < style.melody.onsetWeights[step]! };
+    return { step, score: weights[step]! - roll, on: roll < weights[step]! };
   });
-  const rhythm = Array.from({ length: 8 }, (_, step) => step === 0 || step === 4);
+  const rhythm = Array.from({ length: grid.steps }, (_, step) => step === 0 || step === grid.anchorStep);
   for (const candidate of scored) rhythm[candidate.step] = candidate.on;
 
-  const [minNotes, maxNotes] = style.melody.density;
+  const [minNotes, maxNotes] = densityFor(grid, style.melody.density);
   while (rhythm.filter(Boolean).length > maxNotes) {
     const removable = scored.filter(({ step }) => rhythm[step]).sort((a, b) => a.score - b.score)[0]!;
     rhythm[removable.step] = false;
@@ -67,15 +79,16 @@ function makeMotifRhythm(style: StyleDef, rng: Rng, contrastFrom?: readonly bool
 /** 既出の同役割リズムすべてと異なる、同密度の変奏を作る。 */
 function makeDistinctMotifRhythm(
   style: StyleDef,
+  grid: GridDef,
   rng: Rng,
   previous: readonly (readonly boolean[])[],
 ): boolean[] {
-  const rhythm = makeMotifRhythm(style, rng, previous.at(-1));
+  const rhythm = makeMotifRhythm(style, grid, rng, previous.at(-1));
   const equalsAny = (candidate: readonly boolean[]): boolean => previous.some(
     (known) => candidate.every((on, step) => on === known[step]),
   );
   if (!equalsAny(rhythm)) return rhythm;
-  const optional = [1, 2, 3, 5, 6, 7];
+  const optional = optionalStepsOf(grid);
   for (const remove of optional.filter((step) => rhythm[step])) {
     for (const add of optional.filter((step) => !rhythm[step])) {
       const candidate = [...rhythm];
@@ -87,10 +100,31 @@ function makeDistinctMotifRhythm(
   return rhythm;
 }
 
+/** 1つの割り方の5族([問い, 答え]×5)。主系列 rng の消費順は族の順(A..E)で固定。 */
+function makeRhythmFamilies(style: StyleDef, grid: GridDef, rng: Rng): RhythmFamilies {
+  const promptA = makeMotifRhythm(style, grid, rng);
+  const answerA = makeMotifRhythm(style, grid, rng, promptA);
+  const promptB = makeDistinctMotifRhythm(style, grid, rng, [promptA]);
+  const answerB = makeDistinctMotifRhythm(style, grid, rng, [answerA]);
+  const promptC = makeDistinctMotifRhythm(style, grid, rng, [promptA, promptB]);
+  const answerC = makeDistinctMotifRhythm(style, grid, rng, [answerA, answerB]);
+  const promptD = makeDistinctMotifRhythm(style, grid, rng, [promptA, promptB, promptC]);
+  const answerD = makeDistinctMotifRhythm(style, grid, rng, [answerA, answerB, answerC]);
+  const promptE = makeDistinctMotifRhythm(style, grid, rng, [promptA, promptB, promptC, promptD]);
+  const answerE = makeDistinctMotifRhythm(style, grid, rng, [answerA, answerB, answerC, answerD]);
+  return [
+    [promptA, answerA],
+    [promptB, answerB],
+    [promptC, answerC],
+    [promptD, answerD],
+    [promptE, answerE],
+  ];
+}
 
 /**
  * 外部モチーフを検証済みのジェスチャー列へ正規化する。壊れた保存データでも
- * compose() を決定論のまま完走させるため、欠けたステップは fallback で補う。
+ * compose() を決定論のまま完走させるため、欠けたステップは fallback で補う
+ * (長さは fallback = 先頭区間の格子に従い、長い外部モチーフは切り詰める)。
  */
 export function sanitizeMotif(motif: MelodicMotif, fallback: readonly PhraseMove[]): PhraseMove[] {
   return fallback.map((base, index) => {
@@ -105,17 +139,22 @@ export function sanitizeMotif(motif: MelodicMotif, fallback: readonly PhraseMove
 }
 
 /**
- * 2 小節（8 分グリッド 16 ステップ）ぶんの旋律ジェスチャー。
+ * 2 小節（格子ステップ×2、4x2 では 8 分 16 ステップ）ぶんの旋律ジェスチャー。
  * 実音ではなく「上行/下行・順次/跳躍」を保存し、コードが変わっても同じ動き方を再利用する。
+ * 輪郭は 16 要素の宣言で、他の格子では位置比で伸ばす(抽選回数は 2×ステップ)。
  */
-export function makePhraseGesture(rng: Rng, style: StyleDef): PhraseMove[] {
+export function makePhraseGesture(rng: Rng, style: StyleDef, steps = 8): PhraseMove[] {
   const primary: 1 | -1 = rng.nextInt(2) === 0 ? 1 : -1;
   const contour = [1, 1, -1, 1, 1, -1, -1, -1, 1, -1, 1, 1, -1, -1, 1, -1] as const;
-  return contour.map((direction) => ({
-    direction: (direction * primary) as 1 | -1,
-    stepwise: rng.nextInt(100) < style.melody.stepwisePercent,
-    leap: 3 + rng.nextInt(3),
-  }));
+  const length = steps * 2;
+  return Array.from({ length }, (_, index) => {
+    const direction = contour[Math.floor((index * contour.length) / length)]!;
+    return {
+      direction: (direction * primary) as 1 | -1,
+      stepwise: rng.nextInt(100) < style.melody.stepwisePercent,
+      leap: 3 + rng.nextInt(3),
+    };
+  });
 }
 /**
  * 標準語法向けの控えめな装飾計画。16小節に0〜1個、終止付近の応答小節へ
@@ -165,23 +204,16 @@ export function makePhrasePlan(
 ): PhrasePlan {
   const bars = totalBars(form);
   const sections = songPlan.form.sections;
-  const promptA = makeMotifRhythm(style, rng);
-  const answerA = makeMotifRhythm(style, rng, promptA);
-  const promptB = makeDistinctMotifRhythm(style, rng, [promptA]);
-  const answerB = makeDistinctMotifRhythm(style, rng, [answerA]);
-  const promptC = makeDistinctMotifRhythm(style, rng, [promptA, promptB]);
-  const answerC = makeDistinctMotifRhythm(style, rng, [answerA, answerB]);
-  const promptD = makeDistinctMotifRhythm(style, rng, [promptA, promptB, promptC]);
-  const answerD = makeDistinctMotifRhythm(style, rng, [answerA, answerB, answerC]);
-  const promptE = makeDistinctMotifRhythm(style, rng, [promptA, promptB, promptC, promptD]);
-  const answerE = makeDistinctMotifRhythm(style, rng, [answerA, answerB, answerC, answerD]);
-  const rhythmFamilies = [
-    [promptA, answerA],
-    [promptB, answerB],
-    [promptC, answerC],
-    [promptD, answerD],
-    [promptE, answerE],
-  ] as const;
+  // リズム族は 4x2 の5族を従来どおり先に主系列 rng から引き、曲型に他の割り方があれば
+  // 出現順に続けて引く(4x2 だけの曲型では消費列が不変)。
+  const rhythmFamilies: Partial<Record<BarGrouping, RhythmFamilies>> = {
+    [DEFAULT_GROUPING]: makeRhythmFamilies(style, gridFor(DEFAULT_GROUPING), rng),
+  };
+  for (const section of sections) {
+    if (!rhythmFamilies[section.grouping]) {
+      rhythmFamilies[section.grouping] = makeRhythmFamilies(style, gridFor(section.grouping), rng);
+    }
+  }
   const ornaments = idiom.ornamentDensity === 'dense'
     ? ornamentPlanFor(bars, opts.seed)
     : sparseOrnamentPlanFor(bars, opts.seed);
@@ -220,7 +252,10 @@ export function makePhrasePlan(
   if (sectionCount > 1 && leapRng.nextInt(100) < 60) {
     const leapSection = sections.find((section) => section.role === 'relief') ?? sections[1]!;
     const candidateBar = leapSection.startBar + 4;
-    if (candidateBar !== climaxBar && candidateBar < bars) signatureLeapBar = candidateBar;
+    // 旋律を持たない区間(テクスチャ)には跳躍を置けない。
+    if (candidateBar !== climaxBar && candidateBar < bars && leapSection.texture === 'normal') {
+      signatureLeapBar = candidateBar;
+    }
   }
 
   let pendingSustainEntry = false;
@@ -234,6 +269,11 @@ export function makePhrasePlan(
     const sectionIndex = sectionIndexAt(form, bar);
     const sectionDesign = sections[sectionIndex]!;
     const section = sectionDesign.id;
+    const grouping = sectionDesign.grouping;
+    const grid = gridFor(grouping);
+    const { anchorStep, steps } = grid;
+    const lastPulse = lastPulseStep(grid);
+    const offPulse = offPulseSteps(grid);
     const offsetInSection = barInSection(form, bar);
     const harmonyBar = songPlan.harmony[bar]!;
     const phraseFunction = harmonyBar.phraseFunction;
@@ -249,26 +289,49 @@ export function makePhrasePlan(
       ? sourcePhrase * 2 + (offsetInSection % 2)
       : sourcePhrase);
     const isAnswer = offsetInSection % 2 === 1;
-    const rhythmFamily = rhythmFamilies[sectionDesign.phraseRhythmVariants[phraseIndex]]!;
+    const rhythmFamily = rhythmFamilies[grouping]![sectionDesign.phraseRhythmVariants[phraseIndex]]!;
     const sectionRhythm = rhythmFamily[isAnswer ? 1 : 0];
     const rhythm = [...sectionRhythm];
     const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sections[0]!;
     const sectionBoundary = sectionCount > 1
       && offsetInSection === sectionDesign.bars - 1
       && bar !== bars - 1;
+    const energy = harmonyBar.energy;
+    // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
+    const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
+    const dynamic = Math.min(1, dynamicFloor + energy * 0.07 + (sectionPlan.backingDensity === 'full' ? 0.04 : 0));
+
+    // テクスチャ区間: sustain は区間頭の 1 音を区間末尾まで保続、pulse は旋律を休ませる。
+    // 表現デバイス(終止・対旋律・装飾・間・タイ・倚音・弱起)は持たず、前小節からの持ち越しも切る。
+    if (sectionDesign.texture !== 'normal') {
+      const holds = sectionDesign.texture === 'sustain' && offsetInSection === 0;
+      pendingSustainEntry = false;
+      pendingAnacrusis = false;
+      barPlans.push({
+        bar, section, grouping, role: 'statement',
+        rhythm: Array.from({ length: steps }, (_, step) => holds && step === 0),
+        counterSteps: [], ornamentSteps: [], ornamentType: null, maSteps: [],
+        phraseFunction, motifSourceBar: bar, cadence: null, targetPc: null, targetStep: null,
+        energy, dynamic, restStart: false, sustainedEntry: false, longToneStep: null, anchorTie: false,
+        anacrusis: false, appoggiaturaStep: null, registerOffset: registerOffsets[sectionIndex] ?? 0,
+        holdUntilBeat: holds ? (sectionDesign.startBar + sectionDesign.bars) * 4 : null,
+      });
+      continue;
+    }
     const cadence = isAnswer ? harmonyBar.cadence : null;
 
     const counterSteps: number[] = [];
     let targetStep: number | null = null;
     if (isAnswer) {
       if (cadence === 'turnaround') {
-        for (let step = 5; step < 8; step++) rhythm[step] = false;
-        rhythm[4] = true;
-        targetStep = 4;
+        for (let step = anchorStep + 1; step < steps; step++) rhythm[step] = false;
+        rhythm[anchorStep] = true;
+        targetStep = anchorStep;
       } else if (sectionBoundary) {
-        rhythm[6] = true;
-        rhythm[7] = false;
-        targetStep = 6;
+        // 区間境界は最終拍頭で到達し、その後は空ける。
+        rhythm[lastPulse] = true;
+        for (let step = lastPulse + 1; step < steps; step++) rhythm[step] = false;
+        targetStep = lastPulse;
       } else if (
         arrangementPlan.counterRole === 'response'
         && sectionPlan.counterDensity > 0
@@ -277,17 +340,21 @@ export function makePhrasePlan(
         // 変奏反復(restatement)の答句はフックのリテラル反復を担うため空けない。
         && (sectionPlan.counterDensity === 2 || offsetInSection === (sectionDesign.bars === 4 ? 1 : 5))
       ) {
-        for (let step = 5; step < 8; step++) rhythm[step] = false;
-        rhythm[4] = true;
-        targetStep = 4;
-        const preferred = sectionPlan.counterDensity === 2 ? style.texture.counter?.denseSteps ?? [6] : [6];
+        for (let step = anchorStep + 1; step < steps; step++) rhythm[step] = false;
+        rhythm[anchorStep] = true;
+        targetStep = anchorStep;
+        // 様式の密な応答位置は 8 分格子の宣言なので位置比で写す。既定は最終拍頭。
+        const declared = sectionPlan.counterDensity === 2 ? style.texture.counter?.denseSteps : undefined;
+        const preferred = declared
+          ? declared.map((step) => Math.floor((step * steps) / 8))
+          : [lastPulse];
         counterSteps.push(...preferred);
       } else {
-        targetStep = rhythm.reduce((last, on, step) => on ? step : last, 4);
+        targetStep = rhythm.reduce((last, on, step) => on ? step : last, anchorStep);
       }
     }
 
-    const targetChord = targetStep === null ? null : chordAt(bar * 4 + targetStep * 0.5);
+    const targetChord = targetStep === null ? null : chordAt(bar * 4 + stepBeat(grid, targetStep));
     let targetPc: number | null = null;
     if (targetChord && cadence) {
       const rootPc = targetChord.pcs[0]!;
@@ -329,21 +396,23 @@ export function makePhrasePlan(
       // 区間内で同じ半分を空ける(区間安定パリティ)。提示と変奏反復が別の半分を
       // 削られるとフックのリテラル反復が壊れるため、小節単位のパリティは使わない。
       const responseStart = plannedOrnament
-        ? targetStep! <= 4 ? 5 : 1
-        : (sectionIndex + opts.seed) % 2 === 0 ? 1 : 5;
+        ? targetStep! <= anchorStep ? anchorStep + 1 : 1
+        : (sectionIndex + opts.seed) % 2 === 0 ? 1 : anchorStep + 1;
+      // 薄い対旋律は最終拍頭と第 2 拍頭を小節ごとに交互に使う。
       const preferred = sectionPlan.counterDensity === 2
         ? [responseStart, responseStart + 1, responseStart + 2]
-        : [bar % 2 === 0 ? 6 : 2];
+        : [bar % 2 === 0 ? lastPulse : grid.pulseSteps[1]!];
       for (const step of preferred) {
-        if (step === targetStep || step === 0 || step === 4) continue;
+        if (step === targetStep || step === 0 || step === anchorStep) continue;
         rhythm[step] = false;
-        if (step + 1 < 8 && step + 1 !== targetStep && step + 1 !== 4) rhythm[step + 1] = false;
+        if (step + 1 < steps && step + 1 !== targetStep && step + 1 !== anchorStep) rhythm[step + 1] = false;
         counterSteps.push(step);
       }
     }
-    // 対旋律の場所を空けても、主題の提示が痩せすぎない最低密度は保つ。
-    for (const step of [1, 3, 5, 7]) {
-      if (rhythm.filter(Boolean).length >= 4) break;
+    // 対旋律の場所を空けても、主題の提示が痩せすぎない最低密度(格子の半分)は保つ。
+    const minimumNotes = Math.ceil(steps / 2);
+    for (const step of offPulse) {
+      if (rhythm.filter(Boolean).length >= minimumNotes) break;
       const reservedByCounter = counterSteps.some((counterStep) => step === counterStep || step === counterStep + 1);
       if (!reservedByCounter && step !== targetStep) rhythm[step] = true;
     }
@@ -351,8 +420,11 @@ export function makePhrasePlan(
     const ornamentSteps: number[] = [];
     const ornamentType = targetStep !== null ? ornaments.get(bar) ?? null : null;
     const reserveOrnament = (candidate: number): void => {
-      const candidateBeat = candidate * 0.25;
-      const clearsCounter = counterSteps.every((counterStep) => Math.abs(candidateBeat - counterStep * 0.5) >= 0.5);
+      // 装飾は細かい格子(ステップの 2 分割)上。副旋律の予約から 1 ステップ以上離す。
+      const candidateBeat = (candidate * grid.stepBeats) / 2;
+      const clearsCounter = counterSteps.every((counterStep) => (
+        Math.abs(candidateBeat - stepBeat(grid, counterStep)) >= grid.stepBeats - 1e-9
+      ));
       if (clearsCounter) ornamentSteps.push(candidate);
     };
     if (targetStep !== null && targetStep > 0) {
@@ -368,15 +440,15 @@ export function makePhrasePlan(
     if (idiom.usesMa && isAnswer) {
       if (ornamentType && targetStep !== null) {
         const beforeTarget = targetStep - 1;
-        if (beforeTarget > 0 && beforeTarget !== 4 && !counterSteps.includes(beforeTarget)) {
+        if (beforeTarget > 0 && beforeTarget !== anchorStep && !counterSteps.includes(beforeTarget)) {
           rhythm[beforeTarget] = false;
           maSteps.push(beforeTarget);
         }
       } else {
-        const weakSteps = [7, 5, 3, 1].filter(
+        const weakSteps = [...offPulse].reverse().filter(
           (step) => step !== targetStep && !counterSteps.includes(step),
         );
-        const active = weakSteps.find((step) => rhythm[step] && rhythm.filter(Boolean).length > 4);
+        const active = weakSteps.find((step) => rhythm[step] && rhythm.filter(Boolean).length > minimumNotes);
         const maStep = active ?? weakSteps.find((step) => !rhythm[step]);
         if (maStep !== undefined) {
           rhythm[maStep] = false;
@@ -409,7 +481,7 @@ export function makePhrasePlan(
     let longToneStep: number | null = null;
     if (
       isAnswer
-      && (targetStep === 4 || targetStep === 6)
+      && (targetStep === anchorStep || targetStep === lastPulse)
       && counterSteps.every((counterStep) => counterStep <= targetStep!)
       && bar + 1 < bars
       && bar + 1 !== climaxBar
@@ -417,7 +489,7 @@ export function makePhrasePlan(
       && longToneRng.nextInt(100) < 30
     ) {
       // 保続の間、主旋律の残りは鳴らさない（副旋律の応答は残す）。
-      for (let step = targetStep + 1; step < 8; step++) rhythm[step] = false;
+      for (let step = targetStep + 1; step < steps; step++) rhythm[step] = false;
       longToneStep = targetStep;
       pendingSustainEntry = true;
       lastLongToneBar = bar;
@@ -430,6 +502,9 @@ export function makePhrasePlan(
     // ので、タイの後で旋律が動き直して終止機構も保たれる。保続音の和声整合
     // （先取音=跨いだ先の和音の構成音）は実現側とdiagnostics.tsの検証で保証する。
     // 頻度・間隔は独立乱数で、骨格の抽選列を乱さない。
+    // 跨ぎ元は第 2 拍頭からアンカー手前まで(4x2 では 2 拍目とその裏)。
+    const tieSourceSteps = Array.from({ length: steps }, (_, step) => step)
+      .filter((step) => step >= grid.pulseSteps[1]! && step < anchorStep);
     let anchorTie = false;
     if (
       isAnswer
@@ -438,16 +513,16 @@ export function makePhrasePlan(
       && longToneStep === null
       && ornamentType === null
       && counterSteps.length === 0
-      && (rhythm[2] || rhythm[3])
-      && rhythm[4]
+      && tieSourceSteps.some((step) => rhythm[step])
+      && rhythm[anchorStep]
       && targetStep !== null
-      && targetStep >= 5
+      && targetStep > anchorStep
       && bar !== climaxBar
       && bar !== signatureLeapBar
       && bar - lastTieBar >= 2
       && tieRng.nextInt(100) < 40
     ) {
-      rhythm[4] = false;
+      rhythm[anchorStep] = false;
       anchorTie = true;
       lastTieBar = bar;
     }
@@ -458,12 +533,12 @@ export function makePhrasePlan(
     // 和風は核音・間の体系と衝突するため対象外(語法の宣言)。ターゲット音を解決音として
     // 上書きしないよう、解決ステップが終止目標と重なる小節も外す。
     let appoggiaturaStep: number | null = null;
-    const appoggiaturaResolutionStep = [5, 6].find((step) => rhythm[step]);
+    const appoggiaturaResolutionStep = [anchorStep + 1, anchorStep + 2].find((step) => rhythm[step]);
     if (
       idiom.allowsAppoggiatura
       && ['statement', 'restatement', 'departure'].includes(phraseFunction)
-      && rhythm[4]
-      && targetStep !== 4
+      && rhythm[anchorStep]
+      && targetStep !== anchorStep
       && appoggiaturaResolutionStep !== undefined
       && appoggiaturaResolutionStep !== targetStep
       && ornamentType === null
@@ -474,7 +549,7 @@ export function makePhrasePlan(
       && bar - lastAppoggiaturaBar >= 2
       && appoggRng.nextInt(100) < appoggiaturaRatePercent(style.melody.stepwisePercent)
     ) {
-      appoggiaturaStep = 4;
+      appoggiaturaStep = anchorStep;
       lastAppoggiaturaBar = bar;
     }
 
@@ -492,24 +567,22 @@ export function makePhrasePlan(
       && !anchorTie
       && ornamentType === null
       && counterSteps.length === 0
-      && !rhythm[7]
+      && !rhythm[steps - 1]
       && targetStep !== null
-      && targetStep <= 5
+      && targetStep <= anchorStep + 1
       && bar + 1 < bars
       && bar + 1 !== signatureLeapBar
+      // 次小節が旋律を持たない区間なら掛かる先が無い。
+      && sections[sectionIndexAt(form, bar + 1)]!.texture === 'normal'
       && bar - lastAnacrusisBar >= 4
       && anacrusisRng.nextInt(100) < 35
     ) {
-      rhythm[7] = true;
+      rhythm[steps - 1] = true;
       anacrusis = true;
       lastAnacrusisBar = bar;
       pendingAnacrusis = true;
     }
 
-    const energy = harmonyBar.energy;
-    // 谷区間（ドラムのブレイクダウン）は基準ダイナミクスの床を下げ、本当に静かな部分を作る。
-    const dynamicFloor = sectionPlan.drum === 'breakdown' ? 0.46 : 0.58;
-    const dynamic = Math.min(1, dynamicFloor + energy * 0.07 + (sectionPlan.backingDensity === 'full' ? 0.04 : 0));
     const role: PhraseBarPlan['role'] = cadence && cadence !== 'open'
       ? 'cadence'
       : isAnswer
@@ -518,10 +591,11 @@ export function makePhrasePlan(
           ? 'continuation'
           : 'statement';
     barPlans.push({
-      bar, section, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
+      bar, section, grouping, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
       phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
       restStart, sustainedEntry, longToneStep, anchorTie, anacrusis, appoggiaturaStep,
       registerOffset: registerOffsets[sectionIndex] ?? 0,
+      holdUntilBeat: null,
     });
   }
   return { climaxBar, signatureLeapBar, rhythmFamilies, bars: barPlans };

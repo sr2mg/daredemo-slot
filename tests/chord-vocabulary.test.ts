@@ -3,7 +3,7 @@ import { compose } from '../src/core/music/compose.js';
 import { digestPiece } from '../src/core/music/piece-diff.js';
 import { approachTokenFor } from '../src/core/music/song-plan.js';
 import {
-  CHORDS, chordOriginsFor, fifthPcOf, harmonicFunctionForToken, progressionsForTonality,
+  CHORDS, chordName, chordOriginsFor, fifthPcOf, harmonicFunctionForToken, progressionsForTonality,
 } from '../src/core/music/theory.js';
 import type { ProgressionTonality } from '../src/core/music/theory.js';
 import type { ComposeOptions, HarmonicFunction } from '../src/core/music/types.js';
@@ -65,7 +65,9 @@ describe('イントロ接近和音(approachTokenFor)のメタデータ化は旧�
     if (entryFunction === 'tonic') return tonality === 'minor' ? 'V7m' : 'V';
     if (entryFunction === 'dominant') return tonality === 'minor' ? 'iv' : 'IV';
     if (entryFunction === 'predominant') {
-      if (tonality === 'major' && ['IV', 'IVM7'].includes(entryToken)) return 'I7';
+      // 借用の iv(mixture-rise で長調の先頭に立つ)は旧リストに無かったが、度数判定では IV 系と
+      // 同じ V/IV(I7)から入る。旧判定を度数へ置き換えた意図どおりなのでリストへ加えて比較する。
+      if (tonality === 'major' && ['IV', 'IVM7', 'iv'].includes(entryToken)) return 'I7';
       if (tonality === 'major' && ['ii', 'ii7'].includes(entryToken)) return 'vi';
       if (tonality === 'minor' && entryToken === 'iiDim') return 'VI';
       return tonality === 'minor' ? 'i' : 'I';
@@ -205,5 +207,26 @@ describe('5音の和音(9th/11th/13th)の導出', () => {
     expect(chordOriginsFor('II9sus4', 'minor')!.secondaryDominantOf).toBe(7);
     expect(chordOriginsFor('vi7add11', 'minor')!.secondaryDominantOf).toBeNull();
     expect(chordOriginsFor('III7', 'major')!.secondaryDominantOf).toBe(9);
+  });
+});
+
+describe('短調の導音和音(vii°・iiø7)の導出', () => {
+  it('tonesは品質表から、機能はカタログ宣言から導出される', () => {
+    expect([...CHORDS.viiDim!.tones]).toEqual([11, 2, 5]);
+    expect([...CHORDS.iim7b5!.tones]).toEqual([2, 5, 8, 0]);
+    expect(harmonicFunctionForToken('viiDim')).toBe('dominant');
+    expect(harmonicFunctionForToken('iim7b5')).toBe('predominant');
+  });
+
+  it('vii°は短調で和声的短音階由来(導音が音階外)、iiø7は短調のダイアトニック', () => {
+    const leading = chordOriginsFor('viiDim', 'minor')!;
+    expect(leading.diatonic).toBe(false);
+    expect(leading.modes).toContain('harmonicMinor');
+    expect(chordOriginsFor('iim7b5', 'minor')!.diatonic).toBe(true);
+  });
+
+  it('表示名は m7♭5 と綴る(品質キーは記号を含まない)', () => {
+    expect(chordName('iim7b5', 9)).toBe('Bm7♭5');
+    expect(chordName('viiDim', 9)).toBe('G#dim');
   });
 });

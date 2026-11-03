@@ -13,6 +13,7 @@ import type {
   CompositionStrategy,
 } from './composition-strategy.js';
 import type { GrooveFeel } from './groove.js';
+import type { TempoMap } from './tempo.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 
 // ---------------------------------------------------------------------------
@@ -396,6 +397,8 @@ export interface ChordEvent {
   midis: number[];
   /** テンション方針で声部へ足したカラートーン(絶対pc)。機能はpcsのまま。 */
   colorPcs?: number[];
+  /** power=開放五度(根音・5度・根音)。pulse テクスチャの区間。省略=密集配置。 */
+  voicing?: 'power';
   /**
    * 分数コードのベース音(絶対pc)。省略=ルートポジション=ベース声部がrootを弾く
    * (伴奏ボイシングmidisは従来どおり転回を許す密集配置で、このフィールドと無関係)。
@@ -423,16 +426,18 @@ export interface DrumEvent {
 export interface PhraseBarPlan {
   bar: number;
   section: PhraseSection;
+  /** この小節の拍格子(区間の割り方)。rhythm 等のステップはこの格子上の添字。 */
+  grouping: BarGrouping;
   role: 'statement' | 'answer' | 'continuation' | 'cadence';
-  /** 8分グリッド上の主旋律発音位置。 */
+  /** 格子(grid.ts の steps、4x2 では 8 分)上の主旋律発音位置。 */
   rhythm: boolean[];
-  /** 主旋律と同時に確保した、副旋律専用の8分グリッド位置。 */
+  /** 主旋律と同時に確保した、副旋律専用の格子位置。 */
   counterSteps: number[];
-  /** 16分グリッド上の短い装飾音位置。 */
+  /** 細かい格子(sixteenthSteps、4x2 では 16 分)上の短い装飾音位置。 */
   ornamentSteps: number[];
   /** 装飾を入れる小節だけ種類を持つ。 */
   ornamentType: OrnamentType | null;
-  /** 意図して空けた8分グリッド位置。 */
+  /** 意図して空けた格子位置。 */
   maSteps: number[];
   /** 8小節を提示→変奏反復→展開→結論として捉えたフレーズ機能。 */
   phraseFunction: PhraseFunction;
@@ -459,20 +464,27 @@ export interface PhraseBarPlan {
   anchorTie: boolean;
   /** step7 に置く、次フレーズ頭への弱起（アウフタクト）。音高は次フレーズアンカーの2度下。 */
   anacrusis: boolean;
-  /** 強拍倚音を許可するステップ（現状は3拍目=step4のみ）。実現は2度解決できる場合に限る。 */
+  /** 強拍倚音を許可するステップ（格子のアンカー=4x2 の 3 拍目のみ）。実現は2度解決できる場合に限る。 */
   appoggiaturaStep: number | null;
   /** セクション別テッシトゥーラ変位（半音）。旋律の目標高さへ加算する。 */
   registerOffset: number;
+  /** sustain テクスチャの区間頭: step 0 の音をこの本編拍まで保続する(他は null)。 */
+  holdUntilBeat: number | null;
 }
 
 export interface PhrasePlan {
   climaxBar: number;
   /** 一度だけ許す9半音超の署名跳躍を置く小節（頭拍）。null なら無し。 */
   signatureLeapBar: number | null;
-  /** 5つのリズム変奏族（[問い, 答え]×5）。実音テーマの構築が提示リズムとして参照する。 */
-  rhythmFamilies: ReadonlyArray<readonly [readonly boolean[], readonly boolean[]]>;
+  /**
+   * 拍の割り方ごとの5つのリズム変奏族（[問い, 答え]×5）。実音テーマの構築が提示リズムとして
+   * 参照する。4x2 は常にあり、他は曲型に現れる割り方だけ。
+   */
+  rhythmFamilies: Partial<Record<BarGrouping, RhythmFamilies>>;
   bars: PhraseBarPlan[];
 }
+
+export type RhythmFamilies = ReadonlyArray<readonly [readonly boolean[], readonly boolean[]]>;
 
 // ---------------------------------------------------------------------------
 // 編成設計図（ArrangementPlan）
@@ -480,6 +492,11 @@ export interface PhrasePlan {
 
 export interface ArrangementSectionPlan {
   backingDensity: 'sparse' | 'full';
+  /**
+   * 伴奏の刻み方。normal=様式どおり(パッド/裏打ち)。sustain=同じボイシングが続く間は再打鍵しない。
+   * stab=格子の各ステップで短く刻む(パワーコードの連打)。区間テクスチャから導く。
+   */
+  backingRhythm: 'normal' | 'sustain' | 'stab';
   echo: boolean;
   drum: 'base' | 'sectionB' | 'breakdown';
   /** セクション頭の合図。エネルギー上昇時も毎回同じシンバルにはしない。 */
@@ -528,16 +545,24 @@ export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
 // 曲型（SongFormSpec）: 区間の列。保存される作曲入力の一部。
 //
 // 曲型は「小節数」ではなく「区間の列」で表す。各区間が役割・長さ・エネルギー・主題・
-// 進行・調を宣言し、生成器はこの列だけを見て計画する(区間数の上限を持たない)。
-// プリセット(FormPresetId)は form.ts が同じ SongFormSpec へ展開する。
-// 拍の割り方(12/8↔6/4↔4/4)とテンポの区間属性は次の拡張で、ここへ足す。
+// 進行・調・拍の割り方(grid.ts)・テンポ(tempo.ts)・テクスチャを宣言し、生成器はこの列だけを
+// 見て計画する(区間数の上限を持たない)。プリセット(FormPresetId)は form.ts が同じ SongFormSpec へ
+// 展開する。小節長は常に 4 拍で、拍子の変更(3/4・5/4 の挿入)は未対応。
 // ---------------------------------------------------------------------------
 
 /** 区間の長さ。4=1小節ずつSRDC、8=2小節ずつSRDC(phraseFunctionFor)。 */
 export type SectionBars = 4 | 8;
+/**
+ * 拍の割り方「拍数×拍内分割」。小節長は常に 4 拍(bar * 4 の時間単位は不変)で、
+ * 4x2=4/4(8分格子、現行)・4x3=12/8(付点4分の拍×3連)・3x4=6/4(4/3拍×4)。導出は grid.ts。
+ */
+export type BarGrouping = '4x2' | '4x3' | '3x4';
 export type SectionEnergy = 1 | 2 | 3 | 4 | 5;
-/** loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。 */
-export type SongEnding = 'loop' | 'final';
+/**
+ * loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。
+ * ritardando=final に加え、最終 2 小節を減速し終止和音を延ばす(tempo.ts)。
+ */
+export type SongEnding = 'loop' | 'final' | 'ritardando';
 
 /** 他区間のフレーズを部分引用する宣言(loop16 の「ループ直前にフックを予告」など)。 */
 export interface SectionQuote {
@@ -571,14 +596,26 @@ export interface SectionSpec {
   keyRoot?: number;
   /** 省略=曲既定。平行長調のサビなど。 */
   tonality?: Tonality;
+  /** 省略=4x2(4/4)。主題・引用の元区間とは同じ割り方であること(validateForm)。 */
+  grouping?: BarGrouping;
+  /** 省略=曲の bpm。区間頭でテンポを切り替える(tempo.ts の写像の点になる)。 */
+  tempo?: number;
+  /**
+   * 省略=normal。sustain=区間頭の 1 音を区間末尾まで保続し、伴奏は再打鍵せず、ベースは持続、
+   * ドラム無し。pulse=旋律を休ませ、パワーコード(開放五度)を格子の各ステップで刻む。
+   * 先頭区間と、主題・引用の元になる区間は normal であること(validateForm)。
+   */
+  texture?: SectionTexture;
 }
+
+export type SectionTexture = 'normal' | 'sustain' | 'pulse';
 
 export interface SongFormSpec {
   sections: readonly SectionSpec[];
   ending: SongEnding;
 }
 
-export type FormPresetId = 'loop4' | 'loop8' | 'loop16' | 'arc40' | 'song';
+export type FormPresetId = 'loop4' | 'loop8' | 'loop16' | 'arc40' | 'song' | 'songHemiola';
 /** 保存される曲型: プリセットidか明示の区間列。 */
 export type SongFormRef = FormPresetId | SongFormSpec;
 export type IntroLeadGesture =
@@ -638,6 +675,10 @@ export interface SongSectionPlan {
   /** 区間の進行(曲既定を区間指定で上書き)と、そのカタログ長。 */
   progressionId: string;
   progressionBars: number;
+  /** 区間の拍格子(SectionSpec.grouping の実効値)。小節→格子は compose-context が引く。 */
+  grouping: BarGrouping;
+  /** 区間のテクスチャ(SectionSpec.texture の実効値)。 */
+  texture: SectionTexture;
   /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
   rhythmVariant: RhythmVariant;
   /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */
@@ -727,7 +768,10 @@ export interface SongPlan {
 // ---------------------------------------------------------------------------
 
 export interface Piece {
+  /** 名目テンポ。実効テンポは tempoMap(省略=一定)で、レンダラは tempo.ts の写像で秒へ写す。 */
   bpm: number;
+  /** 区間テンポ・リタルダンドの写像(絶対拍)。省略時は bpm 一定。 */
+  tempoMap?: TempoMap;
   styleId: string;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;

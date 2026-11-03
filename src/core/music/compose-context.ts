@@ -11,6 +11,7 @@
  */
 
 import type { StyleDef } from './theory.js';
+import type { GridDef } from './grid.js';
 import type { GrooveFeel } from './groove.js';
 import type { MelodicIdiom } from './melodic-idiom.js';
 import type {
@@ -31,6 +32,8 @@ export interface ComposeContext {
   style: StyleDef;
   /** 解決済みの曲型(区間列)。小節→区間は form.ts のヘルパで引く。 */
   form: SongFormSpec;
+  /** 本編内の小節の拍格子(区間の割り方)。イントロは常に 4x2。 */
+  gridAt: (bar: number) => GridDef;
   /** 本編の総小節数(イントロを含まない)。 */
   bars: number;
   /** 0..11 に正規化済みのキー主音。 */

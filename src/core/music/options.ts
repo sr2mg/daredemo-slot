@@ -20,6 +20,7 @@ import type { SoundBackendId } from './sound-capabilities.js';
 import { STYLES } from './theory.js';
 import { CURRENT_ENGINE_REV } from './types.js';
 import { formPresetIdOf, introDefaultFor } from './form.js';
+import { DEFAULT_GROUPING } from './grid.js';
 import type {
   BassLinePolicy,
   ComposeOptions,
@@ -106,6 +107,9 @@ export function canonicalForm(
       : {}),
     ...(section.keyRoot !== undefined && section.keyRoot !== defaults.keyRoot ? { keyRoot: section.keyRoot } : {}),
     ...(section.tonality !== undefined && section.tonality !== defaults.tonality ? { tonality: section.tonality } : {}),
+    ...(section.grouping !== undefined && section.grouping !== DEFAULT_GROUPING ? { grouping: section.grouping } : {}),
+    ...(section.tempo !== undefined ? { tempo: section.tempo } : {}),
+    ...(section.texture !== undefined && section.texture !== 'normal' ? { texture: section.texture } : {}),
   }));
   return { sections, ending: (form as SongFormSpec).ending };
 }

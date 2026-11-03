@@ -16,6 +16,8 @@
  *   強弱を付ける。オープンは持続で目立つ別アーティキュレーションなので減衰しない。
  *   キック/スネアはバックビートの骨格なので一定のまま。
  */
+import { gridFor } from './grid.js';
+import type { GridDef } from './grid.js';
 import type { DrumEvent } from './types.js';
 
 const EPS = 1e-3;
@@ -43,16 +45,22 @@ export const DRUM_GHOST = ACCENT_RATIO ** 6;
 const OPEN_MIN_GAP = 0.75 - EPS;
 const OPEN_MAX_GAP = 1 + EPS;
 
-/** 拍節深度: 0=小節頭 / 1=拍頭 / 2=8分裏(バウンス・三連の後ろ含む) / 3=16分・三連中間。 */
-function metricDepth(beat: number): number {
-  const inBeat = beat - Math.floor(beat);
-  const nearInt = inBeat < EPS || inBeat > 1 - EPS;
-  if (nearInt) {
-    const inBar = ((beat % 4) + 4) % 4;
-    return inBar < EPS || inBar > 4 - EPS ? 0 : 1;
+/**
+ * 拍節深度: 0=小節頭 / 1=拍頭 / 2=ステップ(8分裏。×3 の格子では 3 連の中・後ろ) / 3=細かい格子。
+ * 格子に乗らない打点(bounce の 2/3、三連オーバーレイの 1/3)は従来どおり 2/3 を深さ 2、他を 3 にする。
+ */
+function metricDepth(beat: number, grid: GridDef): number {
+  const inBar = ((beat % 4) + 4) % 4;
+  const fine = (inBar * grid.sixteenthSteps) / 4;
+  const index = Math.round(fine);
+  if (Math.abs(fine - index) < EPS * grid.sixteenthSteps) {
+    const wrapped = index % grid.sixteenthSteps;
+    if (wrapped === 0) return 0;
+    if (wrapped % (grid.sixteenthSteps / grid.pulses) === 0) return 1;
+    return wrapped % 2 === 0 ? 2 : 3;
   }
-  if (Math.abs(inBeat - 0.5) < EPS || Math.abs(inBeat - 2 / 3) < EPS) return 2;
-  return 3;
+  const inBeat = beat - Math.floor(beat);
+  return Math.abs(inBeat - 2 / 3) < EPS ? 2 : 3;
 }
 
 /**
@@ -64,6 +72,7 @@ export function applyDrumArticulation(
   drums: readonly DrumEvent[],
   loopStartBeat: number,
   endBeat: number,
+  gridAtBeat: (beat: number) => GridDef = () => gridFor('4x2'),
 ): DrumEvent[] {
   const hatBeats = drums
     .filter((drum) => drum.inst === 'hat')
@@ -83,7 +92,7 @@ export function applyDrumArticulation(
 
   return drums.map((drum) => {
     if (drum.inst !== 'hat') return drum;
-    const depth = metricDepth(drum.beat);
+    const depth = metricDepth(drum.beat, gridAtBeat(drum.beat));
     const gap = gapAfter(drum.beat);
     const open = depth >= 2 && gap >= OPEN_MIN_GAP && gap <= OPEN_MAX_GAP;
     if (open) return { ...drum, open: true };

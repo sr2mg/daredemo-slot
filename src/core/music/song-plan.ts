@@ -7,9 +7,10 @@ import type {
   StrategySectionId,
 } from './composition-strategy.js';
 import {
-  RHYTHM_FAMILY_COUNT, barInSection, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
+  RHYTHM_FAMILY_COUNT, barInSection, closesWithCadence, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
   sectionRng, sectionStartBars, sectionTonality, totalBars,
 } from './form.js';
+import { DEFAULT_GROUPING, gridFor, snapDurationsToPulses } from './grid.js';
 import { hasGrooveDevice } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
@@ -468,7 +469,9 @@ function introPlanFor(
 /** クライマックス小節: 先頭以外(2区間以下なら全区間)の最大エネルギー区間の中盤。 */
 function climaxBarFor(sections: readonly SongSectionPlan[], seed: number): number {
   const lateClimax = (seed & 1) === 1;
-  const candidates = sections.length > 2 ? sections.slice(1) : sections;
+  // 旋律を持たない区間(ロングトーン・パワーコード)は頂点を置けない。
+  const melodic = (sections.length > 2 ? sections.slice(1) : sections).filter((section) => section.texture === 'normal');
+  const candidates = melodic.length > 0 ? melodic : sections.length > 2 ? sections.slice(1) : sections;
   const peakEnergy = Math.max(...candidates.map((section) => section.energy));
   const peaks = candidates.filter((section) => section.energy === peakEnergy);
   const peak = peaks[(seed >>> 10) % peaks.length]!;
@@ -533,6 +536,8 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       japanesePlan,
       progressionId: sectionProgression.id,
       progressionBars: sectionProgression.slots.length,
+      grouping: spec.grouping ?? DEFAULT_GROUPING,
+      texture: spec.texture ?? 'normal',
       ...motifPlans[index]!,
     };
   });
@@ -572,7 +577,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       }
     }
     const isLastBar = bar === bars - 1;
-    const finalCadence = isLastBar && form.ending === 'final';
+    const finalCadence = isLastBar && closesWithCadence(form.ending);
     const tokens = finalCadence ? finalCadenceTokens(section.tonality) : [...slot[selected]!];
     const phraseFunction = phraseFunctionFor(offset, section.bars as SectionBars);
     const harmonicGoal = harmonicGoalFor(isLastBar, form.ending, phraseFunction);
@@ -588,7 +593,11 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       harmonicGoal,
       tokens,
       // 終止曲型の V→I は半小節ずつ(属和音を1拍に押し込まず、終止として聴かせる)。
-      durations: finalCadence ? [2, 2] : durationsFor(tokens, harmonicGoal, compositionPolicy),
+      // 長さ列は区間の格子の拍頭へ吸着する(3x4 では [2,2]→[8/3,4/3] など。4x2/4x3 では恒等)。
+      durations: snapDurationsToPulses(
+        gridFor(section.grouping),
+        finalCadence ? [2, 2] : durationsFor(tokens, harmonicGoal, compositionPolicy),
+      ),
       strategyRole,
       entryFunction,
       exitFunction,

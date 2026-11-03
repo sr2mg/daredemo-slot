@@ -33,8 +33,9 @@ export interface DiminutionOptions {
    * フィギュアを置ける骨格対の最大間隔(拍)。既定0.75は8分対まで(=従来挙動)。
    * ストレートのグルーヴでは1.0を渡すと4分対にも走句が入る。bounce等では16分格子が
    * スウィング格子とずれるため、呼び出し側が0.75のまま据え置くこと。
+   * 関数なら対の始点の拍で評価する(区間ごとにグルーヴ・格子が違う曲型用)。
    */
-  maxGapBeats?: number;
+  maxGapBeats?: number | ((beat: number) => number);
   /**
    * 挿入を避ける発音位置(他声部が予約済みの拍)。予約拍が骨格対の間に落ちる場合、
    * その対にはフィギュアを置かない(挿入音が予約声部の持続と時間的に重なるため、
@@ -57,7 +58,8 @@ export function applyDiminution(
 ): void {
   if (policy === 'off') return;
   const percent = FILL_PERCENT[policy];
-  const maxGap = options.maxGapBeats ?? 0.75;
+  const maxGapOption = options.maxGapBeats ?? 0.75;
+  const maxGapAt = typeof maxGapOption === 'number' ? () => maxGapOption : maxGapOption;
   const structural = melody
     .filter((note) => note.role !== 'ornament')
     .sort((a, b) => a.beat - b.beat);
@@ -93,7 +95,7 @@ export function applyDiminution(
     // 下限0.45は、bounceの「裏拍(k+2/3)→次拍頭」対(間隔1/3)を除外するための境界——
     // そこへ挿入すると音価が1/6拍(170BPMで約40ms)のグリッド外ブリップになる。
     // 上限maxGapを超える長い音は歌わせたまま残す。
-    if (gap < 0.45 || gap > maxGap + 0.01) continue;
+    if (gap < 0.45 || gap > maxGapAt(from.beat) + 0.01) continue;
     // 対の間に他声部の予約拍がある(=そこから持続音が鳴る)なら、この対は歌わせたまま譲る。
     if (blocked.some((beat) => beat > from.beat + 0.05 && beat < to.beat - 0.05)) continue;
     const interval = to.midi - from.midi;

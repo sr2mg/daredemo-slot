@@ -10,19 +10,24 @@
  */
 
 import { Xoshiro128 } from '../rng.js';
+import { BAR_GROUPING_LABELS, DEFAULT_GROUPING, gridFor, isBarGrouping } from './grid.js';
+import type { GridDef } from './grid.js';
 import { PROGRESSIONS, progressionForTonality } from './theory.js';
 import type {
+  BarGrouping,
   FormPresetId,
   PhraseFunction,
   SectionBars,
   SectionRole,
   SectionSpec,
+  SectionTexture,
+  SongEnding,
   SongFormRef,
   SongFormSpec,
   Tonality,
 } from './types.js';
 
-export const FORM_PRESET_IDS: readonly FormPresetId[] = ['loop4', 'loop8', 'loop16', 'arc40', 'song'];
+export const FORM_PRESET_IDS: readonly FormPresetId[] = ['loop4', 'loop8', 'loop16', 'arc40', 'song', 'songHemiola'];
 
 /** UI 表示用のプリセット名。用途ラベル(RB/BB/BIG)はクライアント文脈だが、保存曲一覧の既存表記を継ぐ。 */
 export const FORM_PRESET_LABELS: Record<FormPresetId, string> = {
@@ -31,6 +36,7 @@ export const FORM_PRESET_LABELS: Record<FormPresetId, string> = {
   loop16: 'ゲームBGM風16小節',
   arc40: 'OPLL BIG風40小節',
   song: '歌もの96小節',
+  songHemiola: '歌もの96小節(12/8↔6/4)',
 };
 
 export const SECTION_ROLES: readonly SectionRole[] = ['hook', 'development', 'relief', 'return', 'finale'];
@@ -45,6 +51,27 @@ export const SECTION_ROLE_LABELS: Record<SectionRole, string> = {
 
 export const SECTION_BARS_CHOICES: readonly SectionBars[] = [4, 8];
 
+export const SONG_ENDINGS: readonly SongEnding[] = ['loop', 'final', 'ritardando'];
+
+export const SONG_ENDING_LABELS: Record<SongEnding, string> = {
+  loop: 'ループ（最終小節で頭へ渡す）',
+  final: '終止（V→I で閉じる）',
+  ritardando: '終止＋リタルダンド（最終 2 小節を減速して閉じる）',
+};
+
+export const SECTION_TEXTURES: readonly SectionTexture[] = ['normal', 'sustain', 'pulse'];
+
+export const SECTION_TEXTURE_LABELS: Record<SectionTexture, string> = {
+  normal: '通常',
+  sustain: 'ロングトーン',
+  pulse: 'パワーコード連打',
+};
+
+/** 終止で閉じる終わり方(final / ritardando)。ループでないことの判定はこれを使う。 */
+export function closesWithCadence(ending: SongEnding): boolean {
+  return ending !== 'loop';
+}
+
 export function isFormPresetId(value: unknown): value is FormPresetId {
   return typeof value === 'string' && (FORM_PRESET_IDS as readonly string[]).includes(value);
 }
@@ -55,7 +82,7 @@ const section = (
   bars: SectionBars,
   energy: SectionSpec['energy'],
   theme: string,
-  rest: Partial<Pick<SectionSpec, 'transform' | 'quote'>> = {},
+  rest: Partial<Pick<SectionSpec, 'transform' | 'quote' | 'grouping'>> = {},
 ): SectionSpec => ({ id, role, bars, energy, theme, ...rest });
 
 /**
@@ -64,6 +91,8 @@ const section = (
  * - loop16: Bの結論フレーズでAのフックを予告してループへ戻す(quote)。
  * - arc40: 実質2主題(AとC)。B/D/EはAの変形で、Dがリテラル帰還(現行の5区間弧をそのまま宣言)。
  * - song: 歌もの。A(提示)×2 → B → C(谷) → S(サビ) → A''(帰還) → B' → D(谷) → C' → S'(帰還) → S''(終幕) → A'''(終幕)。
+ * - songHemiola: song と同じ区間列で、主題ごとに拍の割り方を揃える(A・S 系=12/8、B 系=6/4 のヘミオラ、
+ *   C・D=4/4)。小節長は不変なので割り方が変わっても小節数・区間の時間は同じ。
  */
 function presetSpec(id: FormPresetId): SongFormSpec {
   switch (id) {
@@ -91,24 +120,34 @@ function presetSpec(id: FormPresetId): SongFormSpec {
         ending: 'loop',
       };
     case 'song':
-      return {
-        sections: [
-          section('A', 'hook', 8, 3, 'A'),
-          section("A'", 'hook', 8, 3, 'A', { transform: 'literal' }),
-          section('B', 'development', 8, 4, 'B'),
-          section('C', 'relief', 8, 2, 'C'),
-          section('S', 'hook', 8, 5, 'S'),
-          section("A''", 'return', 8, 3, 'A', { transform: 'transpose' }),
-          section("B'", 'development', 8, 4, 'B', { transform: 'transpose' }),
-          section('D', 'relief', 8, 2, 'D'),
-          section("C'", 'relief', 8, 1, 'C', { transform: 'literal' }),
-          section("S'", 'return', 8, 5, 'S', { transform: 'literal' }),
-          section("S''", 'finale', 8, 5, 'S', { transform: 'transpose' }),
-          section("A'''", 'finale', 8, 2, 'A', { transform: 'literal' }),
-        ],
-        ending: 'final',
-      };
+      return songSpec({});
+    case 'songHemiola':
+      return songSpec({ A: '4x3', S: '4x3', B: '3x4' });
   }
+}
+
+/** 歌ものの区間列。主題ごとの拍の割り方(省略=4x2)を受ける。 */
+function songSpec(groupingByTheme: Partial<Record<'A' | 'B' | 'C' | 'D' | 'S', BarGrouping>>): SongFormSpec {
+  const g = (theme: 'A' | 'B' | 'C' | 'D' | 'S'): Partial<Pick<SectionSpec, 'grouping'>> => (
+    groupingByTheme[theme] ? { grouping: groupingByTheme[theme] } : {}
+  );
+  return {
+    sections: [
+      section('A', 'hook', 8, 3, 'A', g('A')),
+      section("A'", 'hook', 8, 3, 'A', { transform: 'literal', ...g('A') }),
+      section('B', 'development', 8, 4, 'B', g('B')),
+      section('C', 'relief', 8, 2, 'C', g('C')),
+      section('S', 'hook', 8, 5, 'S', g('S')),
+      section("A''", 'return', 8, 3, 'A', { transform: 'transpose', ...g('A') }),
+      section("B'", 'development', 8, 4, 'B', { transform: 'transpose', ...g('B') }),
+      section('D', 'relief', 8, 2, 'D', g('D')),
+      section("C'", 'relief', 8, 1, 'C', { transform: 'literal', ...g('C') }),
+      section("S'", 'return', 8, 5, 'S', { transform: 'literal', ...g('S') }),
+      section("S''", 'finale', 8, 5, 'S', { transform: 'transpose', ...g('S') }),
+      section("A'''", 'finale', 8, 2, 'A', { transform: 'literal', ...g('A') }),
+    ],
+    ending: 'final',
+  };
 }
 
 const presetCache = new Map<FormPresetId, SongFormSpec>();
@@ -239,7 +278,7 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     error(null, '区間が1つもない');
     return issues;
   }
-  if (form.ending !== 'loop' && form.ending !== 'final') error(null, `終わり方が不正: ${String(form.ending)}`);
+  if (!(SONG_ENDINGS as readonly string[]).includes(form.ending)) error(null, `終わり方が不正: ${String(form.ending)}`);
   const seen = new Map<string, SectionSpec>();
   const themes: string[] = [];
   form.sections.forEach((spec, index) => {
@@ -261,16 +300,45 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     if (spec.tonality !== undefined && spec.tonality !== 'major' && spec.tonality !== 'minor') {
       error(id, `調性が不正: ${String(spec.tonality)}`);
     }
+    if (spec.grouping !== undefined && !isBarGrouping(spec.grouping)) {
+      error(id, `拍の割り方が不正: ${String(spec.grouping)}`);
+    }
+    if (spec.tempo !== undefined && !(Number.isFinite(spec.tempo) && spec.tempo >= 30 && spec.tempo <= 400)) {
+      error(id, `テンポは 30〜400(${String(spec.tempo)})`);
+    }
+    if (spec.texture !== undefined && !(SECTION_TEXTURES as readonly string[]).includes(spec.texture)) {
+      error(id, `テクスチャが不正: ${String(spec.texture)}`);
+    }
+    const textureOf = (candidate: SectionSpec): SectionTexture => candidate.texture ?? 'normal';
+    // 先頭区間はイントロが主題を借りる(intro.ts)ので旋律が要る。
+    if (index === 0 && textureOf(spec) !== 'normal') error(id, '先頭区間のテクスチャは通常であること(イントロが主題を借りる)');
+    const grouping = isBarGrouping(spec.grouping) ? spec.grouping : DEFAULT_GROUPING;
+    const groupingOf = (candidate: SectionSpec): string => candidate.grouping ?? DEFAULT_GROUPING;
+    const groupingLabel = (value: string): string => (isBarGrouping(value) ? BAR_GROUPING_LABELS[value] : value);
 
     const themeSource = [...seen.values()].reverse().find((candidate) => candidate.theme === spec.theme);
     if (themeSource && themeSource.bars !== spec.bars) {
       error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${themeSource.bars}小節)と小節数が違う`);
+    }
+    // リズム族の添字は拍の割り方ごとの表を指すので、割り方の違う区間間では主題を継げない
+    // (再標本化は将来の仮説)。
+    if (themeSource && groupingOf(themeSource) !== grouping) {
+      error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${groupingLabel(groupingOf(themeSource))})と拍の割り方が違う`);
+    }
+    // 旋律を持たない(ロングトーン・パワーコード)区間は主題の元になれない。
+    if (themeSource && textureOf(themeSource) !== 'normal') {
+      error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」が${SECTION_TEXTURE_LABELS[textureOf(themeSource)]}で旋律を持たない`);
     }
     if (spec.quote) {
       if (themeSource) error(id, '主題の再登場と部分引用は併用できない(引用はフレーズ0の借用と排他)');
       const source = seen.get(spec.quote.from);
       if (!source) error(id, `引用元「${spec.quote.from}」が先行区間にない`);
       else if (source.bars !== spec.bars) error(id, `引用元「${source.id}」と小節数が違う`);
+      else if (groupingOf(source) !== grouping) {
+        error(id, `引用元「${source.id}」(${groupingLabel(groupingOf(source))})と拍の割り方が違う`);
+      } else if (textureOf(source) !== 'normal') {
+        error(id, `引用元「${source.id}」が${SECTION_TEXTURE_LABELS[textureOf(source)]}で旋律を持たない`);
+      }
       const phrases = Array.isArray(spec.quote.phrases) ? spec.quote.phrases : [];
       if (phrases.length === 0) error(id, '引用するフレーズが空');
       for (const phrase of phrases) {
@@ -302,6 +370,20 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     });
   }
   return issues;
+}
+
+/** 本編内の小節が属する区間の拍の割り方(省略=4x2)。格子の実体は grid.ts の gridFor。 */
+/** 区間列の拍の割り方だけを見る構造型(SongFormSpec と SongFormPlan の両方が満たす)。 */
+export type SectionGroupings = { sections: readonly { bars: number; grouping?: BarGrouping }[] };
+
+export function groupingAt(form: SectionGroupings, bar: number): BarGrouping {
+  return form.sections[sectionIndexAt(form, bar)]?.grouping ?? DEFAULT_GROUPING;
+}
+
+/** 絶対拍(イントロ込み)の拍格子。イントロ(loopStartBeat より前)は常に 4x2。診断・レンダラが使う。 */
+export function gridAtBeat(form: SectionGroupings, loopStartBeat: number, beat: number): GridDef {
+  if (beat < loopStartBeat) return gridFor(DEFAULT_GROUPING);
+  return gridFor(groupingAt(form, Math.floor((beat - loopStartBeat) / 4)));
 }
 
 /** 検証エラーを1つの例外文へまとめる(compose が使う)。 */

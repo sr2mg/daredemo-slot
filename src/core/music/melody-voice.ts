@@ -7,6 +7,7 @@
 import { fragmentOf, invertTheme, realizeDegree, themeDegreeSpan, themeFromGesture, transposeTheme } from './melodic-theme.js';
 import type { ThemeSpec } from './melodic-theme.js';
 import { barInSection, sectionRng } from './form.js';
+import { stepBeat } from './grid.js';
 import { grooveBeat } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
 import { LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
@@ -15,7 +16,7 @@ import type { NoteArticulation, NoteEvent } from './types.js';
 
 export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, form, bars, style, grooveFeel, songPlan, phrasePlan, phraseGestures,
+    opts, form, bars, style, grooveFeel, songPlan, phrasePlan, phraseGestures, gridAt,
     chordAt, scaleAt, melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   } = ctx;
   // --- 実音テーマ（melodic-theme.ts） ---
@@ -24,7 +25,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   // 「反復のたびに毎音を和声へ吸着して音程が変異する」従来方式をやめる
   // （和声へ合わせるのはアンカーと強拍だけ）。
   const sectionThemes: ThemeSpec[] = songPlan.form.sections.map((section, index) => {
-    const family = phrasePlan.rhythmFamilies[section.phraseRhythmVariants[0]]!;
+    const family = phrasePlan.rhythmFamilies[section.grouping]![section.phraseRhythmVariants[0]]!;
     return themeFromGesture(phraseGestures[index]!, family[0], family[1]);
   });
   // 借用フレーズが実現するテーマ。literal=原形(フックの帰還)、transpose=全音度移調
@@ -166,7 +167,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     const ceiling = climaxMidi - 1;
     const planned = nearestWithPc(entry, [targetPc], MELODY_LO, ceiling);
     if (Math.abs(planned - entry) <= LOOP_BOUNDARY_MAX_SEMITONES) return planned;
-    const targetChord = chordAt(barPlan.bar * 4 + barPlan.targetStep! * 0.5);
+    const targetChord = chordAt(barPlan.bar * 4 + stepBeat(gridAt(barPlan.bar), barPlan.targetStep!));
     const landing = nearestWithPc(entry, melodyPcsForChord(targetChord), MELODY_LO, ceiling);
     barPlan.targetPc = ((landing % 12) + 12) % 12;
     return landing;
@@ -177,11 +178,14 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       ? turnaroundLandingFor(barPlan, barPlan.targetPc)
       : null;
     const { bar } = barPlan;
+    const grid = gridAt(bar);
+    const { anchorStep, steps } = grid;
+    const halfSteps = steps / 2;
     const offsetInSection = barInSection(form, bar);
     const sectionDesign = songPlan.form.sections.find((section) => section.id === barPlan.section)!;
     // 4小節区間は1小節=1機能のSRDCなので、毎小節テーマの前半(問い)を実現する
-    // (提示→リテラル反復→展開→結論の8ステップ版。フックが4小節で3回聴こえる)。
-    const phraseStepOffset = sectionDesign.bars === 4 ? 0 : (offsetInSection % 2) * 8;
+    // (提示→リテラル反復→展開→結論の1小節版。フックが4小節で3回聴こえる)。
+    const phraseStepOffset = sectionDesign.bars === 4 ? 0 : (offsetInSection % 2) * steps;
     const center = bar === phrasePlan.climaxBar
       ? MELODY_HI - 2
       : baseCenter + barPlan.energy - 2 + barPlan.registerOffset;
@@ -202,11 +206,12 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
 
     for (let index = 0; index < onsets.length; index++) {
       const step = onsets[index]!;
-      const logicalBeat = bar * 4 + step * 0.5;
+      const logicalBeat = bar * 4 + stepBeat(grid, step);
       const beat = grooveBeat(logicalBeat, grooveFeel);
       const chord = chordAt(logicalBeat);
       const structuralPcs = melodyPcsForChord(chord);
-      const strong = step === 0 || step === 4;
+      // 強拍は小節頭とアンカー(4x2 では 1・3 拍目)。
+      const strong = step === 0 || step === anchorStep;
       // 単一頂点: 頂点音以外の吸着・受けは頂点未満に束縛する(無制限の最寄り探索は頂点を越える)。
       const ceiling = bar === phrasePlan.climaxBar && step === 0 ? MELODY_HI : climaxMidi - 1;
       const phraseStep = phraseStepOffset + step;
@@ -235,7 +240,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       } else if (bar === phrasePlan.climaxBar && index === 1 && onsets[0] === 0) {
         // クライマックスの受け: 頂点の直後は反行順次で降りる（均衡跳躍の古典則）。
         midi = stepOnScale(prev, -1, scaleAt(chord));
-      } else if (barPlan.anacrusis && step === 7) {
+      } else if (barPlan.anacrusis && step === steps - 1) {
         // 弱起: 次フレーズのアンカー（クライマックス小節なら頂点音）の2度下から掛かる。
         const nextAnchor = bar + 1 === phrasePlan.climaxBar
           ? climaxMidi
@@ -246,12 +251,13 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
         // (断片化→反復進行→終止のリキダーションというセンテンス構文の展開)。
         // 強拍に落ちる断片音は直後の強拍規則で和声へ量子化されるが、弱拍の断片音と
         // ランプの輪郭が「同じ材料が動いていく」知覚を残す。
-        const groupStart = (step >> 2) << 2;
+        // 群は半小節(4x2 で 4 ステップ)。ビットシフトだと 24 ステップで 6 度登ってしまう。
+        const groupStart = Math.floor(step / halfSteps) * halfSteps;
         const positionInGroup = onsets.filter(
           (candidate) => candidate >= groupStart && candidate < step,
         ).length;
         const fragmentDegrees = sequenceFragment.relativeDegrees;
-        const degree = (sequenceAscending ? 1 : -1) * (phraseStep >> 2)
+        const degree = (sequenceAscending ? 1 : -1) * Math.floor(phraseStep / halfSteps)
           + (fragmentDegrees[positionInGroup % Math.max(1, fragmentDegrees.length)] ?? 0);
         midi = realizeDegree(barAnchor, degree, scaleAt(chord), MELODY_LO, MELODY_HI);
         if (positionInGroup === 0 && strong && lastSequenceHead !== null) {
@@ -301,7 +307,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       // 音域最下部の踏み切りだけが残り、そこからの通常旋律が畳めない大跳躍になる。
       if (
         bar === phrasePlan.signatureLeapBar && step === 0 && onsets.length >= 3
-        && onsets[2] !== 4
+        && onsets[2] !== anchorStep
       ) {
         // 踏み切りは音域最下部の和声音。ここからでないと9半音超をクライマックス未満に収められない。
         midi = nearestWithPc(MELODY_LO + 1, structuralPcs, MELODY_LO, MELODY_LO + 4);
@@ -314,7 +320,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
         const leapMidi = hi >= lo ? nearestWithPc(hi, structuralPcs, lo, hi) : -1;
         const followUp = onsets[index + 1];
         // 直後を弱拍の順次で受け止められるときだけ跳ぶ（均衡跳躍をデバイス側で保証する）。
-        const canBalance = followUp !== undefined && followUp !== 4;
+        const canBalance = followUp !== undefined && followUp !== anchorStep;
         if (leapMidi >= lo && leapMidi <= hi && canBalance) {
           midi = leapMidi;
           isSignatureLeapNote = true;
@@ -372,9 +378,9 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
         const approachedProperly = chordAt(prevBeat).pcs.includes(((prev % 12) + 12) % 12)
           || (Math.abs(midi - prev) <= 2 && midi !== prev);
         if (barPlan.appoggiaturaStep === step && midi < climaxMidi && approachedProperly) {
-          const resolutionStep = [5, 6].find((candidate) => barPlan.rhythm[candidate]);
+          const resolutionStep = [anchorStep + 1, anchorStep + 2].find((candidate) => barPlan.rhythm[candidate]);
           if (resolutionStep !== undefined) {
-            const resolutionPcs = melodyPcsForChord(chordAt(bar * 4 + resolutionStep * 0.5));
+            const resolutionPcs = melodyPcsForChord(chordAt(bar * 4 + stepBeat(grid, resolutionStep)));
             // 解決音はクライマックスの一意性を壊さない範囲(climaxMidi未満)に限る。
             // でないと後段のクランプが解決音を動かし、倚音が宙吊りのまま残る。
             // 解決は順次(scaleStepMax以内)に限る。コードスケールの増2度(和声的短音階の
@@ -428,18 +434,19 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
           if (Math.abs(midi - prev) > 9) midi = nearestWithPc(prev, [midi % 12], MELODY_LO, ceiling);
         }
       }
-      const nextLeadStep = index + 1 < onsets.length ? onsets[index + 1]! : 8;
-      const nextCounterStep = barPlan.counterSteps.find((counterStep) => counterStep > step) ?? 8;
+      const nextLeadStep = index + 1 < onsets.length ? onsets[index + 1]! : steps;
+      const nextCounterStep = barPlan.counterSteps.find((counterStep) => counterStep > step) ?? steps;
+      // 装飾は細かい格子(ステップの 2 分割)なので 2 で割ってステップへ。
       const nextOrnamentStep = barPlan.ornamentSteps
-        .map((ornamentStep) => ornamentStep * 0.5)
-        .find((ornamentStep) => ornamentStep > step) ?? 8;
+        .map((ornamentStep) => ornamentStep / 2)
+        .find((ornamentStep) => ornamentStep > step) ?? steps;
       const boundaryStep = Math.min(nextLeadStep, nextCounterStep, nextOrnamentStep);
-      const boundaryBeat = grooveBeat(bar * 4 + boundaryStep * 0.5, grooveFeel);
-      // 半小節タイ: アンカー(3拍目)を跨いで保続する音は、跨いだ先(3拍目時点)の和音の
+      const boundaryBeat = grooveBeat(bar * 4 + stepBeat(grid, boundaryStep), grooveFeel);
+      // 半小節タイ: アンカー(4x2 の 3 拍目)を跨いで保続する音は、跨いだ先(アンカー時点)の和音の
       // 構成音を先に取る(先取音)。跨ぎ先が同じ和音なら和声音への吸着と同義。
-      const tiesOverAnchor = barPlan.anchorTie && step < 4 && nextLeadStep > 4;
+      const tiesOverAnchor = barPlan.anchorTie && step < anchorStep && nextLeadStep > anchorStep;
       if (tiesOverAnchor) {
-        midi = nearestWithPc(midi, melodyPcsForChord(chordAt(bar * 4 + 2)), MELODY_LO, ceiling);
+        midi = nearestWithPc(midi, melodyPcsForChord(chordAt(bar * 4 + stepBeat(grid, anchorStep))), MELODY_LO, ceiling);
       }
       // 単一頂点の最終保証(上の束縛で通常は発火しない): 残った逸脱は和声音の範囲で頂点未満へ。
       if (midi > ceiling) {
@@ -449,19 +456,21 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
         midi = nearestWithPc(ceiling, ceilingPcs, MELODY_LO, ceiling);
       }
       // ロングトーン: 到達音を次小節の最初の発音（主旋律・副旋律・装飾のどれか）まで保続する。
+      // 次小節の格子は次小節の割り方(区間境界で変わる)。
       const nextBarPlan = phrasePlan.bars[bar + 1];
       const longToneBoundary = barPlan.longToneStep === step && nextBarPlan !== undefined
         ? (() => {
+            const nextGrid = gridAt(bar + 1);
             const nextMelodyOnset = nextBarPlan.rhythm.findIndex((on) => on);
             const boundary = Math.min(
-              nextMelodyOnset < 0 ? 8 : nextMelodyOnset,
-              nextBarPlan.counterSteps[0] ?? 8,
-              (nextBarPlan.ornamentSteps[0] ?? 16) * 0.5,
+              nextMelodyOnset < 0 ? nextGrid.steps : nextMelodyOnset,
+              nextBarPlan.counterSteps[0] ?? nextGrid.steps,
+              (nextBarPlan.ornamentSteps[0] ?? nextGrid.sixteenthSteps) / 2,
             );
-            return grooveBeat((bar + 1) * 4 + boundary * 0.5, grooveFeel);
+            return grooveBeat((bar + 1) * 4 + stepBeat(nextGrid, boundary), grooveFeel);
           })()
         : null;
-      const articulation: NoteArticulation = tiesOverAnchor
+      const articulation: NoteArticulation = tiesOverAnchor || barPlan.holdUntilBeat !== null
         ? 'tenuto'
         : barPlan.targetStep === step
         ? barPlan.ornamentType === 'shake' ? 'ornament' : 'tenuto'
@@ -471,7 +480,8 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
             ? 'accent'
             : style.melody.articulation === 'offbeatStaccato'
               ? 'staccato'
-              : style.melody.articulation === 'longTenuto' && boundaryStep - step >= 2
+              // 1 拍以上残せる音(4x2 では 2 ステップ)だけテヌート。
+              : style.melody.articulation === 'longTenuto' && (boundaryStep - step) * grid.stepBeats + 1e-9 >= 1
                 ? 'tenuto'
                 : 'normal';
       const gate = articulation === 'staccato'
@@ -482,7 +492,10 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       const velocity = Math.min(1, barPlan.dynamic + (strong ? 0.08 : 0) + (articulation === 'accent' ? 0.08 : 0));
       melody.push({
         beat,
-        dur: longToneBoundary !== null
+        // sustain テクスチャの区間頭は区間末尾まで保続する(小節線は格子に依らず整数拍)。
+        dur: barPlan.holdUntilBeat !== null
+          ? Math.max(0.1, barPlan.holdUntilBeat - beat)
+          : longToneBoundary !== null
           ? Math.max(0.1, longToneBoundary - beat)
           // タイはアンカーを跨いで次の発音まで途切れず保続する(ゲート比を掛けない)。
           : tiesOverAnchor
@@ -503,15 +516,15 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     // 和風モードの装飾は独立した「飛び道具」ではなく、応答の到達音へ食い込む前打音として置く。
     for (let ornamentIndex = 0; ornamentIndex < barPlan.ornamentSteps.length; ornamentIndex++) {
       const ornamentStep = barPlan.ornamentSteps[ornamentIndex]!;
-      const beat = grooveBeat(bar * 4 + ornamentStep * 0.25, grooveFeel);
-      const targetBeat = grooveBeat(bar * 4 + barPlan.targetStep! * 0.5, grooveFeel);
+      const beat = grooveBeat(bar * 4 + (ornamentStep * grid.stepBeats) / 2, grooveFeel);
+      const targetBeat = grooveBeat(bar * 4 + stepBeat(grid, barPlan.targetStep!), grooveFeel);
       const target = melody.find((note) => Math.abs(note.beat - targetBeat) < 0.001);
       if (!target) continue;
       const baseDirection: 1 | -1 = ((bar + opts.seed) & 1) === 0 ? -1 : 1;
       const direction: 1 | -1 = barPlan.ornamentType === 'turn' && ornamentIndex === 1
         ? (baseDirection === 1 ? -1 : 1)
         : baseDirection;
-      const ornamentScale = scaleAt(chordAt(bar * 4 + barPlan.targetStep! * 0.5));
+      const ornamentScale = scaleAt(chordAt(bar * 4 + stepBeat(grid, barPlan.targetStep!)));
       let midi = stepOnScale(target.midi, direction, ornamentScale);
       // 装飾音も単一頂点を壊さない(頂点以上なら下側の隣音へ)。
       if (midi >= climaxMidi) midi = stepOnScale(target.midi, -1, ornamentScale);
@@ -533,7 +546,9 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   // 全実音の確定後に逆算で合わせる。
   for (const barPlan of phrasePlan.bars) {
     if (!barPlan.anacrusis) continue;
-    const pickupBeat = grooveBeat(barPlan.bar * 4 + 3.5, grooveFeel);
+    const pickupGrid = gridAt(barPlan.bar);
+    const pickupOffset = stepBeat(pickupGrid, pickupGrid.steps - 1);
+    const pickupBeat = grooveBeat(barPlan.bar * 4 + pickupOffset, grooveFeel);
     const pickup = melody.find((note) => (
       note.role !== 'ornament' && Math.abs(note.beat - pickupBeat) < 0.001
     ));
@@ -541,7 +556,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       note.role !== 'ornament' && note.beat >= (barPlan.bar + 1) * 4
     ));
     if (!pickup || !head) continue;
-    pickup.midi = stepOnScale(head.midi, -1, scaleAt(chordAt(barPlan.bar * 4 + 3.5)));
+    pickup.midi = stepOnScale(head.midi, -1, scaleAt(chordAt(barPlan.bar * 4 + pickupOffset)));
   }
   return melody;
 }
