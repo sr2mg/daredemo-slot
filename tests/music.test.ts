@@ -1206,12 +1206,12 @@ describe('compose', () => {
     expect(piece.phrasePlan.bars.filter((plan) => plan.bar % 8 === 0).map((plan) => plan.section))
       .toEqual(['A', 'B', 'C', 'D', 'E']);
     expect(piece.songPlan.form.sections.map((section) => section.motifSourceSection))
-      .toEqual([null, 'A', null, 'A', 'B']);
+      .toEqual([null, 'A', null, 'A', 'A']);
     expect(new Set(piece.songPlan.form.sections.map((section) => section.rhythmVariant)).size)
       .toBeGreaterThanOrEqual(3);
     expect(piece.phrasePlan.bars[16]!.motifSourceBar).toBe(16);
     expect(piece.phrasePlan.bars[24]!.motifSourceBar).toBe(0);
-    expect(piece.phrasePlan.bars[32]!.motifSourceBar).toBe(8);
+    expect(piece.phrasePlan.bars[32]!.motifSourceBar).toBe(0);
     const notesInSection = (startBar: number) => piece.ostinato.filter((note) => (
       note.beat >= piece.loopStartBeat + startBar * 4
       && note.beat < piece.loopStartBeat + (startBar + 8) * 4

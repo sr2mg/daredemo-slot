@@ -82,15 +82,19 @@ describe('bassLine装置の配線(compose)', () => {
   });
 
   it('半音経過ベース(コードトーン外のbassPc)も診断を通る', () => {
-    const piece = compose({
-      ...base, seed: 42, tonality: 'minor', bassLine: 'on',
-    });
-    const chromatic = piece.chords.filter(
+    // 半音経過は進行レシピ次第で現れるので、シードを走査して最初に現れた曲で検査する。
+    const chromaticOf = (piece: ReturnType<typeof compose>) => piece.chords.filter(
       (chord) => chord.bassPc !== undefined && !chord.pcs.includes(chord.bassPc),
     );
-    expect(chromatic.length).toBeGreaterThan(0);
-    const report = diagnosePiece(piece);
-    expect(report.issues.filter((issue) => issue.reason.includes('ベースの経過音'))).toEqual([]);
+    const pieces = Array.from({ length: 64 }, (_, seed) => compose({
+      ...base, seed, tonality: 'minor', bassLine: 'on',
+    }));
+    const withChromatic = pieces.filter((piece) => chromaticOf(piece).length > 0);
+    expect(withChromatic.length).toBeGreaterThan(0);
+    for (const piece of withChromatic) {
+      const report = diagnosePiece(piece);
+      expect(report.issues.filter((issue) => issue.reason.includes('ベースの経過音'))).toEqual([]);
+    }
   });
 
   it('装置はベースだけを変え、旋律・和声トークン列には触れない', () => {

@@ -96,6 +96,8 @@ function candidatesFor(
  */
 export function bassDegreesFor(
   bars: readonly BassPlanBar[],
+  /** loop=末尾→先頭の接続もコストへ含める(BGMは循環)。終止曲型は閉じないので含めない。 */
+  options: { loop: boolean } = { loop: true },
 ): (readonly (number | null)[] | undefined)[] {
   const events: BassEvent[] = [];
   bars.forEach((bar, barIndex) => {
@@ -116,7 +118,7 @@ export function bassDegreesFor(
   const candidateSets = events.map((event, i) => candidatesFor(
     event,
     i > 0 ? rootOf(events[i - 1]!.token) : null,
-    i + 1 < events.length ? rootOf(events[i + 1]!.token) : rootOf(events[0]!.token),
+    i + 1 < events.length ? rootOf(events[i + 1]!.token) : options.loop ? rootOf(events[0]!.token) : null,
   ));
 
   // Viterbi: layer[i][k] = イベントiで候補kを選んだときの最小累積コスト。
@@ -149,7 +151,7 @@ export function bassDegreesFor(
   let bestEnd = 0;
   let bestCost = Infinity;
   layer.forEach((cost, k) => {
-    const total = cost + (events.length > 1
+    const total = cost + (events.length > 1 && options.loop
       ? MOTION_COST[circularDistance(candidateSets.at(-1)![k]!.degree, firstDegree)]!
       : 0);
     if (total < bestCost) {

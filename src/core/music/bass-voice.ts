@@ -7,7 +7,7 @@
 import { sectionIndexAt } from './form.js';
 import { grooveBeat } from './groove.js';
 import { nearestWithPc } from './pitch.js';
-import { CHORDS, drumPatternStep } from './theory.js';
+import { drumPatternStep } from './theory.js';
 import type { ComposeContext } from './compose-context.js';
 import type { NoteEvent } from './types.js';
 
@@ -37,15 +37,10 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
   for (const c of chords) {
     // ペダル低音は進行名だけで常設せず、曲全体で低音主導を選んだ場合にだけ使う。
     // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
-    const chordRootPc = (CHORDS[c.token]!.root + keyRoot) % 12;
-    const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : (c.bassPc ?? chordRootPc);
-    // 40小節の5区間弧(BIG)はC2前後まで下げ、低音の土台を明確にする(曲型プリセット由来の例外。
-    // 次段の rev5 で廃止し、音域は様式の bass ファセットに従わせる)。
-    const root: number = songPlan.form.presetId === 'arc40'
-      ? nearestWithPc(40, [anchorPc], 36, 47)
-      : linkedAnchors
-        ? nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50) // D#2..D3窓で直前へ最短連結。
-        : 40 + ((anchorPc - 4 + 12) % 12); // rev0の通常フォーム: 従来のE2..D#3帯固定写像。
+    const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : (c.bassPc ?? c.rootPc);
+    const root: number = linkedAnchors
+      ? nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50) // D#2..D3窓で直前へ最短連結。
+      : 40 + ((anchorPc - 4 + 12) % 12); // rev0の通常フォーム: 従来のE2..D#3帯固定写像。
     previousAnchor = root;
     if (bassPattern === 'rootFifth') {
       // 五度は和音の品質に追従する（dimは減5度、augは増5度）。機械的な+7で和声外に落とさない。
@@ -53,7 +48,8 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
       const fifthPc = ([7, 6, 8] as const)
         .map((interval) => (anchorPc + interval) % 12)
         .find((pc) => c.pcs.includes(pc));
-      const fifthOffset = fifthPc === undefined ? 7 : (fifthPc - anchorPc + 12) % 12;
+      // 5度を省いた和音(M13 等)では機械的な完全5度を和声外へ落とさず、オクターブで交替する。
+      const fifthOffset = fifthPc === undefined ? 12 : (fifthPc - anchorPc + 12) % 12;
       for (let b = 0; b < c.dur; b++) {
         bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
       }
@@ -97,10 +93,13 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     const last = inBar[inBar.length - 1];
     if (!last) continue;
     const endChord = chordAt((bar + 1) * 4 - 0.001);
-    const endRootPc = (CHORDS[endChord.token]!.root + keyRoot) % 12;
-    const nextChord = bar + 1 < bars ? chordAt((bar + 1) * 4) : chordAt(0);
+    const endRootPc = endChord.rootPc;
+    // 最終小節の次はループなら先頭、終止曲型なら(次が無いので)終止和音そのもの。
+    const nextChord = bar + 1 < bars
+      ? chordAt((bar + 1) * 4)
+      : songPlan.form.ending === 'loop' ? chordAt(0) : endChord;
     // 接近の目標は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
-    const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + keyRoot) % 12;
+    const nextAnchorPc = nextChord.bassPc ?? nextChord.rootPc;
     // 持続サブの終止音: 長音そのものを再ピッチすると小節全体の低音が動いてしまうため、
     // 長音は保ったまま最後の8分だけを終止音・接近音へ割く。
     const placeSustainedCadenceNote = (midi: number): void => {
@@ -127,9 +126,10 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
         // 同じ規則)。rev2以前は機械的な+7で、短調のiiDim(減三和音)上では和声外の完全5度に
         // 落ちていた(診断 harmony「ベースの経過音が…解決していない」)。持続サブは長音を
         // 保って最後の8分だけを5度へ割く(終止小節の低音の土台を1小節ぶん動かさない)。
+        // 5度を省いた和音(M13 等)では完全5度が和声外になるので、根音で開いたまま受ける。
         const fifthPc = ([7, 6, 8] as const)
           .map((interval) => (endRootPc + interval) % 12)
-          .find((pc) => endChord.pcs.includes(pc)) ?? (endRootPc + 7) % 12;
+          .find((pc) => endChord.pcs.includes(pc)) ?? endRootPc;
         placeSustainedCadenceNote(nearestWithPc(last.midi, [fifthPc], 36, 64));
       } else {
         last.midi = nearestWithPc(last.midi, [(endRootPc + 7) % 12], 36, 64);

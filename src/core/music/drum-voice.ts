@@ -55,6 +55,12 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
       }
       // 最終小節の最後の 1 拍を空け、B の勢いを整理してループ先の A を迎える。
       if (barPlan.cadence === 'turnaround' && s >= 12) continue;
+      // 終止曲型の最終小節: 終止和音(3拍目)で打ち切り、シンバルで閉じる。
+      if (form.ending === 'final' && bar === bars - 1) {
+        if (s === 0) drums.push({ beat, inst: 'kick' }, { beat, inst: 'cymbal' });
+        if (s === 8) drums.push({ beat, inst: 'kick' }, { beat, inst: 'cymbal' });
+        continue;
+      }
       if (sectionPlan.drum === 'breakdown') {
         if (s === 0 || s === 8) drums.push({ beat, inst: 'kick' });
         if (s === 4 || s === 12) drums.push({ beat, inst: 'snare' });
@@ -70,10 +76,11 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
     if (hatOverlay === 'triplet') {
       // 三連を常時ロールとして足さず、元のスタイル譜(この小節の16ステップ窓)を三連位置へ写す。
       // A→Bフィルとループ直前は最終拍のハットを休ませ、スネアと余白を立てる。
-      const quarters = barPlan.cadence === 'turnaround'
-        || hasFill
-        ? 3
-        : 4;
+      const quarters = form.ending === 'final' && bar === bars - 1
+        ? 0
+        : barPlan.cadence === 'turnaround' || hasFill
+          ? 3
+          : 4;
       const hatWindowStart = (bar * 16) % pattern.hat.length;
       const hatWindow = pattern.hat.slice(hatWindowStart, hatWindowStart + 16);
       for (let quarter = 0; quarter < quarters; quarter++) {

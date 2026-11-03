@@ -4,7 +4,6 @@ import type {
 import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
-import { CHORDS } from '../core/music/theory.js';
 import {
   freqToFnum, initRhythmMode, RHYTHM_DEFAULT_LEVELS, RHYTHM_LEVEL_SLOT, rhythmLevelRegs, SeqBuilder,
 } from './opll-core.js';
@@ -118,7 +117,7 @@ export function kickMidiAt(piece: Piece, beat: number): number {
     pc = current.midi % 12;
   } else {
     const chord = piece.chords.find((c) => c.beat <= beat && beat < c.beat + c.dur) ?? piece.chords[0];
-    pc = chord ? chord.bassPc ?? (CHORDS[chord.token]!.root + piece.keyRoot) % 12 : piece.keyRoot;
+    pc = chord ? chord.bassPc ?? chord.rootPc : piece.keyRoot;
   }
   return KICK_LOWEST_MIDI + (((pc - KICK_LOWEST_MIDI) % 12) + 12) % 12;
 }

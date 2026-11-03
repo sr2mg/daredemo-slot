@@ -6,12 +6,16 @@ import type {
   CompositionStrategy,
   StrategySectionId,
 } from './composition-strategy.js';
-import { barInSection, phraseFunctionFor, sectionIndexAt, sectionStartBars, totalBars } from './form.js';
+import {
+  RHYTHM_FAMILY_COUNT, barInSection, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
+  sectionRng, sectionStartBars, sectionTonality, totalBars,
+} from './form.js';
 import { hasGrooveDevice } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
+import type { MelodicIdiom } from './melodic-idiom.js';
 import type { SoundBackendId } from './sound-capabilities.js';
-import { CHORDS, harmonicFunctionForToken } from './theory.js';
+import { CHORDS, PROGRESSIONS, harmonicFunctionForToken, progressionForTonality } from './theory.js';
 import type { ProgressionDef, StyleDef } from './theory.js';
 import type {
   BassLinePolicy,
@@ -25,11 +29,14 @@ import type {
   IntroDrumGesture,
   IntroLeadGesture,
   IntroRole,
+  JapaneseScaleChoice,
   MelodicLanguage,
   MelodyMode,
+  MotifTransform,
   PhraseFunction,
   RhythmVariant,
   SectionBars,
+  SectionSpec,
   SongFormPlan,
   SongFormSpec,
   SongIntroPlan,
@@ -93,164 +100,160 @@ type SectionMotifPlan = Pick<
   | 'cadenceDegrees'
 >;
 
-function sectionMotifPlanFor(
-  index: number,
-  count: number,
-  seed: number,
-  policy: CompositionPolicy,
-): SectionMotifPlan {
-  // SRDCの反復設計: 変奏反復(restatement)は提示と同じリズム族を使い、フックを
-  // リテラルに繰り返す（違いは終止音度だけ＝平行ピリオド）。展開と結論だけ型を替え、
-  // 「同じ2小節を4回貼らない」多様性は展開(variant+2/3)と結論(variant+1)で担保する。
-  const phrasePlan = (base: RhythmVariant, salt: number): Pick<
-    SongSectionPlan,
-    'rhythmVariant' | 'phraseRhythmVariants' | 'motifSourcePhrases' | 'cadenceDegrees'
-  > => {
-    const variant = (offset: number): RhythmVariant => ((base + offset) % 5) as RhythmVariant;
-    return {
-      rhythmVariant: base,
-      phraseRhythmVariants: [
-        base,
-        base,
-        variant(2 + ((seed >>> (salt + 1)) & 1)),
-        variant(1),
-      ],
-      // 結論は必ず提示フレーズ(フック)を引用して閉じる。
-      motifSourcePhrases: [0, 0, 2, 0],
-      // 3̂ →(5̂|2̂)→ 2̂ → 1̂ の終止音度物語。
-      cadenceDegrees: [2, ((seed >>> (salt + 2)) & 1) === 0 ? 4 : 1, 1, 0],
-    };
+/** 区間ごとの独立乱数の用途(salt)。区間添字と組で一意のストリームになる。 */
+const RNG_SALT = {
+  /** フレーズのリズム族と終止音度の物語。 */
+  phrase: 0x5048_5253,
+} as const;
+
+/**
+ * SRDCの反復設計: 変奏反復(restatement)は提示と同じリズム族を使い、フックを
+ * リテラルに繰り返す（違いは終止音度だけ＝平行ピリオド）。展開と結論だけ型を替え、
+ * 「同じ2小節を4回貼らない」多様性は展開(variant+2/3)と結論(variant+1)で担保する。
+ */
+function phrasePlanFor(base: RhythmVariant, seed: number, index: number): Pick<
+  SongSectionPlan,
+  'rhythmVariant' | 'phraseRhythmVariants' | 'motifSourcePhrases' | 'cadenceDegrees'
+> {
+  const rng = sectionRng(seed, index, RNG_SALT.phrase);
+  const variant = (offset: number): RhythmVariant => ((base + offset) % RHYTHM_FAMILY_COUNT) as RhythmVariant;
+  const departureVariant = variant(2 + rng.nextInt(2));
+  const secondCadence = rng.nextInt(2) === 0 ? 4 : 1;
+  return {
+    rhythmVariant: base,
+    phraseRhythmVariants: [base, base, departureVariant, variant(1)],
+    // 結論は必ず提示フレーズ(フック)を引用して閉じる。
+    motifSourcePhrases: [0, 0, 2, 0],
+    // 3̂ →(5̂|2̂)→ 2̂ → 1̂ の終止音度物語。
+    cadenceDegrees: [2, secondCadence, 1, 0],
   };
-  if (count === 1) return {
-    ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
-  };
-  // 16小節: Bの結論フレーズでAのフック（提示テーマ）をリテラルに回収し、
-  // ループ直前に主題を予告してAへ戻す（ループ境界の予告と回収）。回収フレーズは
-  // Aの提示リズム族(0)も継ぎ、音度列だけでなくリズムごとフックを鳴らす。
-  if (count === 2) {
-    if (index === 0) return {
-      ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
-    };
-    const bPlan = phrasePlan(1, 7);
-    return {
-      ...bPlan,
-      phraseRhythmVariants: [
-        bPlan.phraseRhythmVariants[0], bPlan.phraseRhythmVariants[1], bPlan.phraseRhythmVariants[2], 0,
-      ] as const,
-      externalMotifPhrases: [3], motifSourceSection: 'A', motifTransform: 'literal',
-    };
-  }
-  if (count !== 5) {
-    // 5区間以外の明示曲型は、主題宣言から導く計画(次段)までの暫定: 区間ごとに独自主題。
-    return {
-      ...phrasePlan((index % 5) as RhythmVariant, 3 + (index % 5) * 4),
-      externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
-    };
-  }
-  const bVariant = (1 + ((seed >>> 3) % 2)) as 1 | 2;
-  const dVariant = (1 + ((seed >>> 4) & 1)) as 1 | 2;
-  const eVariant = (3 + ((seed >>> 5) & 1)) as 3 | 4;
-  if (policy.motif.returnEvent) {
-    const a = phrasePlan(0, 3);
-    const b = phrasePlan(bVariant, 7);
-    const c = phrasePlan(3, 11);
-    const dBase = phrasePlan(0, 15);
-    const d = {
-      ...dBase,
-      // Aの最初の4小節と同じリズム族を受け継ぎ、音程だけを変奏して帰還を知覚可能にする。
-      phraseRhythmVariants: [
-        a.phraseRhythmVariants[0],
-        a.phraseRhythmVariants[1],
-        dBase.phraseRhythmVariants[2],
-        dBase.phraseRhythmVariants[3],
-      ] as const,
-      motifSourcePhrases: [0, 1, 2, 0] as const,
-    };
-    const e = phrasePlan(eVariant, 19);
-    const sectionIds = ['A', 'B', 'C', 'D', 'E'] as const;
-    const memoryPlans: SectionMotifPlan[] = [
-      { ...a, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original' },
-      { ...b, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
-      { ...c, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
-      { ...d, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'transpose' },
-      { ...e, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
-    ];
-    // ポリシーの意味イベントをセクションIDへ解決する。下流は戦略名を知らない。
-    const returnEvent = policy.motif.returnEvent;
-    const returnIndex = sectionIds.indexOf(returnEvent.to);
-    if (returnIndex >= 0) {
-      memoryPlans[returnIndex] = {
-        ...memoryPlans[returnIndex]!,
-        externalMotifPhrases: [...returnEvent.phrases],
-        motifSourceSection: returnEvent.from,
-        motifTransform: returnEvent.transform,
-      };
-    }
-    const continuationEvent = policy.motif.continuationEvent;
-    if (continuationEvent) {
-      const continuationIndex = sectionIds.indexOf(continuationEvent.to);
-      if (continuationIndex >= 0) {
-        memoryPlans[continuationIndex] = {
-          ...memoryPlans[continuationIndex]!,
-          externalMotifPhrases: [...continuationEvent.phrases],
-          motifSourceSection: continuationEvent.from,
-          motifTransform: continuationEvent.transform,
-        };
-      }
-    }
-    return memoryPlans[index]!;
-  }
-  // Dは主題のリテラル帰還区間: 提示フレーズだけAのリズム族(0)を継いでフックを
-  // 原形のまま鳴らし、残りのフレーズは自分の型で展開する（区間丸ごとの複製はしない）。
-  const dPlan = phrasePlan(dVariant, 15);
-  const plans = [
-    {
-      ...phrasePlan(0, 3), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
-    },
-    {
-      ...phrasePlan(bVariant, 7), externalMotifPhrases: [0], motifSourceSection: 'A',
-      motifTransform: ((seed >>> 6) & 1) === 0 ? 'transpose' : 'invert',
-    },
-    {
-      ...phrasePlan(3, 11), externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast',
-    },
-    {
-      ...dPlan,
-      phraseRhythmVariants: [
-        0, dPlan.phraseRhythmVariants[1], dPlan.phraseRhythmVariants[2], dPlan.phraseRhythmVariants[3],
-      ] as const,
-      externalMotifPhrases: [0], motifSourceSection: 'A', motifTransform: 'literal',
-    },
-    {
-      ...phrasePlan(eVariant, 19),
-      externalMotifPhrases: [0],
-      motifSourceSection: ((seed >>> 8) & 1) === 0 ? 'B' : 'D',
-      motifTransform: ((seed >>> 9) & 1) === 0 ? 'invert' : 'transpose',
-    },
-  ] satisfies SectionMotifPlan[];
-  return plans[index]!;
 }
 
 /**
- * 終止の種類。答句(区間内の奇数小節)だけが終止を持つ。曲の最終小節はターンアラウンド、
- * 区間の最終小節は半終止/開放終止、結論フレーズは機能に応じて閉じる。
+ * 主題の初出区間(帰還の元)。無ければ -1。
+ * 直前の同主題区間ではなく初出を元にするのは、変形(移調・反転)を重ねた区間を経由すると
+ * リテラル帰還が「変形済みの主題」を返してしまい、フックが原形で戻らないため。
+ */
+function themeOriginIndex(sections: readonly SectionSpec[], index: number): number {
+  const origin = sections.findIndex((candidate) => candidate.theme === sections[index]!.theme);
+  return origin >= 0 && origin < index ? origin : -1;
+}
+
+/**
+ * 主題計画を区間の宣言(theme / transform / quote)から導く。
+ * - 初出: 主題の出現順でリズム族を取り、自分の主題を提示する。
+ * - 再登場: 主題の初出区間を元に transform で区間全体を作り直す(フレーズ0の借用)。
+ *   literal は元区間のフレーズ0のリズム族も継ぎ、フックをリズムごと鳴らす。
+ * - 部分引用(quote): 主題は自分のまま、指定フレーズだけ元区間から借りる。
+ * 上位戦略(arc40 限定)の不在・帰還・継続イベントは、この導出結果へ上書きする。
+ */
+function motifPlansFor(
+  sections: readonly SectionSpec[],
+  seed: number,
+  policy: CompositionPolicy,
+): SectionMotifPlan[] {
+  const themeOrder: string[] = [];
+  const occurrences = new Map<string, number>();
+  const plans: SectionMotifPlan[] = [];
+  const inheritRhythm = (
+    plan: SectionMotifPlan,
+    source: SectionMotifPlan,
+    phrases: readonly (0 | 1 | 2 | 3)[],
+  ): SectionMotifPlan => {
+    const variants = [...plan.phraseRhythmVariants] as [RhythmVariant, RhythmVariant, RhythmVariant, RhythmVariant];
+    for (const phrase of phrases) {
+      variants[phrase] = source.phraseRhythmVariants[source.motifSourcePhrases[phrase]]!;
+    }
+    return { ...plan, phraseRhythmVariants: variants };
+  };
+  sections.forEach((spec, index) => {
+    if (!themeOrder.includes(spec.theme)) themeOrder.push(spec.theme);
+    const themeIndex = themeOrder.indexOf(spec.theme);
+    const occurrence = occurrences.get(spec.theme) ?? 0;
+    occurrences.set(spec.theme, occurrence + 1);
+    const base = ((themeIndex + occurrence) % RHYTHM_FAMILY_COUNT) as RhythmVariant;
+    let plan: SectionMotifPlan = {
+      ...phrasePlanFor(base, seed, index),
+      externalMotifPhrases: [],
+      motifSourceSection: null,
+      motifTransform: 'original',
+    };
+    const absent = policy.motif.absenceSections.includes(spec.id as StrategySectionId);
+    const sourceIndex = themeOriginIndex(sections, index);
+    if (!absent && sourceIndex >= 0) {
+      const transform: MotifTransform = spec.transform ?? 'literal';
+      if (transform === 'literal' || transform === 'transpose' || transform === 'invert') {
+        plan = {
+          ...plan,
+          externalMotifPhrases: [0],
+          motifSourceSection: sections[sourceIndex]!.id,
+          motifTransform: transform,
+        };
+        if (transform === 'literal') plan = inheritRhythm(plan, plans[sourceIndex]!, [0]);
+      } else {
+        plan = { ...plan, motifTransform: 'contrast' };
+      }
+    } else if (!absent && spec.quote) {
+      const quoteIndex = sections.findIndex((candidate) => candidate.id === spec.quote!.from);
+      if (quoteIndex >= 0 && quoteIndex < index) {
+        const transform: MotifTransform = spec.quote.transform ?? 'literal';
+        plan = {
+          ...plan,
+          externalMotifPhrases: [...spec.quote.phrases],
+          motifSourceSection: spec.quote.from,
+          motifTransform: transform,
+        };
+        if (transform === 'literal') plan = inheritRhythm(plan, plans[quoteIndex]!, spec.quote.phrases);
+      }
+    } else if (absent) {
+      plan = { ...plan, motifTransform: 'contrast' };
+    }
+    // ポリシーの意味イベントを区間IDへ解決する。下流は戦略名を知らない。
+    for (const event of [policy.motif.returnEvent, policy.motif.continuationEvent]) {
+      if (!event || event.to !== spec.id) continue;
+      const eventSourceIndex = sections.findIndex((candidate) => candidate.id === event.from);
+      if (eventSourceIndex < 0 || eventSourceIndex >= index) continue;
+      plan = {
+        ...plan,
+        externalMotifPhrases: [...event.phrases],
+        motifSourceSection: event.from,
+        motifTransform: event.transform,
+        // 変奏反復まで借りる帰還は、提示と変奏反復をそれぞれ元のフレーズから継ぐ。
+        motifSourcePhrases: event.phrases.includes(1) ? [0, 1, 2, 0] : plan.motifSourcePhrases,
+      };
+      if (event === policy.motif.returnEvent) plan = inheritRhythm(plan, plans[eventSourceIndex]!, event.phrases);
+    }
+    plans.push(plan);
+  });
+  return plans;
+}
+
+/**
+ * 終止の種類。答句(区間内の奇数小節)だけが終止を持つ。曲の最終小節はループなら
+ * ターンアラウンド、終止曲型なら完全終止。区間の最終小節は半終止/開放終止、
+ * 結論フレーズは機能に応じて閉じる。
  */
 function cadenceFor(
   offsetInSection: number,
   isLastBar: boolean,
   isSectionLastBar: boolean,
+  ending: SongFormSpec['ending'],
   phraseFunction: PhraseFunction,
   exitFunction: HarmonicFunction,
 ): CadenceType | null {
   if (offsetInSection % 2 === 0) return null;
-  if (isLastBar) return 'turnaround';
+  if (isLastBar) return ending === 'loop' ? 'turnaround' : 'closed';
   if (isSectionLastBar) return exitFunction === 'dominant' ? 'half' : 'open';
   if (phraseFunction !== 'conclusion') return 'open';
   return exitFunction === 'tonic' ? 'closed' : exitFunction === 'dominant' ? 'half' : 'open';
 }
 
-function harmonicGoalFor(isLastBar: boolean, phraseFunction: PhraseFunction): HarmonicGoal {
-  if (isLastBar) return 'turnaround';
+function harmonicGoalFor(
+  isLastBar: boolean,
+  ending: SongFormSpec['ending'],
+  phraseFunction: PhraseFunction,
+): HarmonicGoal {
+  if (isLastBar) return ending === 'loop' ? 'turnaround' : 'resolve';
   if (phraseFunction === 'statement') return 'establish';
   if (phraseFunction === 'restatement') return 'continue';
   if (phraseFunction === 'departure') return 'depart';
@@ -276,6 +279,15 @@ function durationsFor(
   if (goal === 'depart' && second !== first) return [1, 3];
   if (goal === 'resolve' && second === 'tonic' && first !== 'tonic') return [1, 3];
   return [2, 2];
+}
+
+/**
+ * 終止曲型の最終小節: 進行のスロットに頼らず、調性から V→I(短調は V7→i)を導く。
+ * スロット末尾にトニックの選択肢を持たない進行が半数あるため探索はしない
+ * (イントロの接近和音 approachTokenFor と同じ導出法)。
+ */
+export function finalCadenceTokens(tonality: Tonality): string[] {
+  return tonality === 'minor' ? ['V7m', 'i'] : ['V', 'I'];
 }
 
 type ProgressionSlot = ProgressionDef['slots'][number];
@@ -318,10 +330,16 @@ export interface CreateSongPlanOptions {
   /** プリセット参照なら id。エネルギー弧のシード揺らぎと上位戦略(arc40 限定)が読む。 */
   presetId: FormPresetId | null;
   seed: number;
+  /** 曲既定の調(区間指定が無い区間で使う)。0..11 に正規化済み。 */
+  keyRoot: number;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
+  /** 語法の宣言(区間ごとの音組織・核音計画を調へ写す)。 */
+  idiom: MelodicIdiom;
+  japaneseScale?: JapaneseScaleChoice | undefined;
   grooveFeel: GrooveFeel;
   soundChip: SoundBackendId;
+  /** 曲既定の進行(調性へ実現済み)。区間の progressionId が無い区間で使う。 */
   progression: ProgressionDef;
   style: StyleDef;
   choice: readonly number[];
@@ -389,17 +407,20 @@ function introPlanFor(
   harmony: readonly HarmonyBarPlan[],
   harmonicActivity: number,
 ): SongIntroPlan {
-  const entryToken = harmony[0]!.tokens[0]!;
+  const entryBar = harmony[0]!;
+  const entryToken = entryBar.tokens[0]!;
   const entryFunction = harmonicFunctionForToken(entryToken);
   if (!options.intro) {
     return { enabled: false, bars: 0, role: null, entryToken, entryFunction, breakBeats: 0, barPlans: [] };
   }
 
+  // イントロは先頭区間の調で作る(本編冒頭の和音へ接続するため)。
+  const tonality = entryBar.tonality;
   const role = introRoleFor(options, entryFunction, harmonicActivity);
   const breakBeats = introBreakFor(role, options.melodicLanguage);
-  const tonic = options.tonality === 'minor' ? 'i' : 'I';
-  const predominant = options.tonality === 'minor' ? 'iv' : 'IV';
-  const approach = approachTokenFor(entryToken, options.tonality);
+  const tonic = tonality === 'minor' ? 'i' : 'I';
+  const predominant = tonality === 'minor' ? 'iv' : 'IV';
+  const approach = approachTokenFor(entryToken, tonality);
   const secondBarDuration = 4 - breakBeats;
   const firstTokens = role === 'motif'
     ? [entryToken]
@@ -463,8 +484,29 @@ function climaxBarFor(sections: readonly SongSectionPlan[], seed: number): numbe
   return peak.startBar + offset;
 }
 
+/** 区間の進行: 区間指定(progressionId)を区間の調性へ実現する。無ければ曲既定。 */
+function sectionProgressionFor(
+  spec: SectionSpec,
+  tonality: Tonality,
+  options: CreateSongPlanOptions,
+): ProgressionDef {
+  const progressionId = sectionProgressionId(spec, { progressionId: options.progression.id });
+  const base = progressionId === options.progression.id
+    ? options.progression
+    : PROGRESSIONS.find((candidate) => candidate.id === progressionId);
+  if (!base) throw new Error(`[${spec.id}] 未知の進行: ${progressionId}`);
+  const realized = progressionForTonality(base, tonality);
+  if (!realized) {
+    throw new Error(`[${spec.id}] ${tonality === 'minor' ? '短調' : '長調'}では進行「${base.name}」を使用できません`);
+  }
+  if (realized.slots.length > spec.bars) {
+    throw new Error(`[${spec.id}] 進行(${realized.slots.length}小節)が区間(${spec.bars}小節)より長い`);
+  }
+  return realized;
+}
+
 export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
-  const { form, presetId, seed, progression, style } = options;
+  const { form, presetId, seed, progression, style, idiom } = options;
   const bars = totalBars(form);
   const compositionStrategy = options.compositionStrategy ?? 'current';
   const compositionPolicy = resolveCompositionPolicy(compositionStrategy, presetId === 'arc40', seed);
@@ -475,20 +517,39 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
   const presetEnergies = presetId === 'loop16' || presetId === 'arc40'
     ? presetEnergiesFor(count, seed, compositionPolicy)
     : null;
-  const sections: SongSectionPlan[] = form.sections.map((spec, index) => ({
-    index,
-    id: spec.id,
-    startBar: starts[index]!,
-    bars: spec.bars,
-    role: spec.role,
-    energy: presetEnergies?.[index] ?? spec.energy,
-    ...sectionMotifPlanFor(index, count, seed, compositionPolicy),
-  }));
+  const motifPlans = motifPlansFor(form.sections, seed, compositionPolicy);
+  const sectionProgressions: ProgressionDef[] = [];
+  const sections: SongSectionPlan[] = form.sections.map((spec, index) => {
+    const keyRoot = (((spec.keyRoot ?? options.keyRoot) % 12) + 12) % 12;
+    const tonality = sectionTonality(spec, { tonality: options.tonality });
+    const sectionProgression = sectionProgressionFor(spec, tonality, options);
+    sectionProgressions.push(sectionProgression);
+    const japanesePlan = idiom.culturalPlan(keyRoot, options.japaneseScale, seed);
+    const scalePcs = japanesePlan?.scalePcs
+      ?? idiom.scaleIntervals(tonality).map((interval) => (interval + keyRoot) % 12);
+    return {
+      index,
+      id: spec.id,
+      startBar: starts[index]!,
+      bars: spec.bars,
+      role: spec.role,
+      energy: presetEnergies?.[index] ?? spec.energy,
+      theme: spec.theme,
+      keyRoot,
+      tonality,
+      scalePcs,
+      japanesePlan,
+      progressionId: sectionProgression.id,
+      progressionBars: sectionProgression.slots.length,
+      ...motifPlans[index]!,
+    };
+  });
   const climaxBar = climaxBarFor(sections, seed);
 
   const slotAt = (bar: number): ProgressionSlot => {
+    const sectionProgression = sectionProgressions[sectionIndexAt(form, bar)]!;
     const offset = barInSection(form, bar);
-    return progression.slots[offset % progression.slots.length]!;
+    return sectionProgression.slots[offset % sectionProgression.slots.length]!;
   };
   const baseChoices = Array.from({ length: bars }, (_, bar) => (
     clampedChoiceIndex(slotAt(bar), options.choice[bar])
@@ -518,24 +579,30 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
         strategyRole = 'return';
       }
     }
-    const tokens = [...slot[selected]!];
-    const phraseFunction = phraseFunctionFor(offset, section.bars as SectionBars);
     const isLastBar = bar === bars - 1;
-    const harmonicGoal = harmonicGoalFor(isLastBar, phraseFunction);
+    const finalCadence = isLastBar && form.ending === 'final';
+    const tokens = finalCadence ? finalCadenceTokens(section.tonality) : [...slot[selected]!];
+    const phraseFunction = phraseFunctionFor(offset, section.bars as SectionBars);
+    const harmonicGoal = harmonicGoalFor(isLastBar, form.ending, phraseFunction);
     const entryFunction = harmonicFunctionForToken(tokens[0]!);
     const exitFunction = harmonicFunctionForToken(tokens.at(-1)!);
     const localEnergy = [0, 1, 1, 0][Math.floor((offset % 8) / 2)]!;
     harmony.push({
       bar,
       section: section.id,
+      keyRoot: section.keyRoot,
+      tonality: section.tonality,
       phraseFunction,
       harmonicGoal,
       tokens,
-      durations: durationsFor(tokens, harmonicGoal, compositionPolicy),
+      // 終止曲型の V→I は半小節ずつ(属和音を1拍に押し込まず、終止として聴かせる)。
+      durations: finalCadence ? [2, 2] : durationsFor(tokens, harmonicGoal, compositionPolicy),
       strategyRole,
       entryFunction,
       exitFunction,
-      cadence: cadenceFor(offset, isLastBar, offset === section.bars - 1, phraseFunction, exitFunction),
+      cadence: cadenceFor(
+        offset, isLastBar, offset === section.bars - 1, form.ending, phraseFunction, exitFunction,
+      ),
       energy: bar === climaxBar ? 5 : Math.max(1, Math.min(4, section.energy + localEnergy - 1)),
     });
   }
@@ -543,7 +610,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
   if (options.bassLine === 'on') {
     // ベースライン生成器はコード列確定後に一括で走らせる(先読みが要る大域最適化のため)。
     // 乱数は消費しないので、他声部の生成順・シード消費には影響しない。
-    bassDegreesFor(harmony).forEach((bassDegrees, bar) => {
+    bassDegreesFor(harmony, { loop: form.ending === 'loop' }).forEach((bassDegrees, bar) => {
       if (bassDegrees) harmony[bar] = { ...harmony[bar]!, bassDegrees };
     });
   }

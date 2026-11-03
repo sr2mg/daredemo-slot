@@ -1,6 +1,6 @@
 import { capabilitiesFor } from './sound-capabilities.js';
 import {
-  CHORDS, COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO, styleForId,
+  COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO, styleForId,
 } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
@@ -287,7 +287,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   if (loopChords.length > 1) {
     const firstChord = loopChords[0]!;
     const lastChord = loopChords.at(-1)!;
-    if (firstChord.midis.length === lastChord.midis.length) {
+    if (piece.ending === 'loop' && firstChord.midis.length === lastChord.midis.length) {
       for (const voice of [1, 2]) {
         if (firstChord.midis[voice] === undefined || lastChord.midis[voice] === undefined) continue;
         if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > 7) {
@@ -463,13 +463,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (new Set(rhythmVariants).size < 3) {
       add('form', 'warning', bodyStart, -1, '40小節の主旋律リズムが少数の型へ固定されている');
     }
-    const externalMotifSources = piece.songPlan.form.sections
-      .slice(1)
-      .map((section) => section.motifSourceSection)
-      .filter((source) => source !== null);
-    if (externalMotifSources.length >= 3 && new Set(externalMotifSources).size === 1) {
-      add('form', 'warning', bodyStart, -1, '複数の展開区間がすべて同じモチーフ区間だけを参照している');
-    }
+    // 主題の再登場は初出区間を元にする設計なので、「全区間が同じ元を参照する」ことは欠陥ではない
+    // (主題が1つの曲型では必然)。参照先の集中は検査しない。
     if (new Set(piece.songPlan.form.sections.map((section) => section.energy)).size < 3) {
       add('form', 'warning', bodyStart, -1, '40小節のエネルギー設計に十分な起伏がない');
     }
@@ -760,7 +755,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : bodyStart;
     const nextChord = chordAt(nextChordBeat);
     // 解決先は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
-    const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
+    const nextAnchorPc = nextChord.bassPc ?? nextChord.rootPc;
     // ピックアップの正位置は「8分裏をグルーヴ格子へ写した位置」(スウィング軸に追随)。
     const pickupPosition = grooveBeat(0.5, piece.grooveFeel);
     if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextAnchorPc) {
@@ -768,16 +763,20 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
-  if (bodyMelody.length > 1) {
-    const first = bodyMelody[0]!.note;
-    const last = bodyMelody.at(-1)!.note;
-    if (Math.abs(first.midi - last.midi) > LOOP_BOUNDARY_MAX_SEMITONES) {
-      add('loop', 'warning', last.beat, last.midi, `主旋律のループ境界が${LOOP_BOUNDARY_MAX_SEMITONES}半音を超える`);
-    }
-  }
   const lastPlan = piece.phrasePlan.bars.at(-1);
-  if (!lastPlan || lastPlan.cadence !== 'turnaround') {
-    add('loop', 'error', piece.beats, -1, 'ループ終端にターンアラウンド設計がない');
+  if (piece.ending === 'loop') {
+    if (bodyMelody.length > 1) {
+      const first = bodyMelody[0]!.note;
+      const last = bodyMelody.at(-1)!.note;
+      if (Math.abs(first.midi - last.midi) > LOOP_BOUNDARY_MAX_SEMITONES) {
+        add('loop', 'warning', last.beat, last.midi, `主旋律のループ境界が${LOOP_BOUNDARY_MAX_SEMITONES}半音を超える`);
+      }
+    }
+    if (!lastPlan || lastPlan.cadence !== 'turnaround') {
+      add('loop', 'error', piece.beats, -1, 'ループ終端にターンアラウンド設計がない');
+    }
+  } else if (!lastPlan || lastPlan.cadence !== 'closed') {
+    add('form', 'error', piece.beats, -1, '終止曲型の最終小節が完全終止で計画されていない');
   }
 
   const scores = Object.fromEntries(categories.map((category) => {

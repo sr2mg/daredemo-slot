@@ -92,9 +92,14 @@ describe('作曲エンジンの一括ファズ監査', () => {
     // dnb/acousticは1シード)、計測 melody 82 / harmony 3 / counterpoint 9。acoustic自体の melody 警告は
     // 19曲で9件(跳躍>9半音)で他スタイルと同程度。texture の「足し算」「貼り付き」は伴奏型分散和音
     // (ostinatoRole='accompaniment')を診断側で様式ゲートして0。
+    // 2026-11-03: 曲型を区間リストへ(主題宣言からのモチーフ計画・区間単位の進行レシピ・終止曲型)。
+    // 進行レシピの抽選が変わり、5度省略の和音(M13)で機械的な完全5度を置いていたベース
+    // (rootFifth の刻み・開放終止)が露出したので生成側で根音/オクターブへ。計測
+    // melody 54 / harmony 5 / counterpoint 3。form の「全区間が同じ元を参照」は主題初出を
+    // 元にする設計の必然なので検査を外した。
     // 予算は計測値+25%。恒常的に超えたら「生成と診断の乖離が広がった」ので原因を調べる
     // （予算を黙って上げない。下げられるときは下げる）。
-    const budget: Record<string, number> = { melody: 103, harmony: 5, counterpoint: 12 };
+    const budget: Record<string, number> = { melody: 68, harmony: 7, counterpoint: 4 };
     for (const [category, count] of warningCounts) {
       expect(count, `${category} 警告が予算超過`).toBeLessThanOrEqual(budget[category] ?? 0);
     }

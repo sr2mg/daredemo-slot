@@ -6,7 +6,7 @@
 
 import { fragmentOf, invertTheme, realizeDegree, themeDegreeSpan, themeFromGesture, transposeTheme } from './melodic-theme.js';
 import type { ThemeSpec } from './melodic-theme.js';
-import { barInSection } from './form.js';
+import { barInSection, sectionRng } from './form.js';
 import { grooveBeat } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
 import { LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
@@ -45,8 +45,10 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     if (sourceTheme) {
       if (section.motifTransform === 'invert') borrowed = invertTheme(sourceTheme);
       else if (section.motifTransform === 'transpose') {
-        const magnitude = ((opts.seed >>> (7 + section.index)) & 1) === 0 ? 1 : 2;
-        const direction = ((opts.seed >>> (11 + section.index)) & 1) === 0 ? 1 : -1;
+        // 移調の幅と向きは区間ごとの独立ストリームから(順序非依存、区間数に上限なし)。
+        const rng = sectionRng(opts.seed, section.index, 0x5452_5350);
+        const magnitude = rng.nextInt(2) === 0 ? 1 : 2;
+        const direction = rng.nextInt(2) === 0 ? 1 : -1;
         borrowed = transposeTheme(sourceTheme, magnitude * direction);
       } else borrowed = sourceTheme;
     }
@@ -197,7 +199,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     // ゼクエンツ用の断片と方向。クライマックスが前方にあれば上行で頂点へ向かう。
     const sequenceFragment = fragmentOf(barTheme, 'tail');
     const sequenceAscending = phrasePlan.climaxBar > bar
-      || (phrasePlan.climaxBar < bar && ((opts.seed >>> (5 + sectionDesign.index)) & 1) === 0);
+      || (phrasePlan.climaxBar < bar && sectionRng(opts.seed, sectionDesign.index, 0x5345_5144).nextInt(2) === 0);
     pendingAppoggiaturaResolution = null;
     if (barPlan.phraseFunction !== 'departure' || offsetInSection % 2 === 0) lastSequenceHead = null;
 
@@ -398,11 +400,13 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
         lastSequenceHead = midi;
       }
       const intervalFromPrev = Math.abs(midi - prev);
+      // 順次の判定は診断(isMelodicStep)と同じ「音組織上の隣」。五音系では3〜4半音も隣に
+      // なり得るが、間に音組織音を挟む同じ幅の跳躍(律の F→A は G を飛ばす)は順次ではない。
       const stepwiseFromPrev = (intervalFromPrev >= 1 && intervalFromPrev <= 2)
         || (scaleStepMax > 2
           && intervalFromPrev >= 1 && intervalFromPrev <= scaleStepMax
           && scalePcs.includes(((prev % 12) + 12) % 12)
-          && scalePcs.includes(midi % 12));
+          && stepOnScale(prev, midi > prev ? 1 : -1, scalePcs) === midi);
       if (
         !strong
         && melody.length > 0

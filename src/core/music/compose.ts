@@ -135,12 +135,14 @@ export function compose(opts: ComposeInput): Piece {
   // 弱拍・経過音の音組織は小節のコードスケール（変位音でキーの音階を上書きした音組織）。
   // 旋律語彙が固定の語法(五音系・和風)は対象外とし、従来の音組織を保つ。
   // テンション導出も同じキャッシュを通し、旋律側と音組織の解釈が分岐しないようにする。
+  // キャッシュは「調の主音:トークン」で引く(区間ごとの転調で同じトークンが別の絶対pcになる)。
   const chordScaleCache = new Map<string, readonly number[]>();
-  const chordScaleForToken = (token: string, pcs: readonly number[]): readonly number[] => {
-    let cached = chordScaleCache.get(token);
+  const chordScaleFor = (token: string, pcs: readonly number[], rootPc: number): readonly number[] => {
+    const key = `${rootPc}:${token}`;
+    let cached = chordScaleCache.get(key);
     if (!cached) {
-      cached = chordScalePcs(scalePcs, pcs, (CHORDS[token]!.root + keyRoot) % 12);
-      chordScaleCache.set(token, cached);
+      cached = chordScalePcs(scalePcs, pcs, rootPc);
+      chordScaleCache.set(key, cached);
     }
     return cached;
   };
@@ -148,7 +150,7 @@ export function compose(opts: ComposeInput): Piece {
     // 五音系の語法は旋律語彙が固定(コードスケールで上書きしない)。変位和音への追従は
     // 強拍のコードトーン規則が担い、弱拍の歩みは五音のまま保つ(四千年型の書法)。
     if (!idiom.followsChordScale) return scalePcs;
-    return chordScaleForToken(chord.token, chord.pcs);
+    return chordScaleFor(chord.token, chord.pcs, chord.rootPc);
   };
   const grooveFeel = opts.grooveFeel ?? DEFAULT_GROOVE_FEEL;
   const engineRev = engineRevOf(opts);
@@ -172,15 +174,18 @@ export function compose(opts: ComposeInput): Piece {
   const duetPolicy = devices.duet.value;
   const glidePolicy = devices.glide.value;
   const bassLinePolicy = devices.bassLine.value;
-  const choice = opts.choice ?? (opts.bars >= 8
-    ? chooseVariedHarmony(prog, opts.bars, opts.seed)
-    : defaultChoiceFor(prog, opts.bars));
+  const choice = opts.choice ?? (bars >= 8
+    ? chooseVariedHarmony(prog, form, opts.seed)
+    : defaultChoiceFor(prog, form));
   const songPlan = createSongPlan({
     form,
     presetId,
     seed: opts.seed,
+    keyRoot,
     tonality,
     melodicLanguage,
+    idiom,
+    japaneseScale: opts.japaneseScale,
     grooveFeel,
     soundChip: opts.soundChip ?? 'opll',
     progression: prog,
@@ -206,17 +211,19 @@ export function compose(opts: ComposeInput): Piece {
       // 生成器のオフバイワンを無音のルートポジション扱いですり抜けさせない。
       throw new Error(`${bar + 1}小節目のbassDegrees(${barBassDegrees.length})がtokens(${tokens.length})と不一致`);
     }
+    // ローマ数字トークンは小節の調(区間ごとの転調)で絶対 pc へ展開する。
+    const barKeyRoot = songPlan.harmony[bar]!.keyRoot;
     let offset = 0;
     tokens.forEach((token, i) => {
       const dur = barChordDurations[bar]![i]!;
       const def = CHORDS[token]!;
-      const pcs = def.tones.map((t) => (t + keyRoot) % 12);
-      const rootPc = (def.root + keyRoot) % 12;
+      const pcs = def.tones.map((t) => (t + barKeyRoot) % 12);
+      const rootPc = (def.root + barKeyRoot) % 12;
       // カラートーンはボイシングにだけ足す。機能検証・旋律の強拍アンカーはpcsのまま。
       // イントロは薄い導入なので素の三和音に留め、本編でテンションが開く出し引きにする。
       const colorPcs = (tensionPolicy === 'off'
         ? []
-        : selectTensionPcs(pcs, chordScaleForToken(token, pcs), rootPc, tensionPolicy)
+        : selectTensionPcs(pcs, chordScaleFor(token, pcs, rootPc), rootPc, tensionPolicy)
       ).slice(0, Math.max(0, 5 - pcs.length)); // 密集配置(≤14半音)が成立する5声まで
       const midis = voiceChord([...pcs, ...colorPcs], previousVoicing, idiom.openFifthsVoicing);
       const bassDegree = barBassDegrees?.[i] ?? null;
@@ -224,26 +231,30 @@ export function compose(opts: ComposeInput): Piece {
         beat: bar * 4 + offset,
         dur,
         token,
-        name: chordName(token, keyRoot),
+        name: chordName(token, barKeyRoot),
         function: harmonicFunctionForToken(token),
         pcs,
+        rootPc,
         midis,
         colorPcs,
         // 半音下行接近を-1と書ける生成器のためにmod 12へ正規化する。
-        ...(bassDegree !== null ? { bassPc: (((bassDegree + keyRoot) % 12) + 12) % 12 } : {}),
+        ...(bassDegree !== null ? { bassPc: (((bassDegree + barKeyRoot) % 12) + 12) % 12 } : {}),
       });
       previousVoicing = midis;
       offset += dur;
     });
   });
-  // ループ末尾→先頭も同じ声部進行として扱い、循環パスで配置を安定させる。
-  for (let pass = 0; pass < 2; pass++) {
-    let previous = chords.at(-1)?.midis ?? null;
-    for (const chord of chords) {
-      chord.midis = voiceChord(
-        [...chord.pcs, ...(chord.colorPcs ?? [])], previous, idiom.openFifthsVoicing,
-      );
-      previous = chord.midis;
+  // ループ曲型は末尾→先頭も同じ声部進行として扱い、循環パスで配置を安定させる。
+  // 終止曲型は閉じないので、先頭からの一方向パスだけで決める。
+  if (form.ending === 'loop') {
+    for (let pass = 0; pass < 2; pass++) {
+      let previous = chords.at(-1)?.midis ?? null;
+      for (const chord of chords) {
+        chord.midis = voiceChord(
+          [...chord.pcs, ...(chord.colorPcs ?? [])], previous, idiom.openFifthsVoicing,
+        );
+        previous = chord.midis;
+      }
     }
   }
   const chordAt = (beat: number): ChordEvent => {
@@ -385,6 +396,7 @@ export function compose(opts: ComposeInput): Piece {
     motif: { moves: phraseGestures[0]!.map((move) => ({ ...move })) },
     grooveFeel,
     bars,
+    ending: form.ending,
     introBars,
     introRole,
     loopStartBeat,
@@ -410,7 +422,7 @@ export function compose(opts: ComposeInput): Piece {
       return tokens.map((token, index) => {
         const duration = barChordDurations[bar]![index]!;
         const durationLabel = Math.abs(duration - equalDuration) > 0.001 ? `(${duration}拍)` : '';
-        return `${chordName(token, keyRoot)}${durationLabel}`;
+        return `${chordName(token, songPlan.harmony[bar]!.keyRoot)}${durationLabel}`;
       }).join(' ');
     }),
   };

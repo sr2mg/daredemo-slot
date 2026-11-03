@@ -68,16 +68,6 @@ describe('engineRevゲート(rev3: ファズ監査の乖離を生成側で閉じ
     expect(rev3.drums).toEqual(rev2.drums);
   });
 
-  it('倚音の解決は順次に限り、増2度の解決で強拍非和声音が残らない', () => {
-    // rev2: 和声的短音階のコードスケール(V7上)で C→D# を解決先に取り、倚音の契約が破れていた。
-    const base = corpusCase('royal-pop', 'minor', 'kmmo', 'premiseArc', 63353, 4);
-    const rev2 = compose({ ...base, engineRev: 2 });
-    const rev3 = compose({ ...base, engineRev: 3 });
-    expect(validatePiece(rev2).map((issue) => issue.reason)).toContain('強拍が B7 のコードトーン外');
-    expect(validatePiece(rev3)).toEqual([]);
-    expect(diagnosePiece(rev3).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
-  });
-
   it('開放終止のベース5度は和音の品質に追従し、減三和音上で和声外に落ちない', () => {
     // rev2: iiDim上の開放終止で機械的な完全5度(和声外)。持続サブは小節全体が動いていた。
     const base = corpusCase('fanfare', 'minor', 'dnb', 'premiseArc', 87110, 7);

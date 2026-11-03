@@ -389,6 +389,8 @@ export interface ChordEvent {
   function: HarmonicFunction;
   /** 絶対ピッチクラス集合（検証用） */
   pcs: number[];
+  /** 根音の絶対pc。生成器が CHORDS[token].root + keyRoot を再計算しない(区間ごとの調に追従)。 */
+  rootPc: number;
   /** 直前のコードから最短距離で接続した、低音から高音順の伴奏ボイシング。 */
   midis: number[];
   /** テンション方針で声部へ足したカラートーン(絶対pc)。機能はpcsのまま。 */
@@ -623,6 +625,18 @@ export interface SongSectionPlan {
   role: SectionRole;
   /** 1..5。編成密度ではなく、曲として目指す相対エネルギー。 */
   energy: number;
+  /** 主題ID(SectionSpec.theme)。同じ主題の区間はモチーフを共有する。 */
+  theme: string;
+  /** 区間の調(曲既定を区間指定で上書きした実効値)。 */
+  keyRoot: number;
+  tonality: Tonality;
+  /** 区間の旋律語彙(絶対pc)。語法の音組織を区間の調へ写したもの。 */
+  scalePcs: readonly number[];
+  /** 和風語法の核音計画(区間の調ごと)。他の語法は null。 */
+  japanesePlan: JapanesePlan | null;
+  /** 区間の進行(曲既定を区間指定で上書き)と、そのカタログ長。 */
+  progressionId: string;
+  progressionBars: number;
   /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
   rhythmVariant: RhythmVariant;
   /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */
@@ -649,6 +663,9 @@ export interface SongSectionPlan {
 export interface HarmonyBarPlan {
   bar: number;
   section: PhraseSection;
+  /** この小節の調。ローマ数字トークンを絶対 pc へ展開する基準(区間ごとの転調に追従)。 */
+  keyRoot: number;
+  tonality: Tonality;
   phraseFunction: PhraseFunction;
   harmonicGoal: HarmonicGoal;
   /** ユーザーが選んだ進行レシピを、フォーム上の役割と一緒に確定したもの。 */
@@ -730,6 +747,8 @@ export interface Piece {
   grooveFeel: GrooveFeel;
   /** ループ本体の小節数。introBars は含めない。 */
   bars: number;
+  /** loop=最終小節で頭へ渡す(BGM)、final=終止で閉じる(曲)。 */
+  ending: SongEnding;
   /** 初回だけ鳴るイントロの小節数。16/40小節フォーム以外は0。 */
   introBars: number;
   /** イントロが担う役割。イントロなしの場合は null。 */
