@@ -1,6 +1,8 @@
 import type { NesVoiceOptions, NoteEvent, Piece } from '../core/music/types.js';
 import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
+import { gridAtBeat } from '../core/music/form.js';
+import { nearBeat, strongBeatOffsets } from '../core/music/grid.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;
@@ -189,7 +191,8 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
   const noiseHits: NoiseHit[] = [];
 
   for (const n of piece.melody) {
-    const strong = n.beat % 4 === 0 || n.beat % 4 === 2;
+    const strong = strongBeatOffsets(gridAtBeat(piece.songPlan.form, piece.loopStartBeat, n.beat))
+      .some((offset) => nearBeat(((n.beat % 4) + 4) % 4, offset));
     addNoteEvents(
       pulse1Events, n.beat, n.dur, piece.bpm, n.midi,
       nesVolumeFor(n, strong ? 15 : 11),

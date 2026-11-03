@@ -4,6 +4,8 @@ import type {
 import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { gridAtBeat } from '../core/music/form.js';
+import { nearBeat, strongBeatOffsets } from '../core/music/grid.js';
 import {
   freqToFnum, initRhythmMode, RHYTHM_DEFAULT_LEVELS, RHYTHM_LEVEL_SLOT, rhythmLevelRegs, SeqBuilder,
 } from './opll-core.js';
@@ -288,14 +290,18 @@ export function arrangePiece(
     leadPalette[(arrangementSectionFor(piece, beat).leadColor ?? 0) % leadPalette.length]!;
 
   const candidates: Candidate[] = [];
+  const gridAt = (beat: number) => gridAtBeat(piece.songPlan.form, piece.loopStartBeat, beat);
+  const isStrong = (beat: number): boolean => (
+    strongBeatOffsets(gridAt(beat)).some((offset) => nearBeat(((beat % 4) + 4) % 4, offset))
+  );
   for (const note of piece.melody) {
-    const strong = note.beat % 4 === 0 || note.beat % 4 === 2;
+    const strong = isStrong(note.beat);
     candidates.push(noteCandidate('lead', note, leadVoiceAt(note.beat), strong ? 2 : 4));
     const section = arrangementSectionFor(piece, note.beat);
     if (note.beat >= piece.loopStartBeat && section.echo && note.role !== 'ornament') {
       // 遅延則は二重時間軸のMIDI段(time-layer.ts)と同じ関数を参照する。タップ数と
       // 減衰だけは声部予算の都合でOPLL固有(1タップの音量+3ダブリング)。
-      const delay = noteStageEchoFor(piece.grooveFeel).delayBeats;
+      const delay = noteStageEchoFor(piece.grooveFeel, gridAt(note.beat)).delayBeats;
       let beat = note.beat + delay;
       if (beat >= piece.beats) beat = piece.loopStartBeat + beat - piece.beats;
       const dur = Math.min(note.dur, piece.beats - beat);

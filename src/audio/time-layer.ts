@@ -15,6 +15,8 @@
  * https://sai96i.hateblo.jp/entry/2021/05/10/204035
  */
 
+import { effectiveGroove, gridFor } from '../core/music/grid.js';
+import type { GridDef } from '../core/music/grid.js';
 import { grooveBeat } from '../core/music/groove.js';
 import type { GrooveFeel } from '../core/music/groove.js';
 import type { StageRole } from './stage.js';
@@ -27,12 +29,12 @@ export interface NoteStageEcho {
 }
 
 /**
- * MIDI段エコーの遅延をグルーヴから導出する(OPLLエコー装置と同一の規則)。
- * タップは「8分裏をグルーヴ格子へ写した位置」= grooveBeat(0.5) に置く(スウィング軸に追随)。
+ * MIDI段エコーの遅延をグルーヴと拍格子から導出する(OPLLエコー装置と同一の規則)。
+ * タップは「格子の 1 ステップ(4x2 では 8 分裏)をグルーヴ格子へ写した位置」に置く(スウィング軸に追随)。
  */
-export function noteStageEchoFor(grooveFeel: GrooveFeel): NoteStageEcho {
+export function noteStageEchoFor(grooveFeel: GrooveFeel, grid: GridDef = gridFor('4x2')): NoteStageEcho {
   return {
-    delayBeats: grooveBeat(0.5, grooveFeel),
+    delayBeats: grooveBeat(grid.stepBeats, effectiveGroove(grooveFeel, grid.grouping)),
     taps: 2,
     decay: 0.5,
   };
@@ -59,12 +61,13 @@ export const ROLE_DELAY_SEND: Record<StageRole, number> = {
  */
 export function withEchoTracks<T extends { startSec: number; gain: number }>(
   notes: readonly T[],
-  spec: NoteStageEcho,
+  specOrAt: NoteStageEcho | ((note: T) => NoteStageEcho),
   beatSec: number,
   loop?: { startSec: number; endSec: number },
 ): T[] {
   const result: T[] = [...notes];
   for (const note of notes) {
+    const spec = typeof specOrAt === 'function' ? specOrAt(note) : specOrAt;
     for (let tap = 1; tap <= spec.taps; tap++) {
       let startSec = note.startSec + spec.delayBeats * beatSec * tap;
       if (loop && startSec >= loop.endSec) {

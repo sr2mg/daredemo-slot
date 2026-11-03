@@ -13,6 +13,7 @@
  */
 
 import { arrangementSectionFor } from '../core/music/arrangement.js';
+import { gridAtBeat } from '../core/music/form.js';
 import type {
   LeadColorSlot,
   PcmPart,
@@ -225,7 +226,11 @@ export async function renderSf2Bgm(
   const echoGate = echoGateFor(piece, length, SF2_SAMPLE_RATE, spb);
 
   const parts = arrangeSf2Parts(piece, overrides);
-  const echoSpec = noteStageEchoFor(piece.grooveFeel);
+  // タップ幅はその音の小節の格子から(区間ごとに割り方が違う曲型)。
+  const echoSpecAt = (note: Sf2Note) => noteStageEchoFor(
+    piece.grooveFeel,
+    gridAtBeat(piece.songPlan.form, piece.loopStartBeat, note.startSec / spb),
+  );
   const partEntries = (Object.entries(parts) as [PcmPart, Sf2Note[]][])
     .filter(([, baseNotes]) => baseNotes.length > 0);
   let renderedParts = 0;
@@ -237,7 +242,7 @@ export async function renderSf2Bgm(
         ...baseNotes.filter((note) => !arrangementSectionFor(piece, note.startSec / spb).echo),
         ...withEchoTracks(
           baseNotes.filter((note) => arrangementSectionFor(piece, note.startSec / spb).echo),
-          echoSpec,
+          echoSpecAt,
           spb,
           { startSec: loopStartSec, endSec: loopEndSec },
         ),
