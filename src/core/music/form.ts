@@ -10,6 +10,7 @@
  */
 
 import { Xoshiro128 } from '../rng.js';
+import { BAR_GROUPING_LABELS, DEFAULT_GROUPING, isBarGrouping } from './grid.js';
 import { PROGRESSIONS, progressionForTonality } from './theory.js';
 import type {
   FormPresetId,
@@ -261,16 +262,30 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     if (spec.tonality !== undefined && spec.tonality !== 'major' && spec.tonality !== 'minor') {
       error(id, `調性が不正: ${String(spec.tonality)}`);
     }
+    if (spec.grouping !== undefined && !isBarGrouping(spec.grouping)) {
+      error(id, `拍の割り方が不正: ${String(spec.grouping)}`);
+    }
+    const grouping = isBarGrouping(spec.grouping) ? spec.grouping : DEFAULT_GROUPING;
+    const groupingOf = (candidate: SectionSpec): string => candidate.grouping ?? DEFAULT_GROUPING;
+    const groupingLabel = (value: string): string => (isBarGrouping(value) ? BAR_GROUPING_LABELS[value] : value);
 
     const themeSource = [...seen.values()].reverse().find((candidate) => candidate.theme === spec.theme);
     if (themeSource && themeSource.bars !== spec.bars) {
       error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${themeSource.bars}小節)と小節数が違う`);
+    }
+    // リズム族の添字は拍の割り方ごとの表を指すので、割り方の違う区間間では主題を継げない
+    // (再標本化は将来の仮説)。
+    if (themeSource && groupingOf(themeSource) !== grouping) {
+      error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${groupingLabel(groupingOf(themeSource))})と拍の割り方が違う`);
     }
     if (spec.quote) {
       if (themeSource) error(id, '主題の再登場と部分引用は併用できない(引用はフレーズ0の借用と排他)');
       const source = seen.get(spec.quote.from);
       if (!source) error(id, `引用元「${spec.quote.from}」が先行区間にない`);
       else if (source.bars !== spec.bars) error(id, `引用元「${source.id}」と小節数が違う`);
+      else if (groupingOf(source) !== grouping) {
+        error(id, `引用元「${source.id}」(${groupingLabel(groupingOf(source))})と拍の割り方が違う`);
+      }
       const phrases = Array.isArray(spec.quote.phrases) ? spec.quote.phrases : [];
       if (phrases.length === 0) error(id, '引用するフレーズが空');
       for (const phrase of phrases) {

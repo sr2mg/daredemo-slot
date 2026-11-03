@@ -530,11 +530,16 @@ export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
 // 曲型は「小節数」ではなく「区間の列」で表す。各区間が役割・長さ・エネルギー・主題・
 // 進行・調を宣言し、生成器はこの列だけを見て計画する(区間数の上限を持たない)。
 // プリセット(FormPresetId)は form.ts が同じ SongFormSpec へ展開する。
-// 拍の割り方(12/8↔6/4↔4/4)とテンポの区間属性は次の拡張で、ここへ足す。
+// テンポとテクスチャの区間属性は次の拡張で、ここへ足す。
 // ---------------------------------------------------------------------------
 
 /** 区間の長さ。4=1小節ずつSRDC、8=2小節ずつSRDC(phraseFunctionFor)。 */
 export type SectionBars = 4 | 8;
+/**
+ * 拍の割り方「拍数×拍内分割」。小節長は常に 4 拍(bar * 4 の時間単位は不変)で、
+ * 4x2=4/4(8分格子、現行)・4x3=12/8(付点4分の拍×3連)・3x4=6/4(4/3拍×4)。導出は grid.ts。
+ */
+export type BarGrouping = '4x2' | '4x3' | '3x4';
 export type SectionEnergy = 1 | 2 | 3 | 4 | 5;
 /** loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。 */
 export type SongEnding = 'loop' | 'final';
@@ -571,6 +576,8 @@ export interface SectionSpec {
   keyRoot?: number;
   /** 省略=曲既定。平行長調のサビなど。 */
   tonality?: Tonality;
+  /** 省略=4x2(4/4)。主題・引用の元区間とは同じ割り方であること(validateForm)。 */
+  grouping?: BarGrouping;
 }
 
 export interface SongFormSpec {
@@ -638,6 +645,8 @@ export interface SongSectionPlan {
   /** 区間の進行(曲既定を区間指定で上書き)と、そのカタログ長。 */
   progressionId: string;
   progressionBars: number;
+  /** 区間の拍格子(SectionSpec.grouping の実効値)。小節→格子は compose-context が引く。 */
+  grouping: BarGrouping;
   /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
   rhythmVariant: RhythmVariant;
   /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */

@@ -10,6 +10,7 @@ import {
   RHYTHM_FAMILY_COUNT, barInSection, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
   sectionRng, sectionStartBars, sectionTonality, totalBars,
 } from './form.js';
+import { DEFAULT_GROUPING } from './grid.js';
 import { hasGrooveDevice } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
@@ -533,6 +534,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       japanesePlan,
       progressionId: sectionProgression.id,
       progressionBars: sectionProgression.slots.length,
+      grouping: spec.grouping ?? DEFAULT_GROUPING,
       ...motifPlans[index]!,
     };
   });
