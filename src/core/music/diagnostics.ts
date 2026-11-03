@@ -8,7 +8,7 @@ import { beatStep, effectiveGroove, nearBeat, offPulseSteps, stepBeat, strongBea
 import type { GridDef } from './grid.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
 import { gridAtBeat, sectionIndexAt, sectionStartBars } from './form.js';
-import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
+import type { ArrangementSectionPlan, ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
   beat: number;
@@ -614,6 +614,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       section.echo ? 'echo' : '-',
       section.counterDensity,
       section.ostinatoDensity,
+      section.accompaniment,
       section.drum,
       section.entrance,
       section.exitFill,
@@ -623,13 +624,14 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('texture', 'warning', bodyStart, -1, '全セクションの編成が同一で、出し引きがない');
     }
   }
-  // 伴奏型の分散和音(撥弦の弾き語り)は推進装置でなく常設伴奏なので、「足し算」「貼り付き」の
-  // 装置規則から外す(様式の宣言 StyleDef.texture.ostinato を参照し、idでは分岐しない)。
-  const ostinatoIsAccompaniment = styleForId(piece.styleId)?.texture.ostinato === 'accompaniment';
+  // 伴奏役の分散和音(区間の伴奏型が分散和音。撥弦の弾き語り)は推進装置でなく伴奏なので、
+  // 「足し算」「貼り付き」の装置規則から外す(編成計画の区間属性を参照し、様式 id では分岐しない)。
+  const deviceOstinato = (section: ArrangementSectionPlan): boolean => section.ostinatoDensity > 0
+    && section.accompaniment !== 'arpeggio8' && section.accompaniment !== 'arpeggio16';
   textureSections.forEach((section, sectionIndex) => {
     const optionalLayers = Number(section.echo)
       + Number(section.counterDensity > 0)
-      + Number(!ostinatoIsAccompaniment && section.ostinatoDensity > 0);
+      + Number(deviceOstinato(section));
     const sectionStart = bodyStart + (formStarts[sectionIndex] ?? 0) * 4;
     const sectionEnd = sectionStart + (formSections[sectionIndex]?.bars ?? piece.bars) * 4;
     if (textureSections.length > 1 && optionalLayers > 1) {
@@ -651,10 +653,9 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   const deviceCoverage = [
     ['エコー', textureSections.filter((section) => section.echo).length],
     ['対旋律', textureSections.filter((section) => section.counterDensity > 0).length],
-    ['分散和音', textureSections.filter((section) => section.ostinatoDensity > 0).length],
+    ['分散和音', textureSections.filter(deviceOstinato).length],
   ] as const;
   for (const [label, coverage] of deviceCoverage) {
-    if (label === '分散和音' && ostinatoIsAccompaniment) continue;
     if (textureSections.length > 1 && coverage === textureSections.length) {
       add('texture', 'warning', bodyStart, -1, `${label}が全セクションに貼り付いている`);
     } else if (textureSections.length >= 5 && coverage > 3) {

@@ -14,6 +14,7 @@
 
 import { arrangementSectionFor } from '../core/music/arrangement.js';
 import { gridAtBeat } from '../core/music/form.js';
+import { pulseBeats } from '../core/music/grid.js';
 import { beatToSeconds, bpmAt, secondsToBeat, tempoMapOf } from '../core/music/tempo.js';
 import type {
   LeadColorSlot,
@@ -147,6 +148,20 @@ export function arrangeSf2Parts(
   for (const chord of piece.chords) {
     const section = arrangementSectionFor(piece, chord.beat);
     const rhythm = chord.beat >= piece.loopStartBeat ? section.backingRhythm : 'normal';
+    if (rhythm === 'beat') {
+      // 伴奏型 chords: 和音内の各拍頭でブロックコードを打ち、次の拍頭(和音末尾)まで鳴らす。
+      const grid = gridAtBeat(piece.songPlan.form, piece.loopStartBeat, chord.beat);
+      const barStart = Math.floor(chord.beat / 4) * 4;
+      const pulses = pulseBeats(grid)
+        .map((pulse) => barStart + pulse)
+        .filter((beat) => beat >= chord.beat - 1e-6 && beat < chord.beat + chord.dur - 1e-6);
+      pulses.forEach((pulse, index) => {
+        const end = pulses[index + 1] ?? chord.beat + chord.dur;
+        for (const midi of chord.midis) backingNotes.push(backingNoteAt(midi, pulse, end - pulse, 76));
+      });
+      sustained = null;
+      continue;
+    }
     if (rhythm === 'stab') {
       const grid = gridAtBeat(piece.songPlan.form, piece.loopStartBeat, chord.beat);
       const count = Math.round(chord.dur / grid.stepBeats);

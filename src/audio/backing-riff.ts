@@ -36,10 +36,18 @@ export function offbeatBackingRiff(
   const steps: BackingRiffStep[] = [];
   const section = arrangementSectionFor(piece, chord.beat);
   const chordThin = chord.beat < piece.loopStartBeat || section.backingDensity === 'sparse';
-  // テクスチャ区間: sustain は和音頭の 1 打だけ、stab は格子の各ステップで下声部を刻む。
+  // テクスチャ・伴奏型の区間: sustain は和音頭の 1 打だけ、beat は和音内の各拍頭、stab は格子の
+  // 各ステップで下声部を刻む。
   if (chord.beat >= piece.loopStartBeat && section.backingRhythm !== 'normal') {
     const textureGrid = gridAtBeat(piece.songPlan.form, piece.loopStartBeat, chord.beat);
     if (section.backingRhythm === 'sustain') return [{ beat: chord.beat, slot: 'lower', thin: false }];
+    if (section.backingRhythm === 'beat') {
+      const textureBarStart = Math.floor(chord.beat / 4) * 4;
+      return pulseBeats(textureGrid)
+        .map((pulse) => textureBarStart + pulse)
+        .filter((beat) => beat >= chord.beat - 1e-6 && beat < chord.beat + chord.dur - 1e-6)
+        .map((beat) => ({ beat, slot: 'lower' as const, thin: false }));
+    }
     const count = Math.round(chord.dur / textureGrid.stepBeats);
     for (let step = 0; step < count; step++) {
       steps.push({ beat: chord.beat + step * textureGrid.stepBeats, slot: 'lower', thin: false });

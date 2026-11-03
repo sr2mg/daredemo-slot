@@ -5,7 +5,7 @@
  */
 
 import { sectionIndexAt } from './form.js';
-import { effectiveGroove } from './grid.js';
+import { arpeggioAccelerationSteps, effectiveGroove } from './grid.js';
 import { grooveBeat } from './groove.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
 import { nearestWithPc } from './pitch.js';
@@ -13,7 +13,7 @@ import type { ComposeContext } from './compose-context.js';
 import type { NoteEvent, PhraseFunction } from './types.js';
 
 export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
-  const { opts, form, style, grooveFeel, arrangementPlan, phrasePlan, chordAt, gridAt } = ctx;
+  const { opts, form, grooveFeel, arrangementPlan, phrasePlan, chordAt, gridAt } = ctx;
   // --- 分散和音（コード伴奏とは別の、選ばれた区間だけを推進する声部） ---
   // 曲全体のTextureStrategyで有効になった区間だけに置き、常設レイヤーにはしない。
   // chordAtを各打点で引くため、2拍目など小節途中のコード変化にもその場で追従する。
@@ -59,8 +59,8 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
         ? ['departure', 'conclusion']
         : ['conclusion'];
     // 8分型は選ばれたフレーズ帯だけに置き、区間丸ごとの常設を避ける。
-    // 伴奏型(撥弦の弾き語り)は例外で、全小節に敷く。
-    const accompaniment = style.texture.ostinato === 'accompaniment';
+    // 区間の伴奏型が分散和音(撥弦の弾き語り)のときは例外で、その区間の全小節に敷く。
+    const accompaniment = sectionPlan.accompaniment === 'arpeggio8' || sectionPlan.accompaniment === 'arpeggio16';
     if (!accompaniment && plannedDensity === 1 && !activeFunctions.includes(barPlan.phraseFunction)) continue;
     // 16分型の加速点もSongPlanに沿う区間ごとの候補から選び、毎回「展開」に固定しない。
     const density = plannedDensity === 2 && barPlan.phraseFunction === peak ? 2 : 1;
@@ -104,10 +104,11 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
       }
       continue;
     }
-    // 格子のステップ(密度 1)か細かい格子(密度 2)。終止小節は最終拍ぶん(1 拍=ステップ数/拍数)を休ませる。
+    // 格子のステップ(密度 1)か加速帯の格子(密度 2。×3 の格子ではステップに留まる)。
+    // 終止小節は最終拍ぶん(1 拍=ステップ数/拍数)を休ませる。
     const grid = gridAt(barPlan.bar);
     const feel = effectiveGroove(grooveFeel, grid.grouping);
-    const fullStepCount = density === 2 ? grid.sixteenthSteps : grid.steps;
+    const fullStepCount = density === 2 ? arpeggioAccelerationSteps(grid) : grid.steps;
     const subdivision = 4 / fullStepCount;
     const stepCount = barPlan.cadence === 'half' || barPlan.cadence === 'turnaround'
       ? fullStepCount - fullStepCount / grid.pulses

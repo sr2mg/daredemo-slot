@@ -10,6 +10,7 @@
 import { DRUM_GHOST } from './drum-articulation.js';
 import type { GrooveFeel } from './groove.js';
 import type {
+  AccompanimentFigure,
   BassLinePolicy,
   DuetPolicy,
   GlidePolicy,
@@ -782,11 +783,13 @@ export interface TextureFacet {
   /** 独立アルペジオの声部予算が無いバックエンドで主導にする戦略。省略=bassDrive。 */
   compactStrategy?: TextureStrategy;
   /**
-   * 分散和音声部の役割。省略=device(テクスチャ戦略が選んだ区間・フレーズ帯だけで鳴る
-   * 推進装置)。accompaniment は撥弦の伴奏型で、全区間・全小節に敷く(編成計画が各区間の
-   * ostinatoDensity を 1 以上に保証し、声部側はフレーズ帯の間引きをしない)。
+   * 和声層が拍を刻む伴奏型の候補(力の弱い順)。省略=['pad'](和音の変化点で再打鍵する保続
+   * だけ。分散和音はテクスチャ戦略が選んだ区間・フレーズ帯だけで鳴る推進装置)。
+   * 候補を複数宣言すると、編成計画が区間の力(1〜5)を候補列へ写して区間ごとに 1 つ選ぶ
+   * (曲型の SectionSpec.accompaniment で明示もできる)。候補に分散和音を含む様式では
+   * 分散和音が伴奏役になり、声部側はフレーズ帯の間引きをせず全小節に敷く。
    */
-  ostinato?: 'device' | 'accompaniment';
+  accompaniment?: readonly AccompanimentFigure[];
   /**
    * このスタイルが常時イントロ役割候補へ挙げる型(song-plan.tsのintroRoleFor)。
    * グルーヴ・和声条件からの候補追加とは独立に効く。
@@ -799,6 +802,19 @@ export interface TextureFacet {
     /** 対旋律の最大音価(拍)。省略={counterline:0.85, response:0.4}。 */
     maxDur?: { counterline: number; response: number };
   };
+}
+
+/** 伴奏型の候補(力の弱い順)。省略は保続(pad)だけ。 */
+export function accompanimentCandidates(texture: TextureFacet | undefined): readonly AccompanimentFigure[] {
+  return texture?.accompaniment ?? ['pad'];
+}
+
+/**
+ * 分散和音が伴奏役の様式か(候補に分散和音を含む)。伴奏役の分散和音は推進装置の規則
+ * (フレーズ帯の間引き・「足し算」「貼り付き」の診断)から外れる。
+ */
+export function hasArpeggioAccompaniment(texture: TextureFacet | undefined): boolean {
+  return accompanimentCandidates(texture).some((figure) => figure === 'arpeggio8' || figure === 'arpeggio16');
 }
 
 /** 装置ファセット: スタイル既定の装置方針。省略はすべてoff(素の和音・骨格のみ)。 */
@@ -1104,11 +1120,13 @@ export const STYLES: StyleDef[] = [
       center: 75,
     },
     texture: {
-      // 分散和音(撥弦)を常設伴奏にし、対旋律・低音主導へは振らない。
+      // 分散和音(撥弦)を伴奏役にし、対旋律・低音主導へは振らない。
       strategies: ['arpDrive'],
-      ostinato: 'accompaniment',
-      // 未解決: 独立アルペジオの予算が無いバックエンド(2A03)では compact 戦略が低音主導に
-      // 落ち、様式の核である常設分散和音が失われる(tests/acoustic-style.test.ts 参照)。
+      // 打楽器が無いので和声層が拍を刻む。静かな区間はブロックコードの拍打ち、中位は 8 分の
+      // 分散和音、頂点だけ 16 分へ加速する(全区間に同じ分散和音を敷かない)。
+      accompaniment: ['chords', 'arpeggio8', 'arpeggio16'],
+      // 独立アルペジオの予算が無いバックエンド(2A03)では分散和音の候補が chords へ落ち、
+      // compact 戦略は低音主導になる(tests/acoustic-style.test.ts 参照)。
       compactStrategy: 'bassDrive',
       // 導入はモチーフの断片だけ(打楽器が無いのでグルーヴ提示・カウントインは成立しない)。
       introRoles: ['motif'],
