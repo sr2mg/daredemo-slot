@@ -423,16 +423,18 @@ export interface DrumEvent {
 export interface PhraseBarPlan {
   bar: number;
   section: PhraseSection;
+  /** この小節の拍格子(区間の割り方)。rhythm 等のステップはこの格子上の添字。 */
+  grouping: BarGrouping;
   role: 'statement' | 'answer' | 'continuation' | 'cadence';
-  /** 8分グリッド上の主旋律発音位置。 */
+  /** 格子(grid.ts の steps、4x2 では 8 分)上の主旋律発音位置。 */
   rhythm: boolean[];
-  /** 主旋律と同時に確保した、副旋律専用の8分グリッド位置。 */
+  /** 主旋律と同時に確保した、副旋律専用の格子位置。 */
   counterSteps: number[];
-  /** 16分グリッド上の短い装飾音位置。 */
+  /** 細かい格子(sixteenthSteps、4x2 では 16 分)上の短い装飾音位置。 */
   ornamentSteps: number[];
   /** 装飾を入れる小節だけ種類を持つ。 */
   ornamentType: OrnamentType | null;
-  /** 意図して空けた8分グリッド位置。 */
+  /** 意図して空けた格子位置。 */
   maSteps: number[];
   /** 8小節を提示→変奏反復→展開→結論として捉えたフレーズ機能。 */
   phraseFunction: PhraseFunction;
@@ -459,7 +461,7 @@ export interface PhraseBarPlan {
   anchorTie: boolean;
   /** step7 に置く、次フレーズ頭への弱起（アウフタクト）。音高は次フレーズアンカーの2度下。 */
   anacrusis: boolean;
-  /** 強拍倚音を許可するステップ（現状は3拍目=step4のみ）。実現は2度解決できる場合に限る。 */
+  /** 強拍倚音を許可するステップ（格子のアンカー=4x2 の 3 拍目のみ）。実現は2度解決できる場合に限る。 */
   appoggiaturaStep: number | null;
   /** セクション別テッシトゥーラ変位（半音）。旋律の目標高さへ加算する。 */
   registerOffset: number;
@@ -469,10 +471,15 @@ export interface PhrasePlan {
   climaxBar: number;
   /** 一度だけ許す9半音超の署名跳躍を置く小節（頭拍）。null なら無し。 */
   signatureLeapBar: number | null;
-  /** 5つのリズム変奏族（[問い, 答え]×5）。実音テーマの構築が提示リズムとして参照する。 */
-  rhythmFamilies: ReadonlyArray<readonly [readonly boolean[], readonly boolean[]]>;
+  /**
+   * 拍の割り方ごとの5つのリズム変奏族（[問い, 答え]×5）。実音テーマの構築が提示リズムとして
+   * 参照する。4x2 は常にあり、他は曲型に現れる割り方だけ。
+   */
+  rhythmFamilies: Partial<Record<BarGrouping, RhythmFamilies>>;
   bars: PhraseBarPlan[];
 }
+
+export type RhythmFamilies = ReadonlyArray<readonly [readonly boolean[], readonly boolean[]]>;
 
 // ---------------------------------------------------------------------------
 // 編成設計図（ArrangementPlan）

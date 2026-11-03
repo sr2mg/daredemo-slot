@@ -24,8 +24,11 @@ import type { StyleDef } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
 import {
-  formErrorMessage, formPresetIdOf, introDefaultFor, resolveForm, sectionIndexAt, sectionRng, totalBars, validateForm,
+  formErrorMessage, formPresetIdOf, groupingAt, introDefaultFor, resolveForm, sectionIndexAt, sectionRng, totalBars,
+  validateForm,
 } from './form.js';
+import { gridFor, stepBeat } from './grid.js';
+import type { GridDef } from './grid.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import {
   DEFAULT_GROOVE_FEEL, grooveBeat, grooveFor, hasStraightSixteenths, tripletHatOffsets,
@@ -199,6 +202,7 @@ export function compose(opts: ComposeInput): Piece {
   const scalePcsAt = (bar: number): readonly number[] => sectionAtBar(bar).scalePcs;
   const keyRootAt = (bar: number): number => sectionAtBar(bar).keyRoot;
   const japanesePlanAt = (bar: number): JapanesePlan | null => sectionAtBar(bar).japanesePlan;
+  const gridAt = (bar: number): GridDef => gridFor(groupingAt(form, Math.max(0, bar)));
   const scaleAt = (chord: ChordEvent): readonly number[] => {
     // 五音系の語法は旋律語彙が固定(コードスケールで上書きしない)。変位和音への追従は
     // 強拍のコードトーン規則が担い、弱拍の歩みは五音のまま保つ(四千年型の書法)。
@@ -287,9 +291,10 @@ export function compose(opts: ComposeInput): Piece {
   // 区間ごとに別の音程ジェスチャーを持つ。リズムだけ変えて同じ上下動を全区間へ貼らない。
   // 主題ジェスチャーは主系列rngでなく区間ごとの独立ストリームから抽選する(主系列を使うと
   // フレーズ計画の抽選回数が変わるたびにジェスチャーが連動して変わる暗黙結合になる)。
-  const phraseGestures = songPlan.form.sections.map((_, sectionIndex) => makePhraseGesture(
+  const phraseGestures = songPlan.form.sections.map((section, sectionIndex) => makePhraseGesture(
     sectionRng(opts.seed, sectionIndex, 0x4753_5452),
     style,
+    gridFor(section.grouping).steps,
   ));
   // 曲間モチーフ流用: 外部モチーフは主題区間(A)のジェスチャーだけを置き換える。
   // 乱数消費は変えない(全区間ぶん生成してから差し替える)ので、他区間・他声部は不変。
@@ -310,7 +315,7 @@ export function compose(opts: ComposeInput): Piece {
 
   // --- 各声部の実音化（声部ジェネレータは乱数を持たない決定論的実現） ---
   const ctx: ComposeContext = {
-    opts, style, form, bars, keyRoot, melodicLanguage, idiom, scalePcs, grooveFeel, bassLinePolicy,
+    opts, style, form, gridAt, bars, keyRoot, melodicLanguage, idiom, scalePcs, grooveFeel, bassLinePolicy,
     songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
     scalePcsAt, keyRootAt, japanesePlanAt,
     melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
@@ -369,7 +374,7 @@ export function compose(opts: ComposeInput): Piece {
           // 「食い」が消えるため、タイを跨ぐ骨格対にはフィギュアを置かせない。
           ...phrasePlan.bars
             .filter((barPlan) => barPlan.anchorTie)
-            .map((barPlan) => loopStartBeat + barPlan.bar * 4 + 2),
+            .map((barPlan) => loopStartBeat + barPlan.bar * 4 + stepBeat(gridAt(barPlan.bar), gridAt(barPlan.bar).anchorStep)),
         ],
       },
     );

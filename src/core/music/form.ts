@@ -13,6 +13,7 @@ import { Xoshiro128 } from '../rng.js';
 import { BAR_GROUPING_LABELS, DEFAULT_GROUPING, isBarGrouping } from './grid.js';
 import { PROGRESSIONS, progressionForTonality } from './theory.js';
 import type {
+  BarGrouping,
   FormPresetId,
   PhraseFunction,
   SectionBars,
@@ -317,6 +318,11 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     });
   }
   return issues;
+}
+
+/** 本編内の小節が属する区間の拍の割り方(省略=4x2)。格子の実体は grid.ts の gridFor。 */
+export function groupingAt(form: SongFormSpec, bar: number): BarGrouping {
+  return form.sections[sectionIndexAt(form, bar)]?.grouping ?? DEFAULT_GROUPING;
 }
 
 /** 検証エラーを1つの例外文へまとめる(compose が使う)。 */

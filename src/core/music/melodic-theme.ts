@@ -25,10 +25,10 @@
 
 import type { MotifMove } from './types.js';
 
-/** 2小節=8分16ステップの実音テーマ。度数は最初の発音からの音組織上のステップ数。 */
+/** 2小節(格子ステップ×2、4x2 では 8 分 16 ステップ)の実音テーマ。度数は最初の発音からの音組織上のステップ数。 */
 export interface ThemeSpec {
   /**
-   * 全16ステップぶんの度数。発音位置以外も埋めておき、表現デバイスがリズムを
+   * 2小節ぶん全ステップの度数。発音位置以外も埋めておき、表現デバイスがリズムを
    * 局所的に変えた小節でも「そのステップで鳴るべき高さ」を引けるようにする。
    */
   degreeByStep: readonly number[];
@@ -71,9 +71,9 @@ function enforceSinglePeak(degrees: number[], onsetSteps: readonly number[]): nu
 }
 
 /**
- * MotifMove 列と提示リズム（2小節ぶんの8分オンセット）から実音テーマを構築する。
+ * MotifMove 列と提示リズム（2小節ぶんの格子オンセット）から実音テーマを構築する。
  * 発音ステップでは move を適用した累積ウォーク、非発音ステップは直前の発音の度数を
- * 保持する（リズムが変わった小節で引いても近傍の度数が返る）。
+ * 保持する（リズムが変わった小節で引いても近傍の度数が返る）。長さは提示リズムから。
  */
 export function themeFromGesture(
   moves: readonly MotifMove[],
@@ -81,10 +81,11 @@ export function themeFromGesture(
   answerRhythm: readonly boolean[],
 ): ThemeSpec {
   const rhythm = [...promptRhythm, ...answerRhythm];
+  const length = rhythm.length;
   const onsetSteps: number[] = [];
-  const degreeByStep: number[] = Array.from({ length: 16 }, () => 0);
+  const degreeByStep: number[] = Array.from({ length }, () => 0);
   let degree = 0;
-  for (let step = 0; step < 16; step++) {
+  for (let step = 0; step < length; step++) {
     if (rhythm[step] && step > 0) {
       const move = moves[step] ?? { direction: 1 as const, stepwise: true, leap: 3 };
       degree += move.direction * (move.stepwise ? 1 : leapDegrees(move.leap));
@@ -94,7 +95,7 @@ export function themeFromGesture(
   }
   const peakStep = enforceSinglePeak(degreeByStep, onsetSteps);
   // 頂点調整で非発音ステップの保持値がずれた分を再同期する。
-  for (let step = 1; step < 16; step++) {
+  for (let step = 1; step < length; step++) {
     if (!rhythm[step]) degreeByStep[step] = degreeByStep[step - 1]!;
   }
   return { degreeByStep, onsetSteps, peakStep };
