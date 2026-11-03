@@ -21,7 +21,6 @@ import type {
   CadenceType,
   ChordEvent,
   ComposeInput,
-  JapanesePlan,
   MelodicMotif,
   MotifMove,
   OrnamentType,
@@ -161,8 +160,6 @@ export function makePhrasePlan(
   chordAt: (beat: number) => ChordEvent,
   startMidi: number,
   idiom: MelodicIdiom,
-  scalePcs: readonly number[],
-  japanesePlan: JapanesePlan | null,
   arrangementPlan: ArrangementPlan,
   songPlan: SongPlan,
 ): PhrasePlan {
@@ -296,6 +293,9 @@ export function makePhrasePlan(
       const rootPc = targetChord.pcs[0]!;
       // 終止の目標音も語法の中から選ぶ(強拍の着地候補 melodyPcsForChord と同じ規則を
       // melodic-idiom.ts の landingPcs が単一の出所として持つ)。
+      // 終止の目標音は区間の調の音組織・核音計画から(区間ごとの転調に追従)。
+      const scalePcs = sectionDesign.scalePcs;
+      const japanesePlan = sectionDesign.japanesePlan;
       const targetPcs = idiom.landingPcs(targetChord.pcs, scalePcs);
       const nuclearTargets = japanesePlan
         ? targetPcs.filter((pc) => japanesePlan.nuclearPcs.includes(pc))
@@ -309,7 +309,7 @@ export function makePhrasePlan(
         // 音度→pcは長音階の半音距離(1̂=0,2̂=2,3̂=4,5̂=7)で写す。音組織の添字で引くと
         // 五音音階では別の音度(短ペンタのindex2=4̂等)になり、物語が語法で化けてしまう。
         const degreeSemitones = [0, 2, 4, 5, 7, 9, 11] as const;
-        const goalPc = (scalePcs[0]! + degreeSemitones[sectionDesign.cadenceDegrees[phraseIndex]! % 7]!) % 12;
+        const goalPc = (sectionDesign.keyRoot + degreeSemitones[sectionDesign.cadenceDegrees[phraseIndex]! % 7]!) % 12;
         const distance = (pc: number): number => Math.min((pc - goalPc + 12) % 12, (goalPc - pc + 12) % 12);
         targetPc = [...cadencePcs].sort((a, b) => distance(a) - distance(b))[0] ?? rootPc;
       }

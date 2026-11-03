@@ -4,7 +4,7 @@ import {
 } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
-import { sectionStartBars } from './form.js';
+import { sectionIndexAt, sectionStartBars } from './form.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
@@ -58,13 +58,25 @@ function melodicDirection(from: number, to: number): -1 | 0 | 1 {
   return to === from ? 0 : to > from ? 1 : -1;
 }
 
+/** 絶対拍(イントロ込み)が属する区間の旋律語彙(区間ごとの調)。イントロは先頭区間。 */
+function scalePcsAtBeat(piece: Piece, beat: number): readonly number[] {
+  const bodyBar = Math.max(0, Math.floor((beat - piece.loopStartBeat) / 4));
+  return piece.songPlan.form.sections[sectionIndexAt(piece.songPlan.form, bodyBar)]?.scalePcs
+    ?? piece.melodicScalePcs;
+}
+
+function keyRootAtBeat(piece: Piece, beat: number): number {
+  const bodyBar = Math.max(0, Math.floor((beat - piece.loopStartBeat) / 4));
+  return piece.songPlan.form.sections[sectionIndexAt(piece.songPlan.form, bodyBar)]?.keyRoot ?? piece.keyRoot;
+}
+
 /** 五音系の音組織では3～4半音も音階上の隣になり得るため、半音数だけで判定しない。 */
-function isMelodicStep(piece: Piece, from: number, to: number): boolean {
+function isMelodicStep(piece: Piece, beat: number, from: number, to: number): boolean {
   if (from === to) return false;
   if (Math.abs(to - from) <= 2) return true;
-  // 旋律語彙はPieceが一元管理する(標準=ダイアトニック、和風/五音=各音組織)。
+  // 旋律語彙は区間の調ごと(標準=ダイアトニック、和風/五音=各音組織)。
   // ダイアトニックでは隣接音級が常に2半音以下なので、この経路は五音系だけで効く。
-  const collection = piece.melodicScalePcs;
+  const collection = scalePcsAtBeat(piece, beat);
   if (!collection?.includes(((from % 12) + 12) % 12)) return false;
   const direction = melodicDirection(from, to);
   let cursor = from + direction;
@@ -84,8 +96,8 @@ function embellishmentAt(
 ): string | null {
   const incomingDirection = before ? melodicDirection(before.midi, note.midi) : 0;
   const outgoingDirection = melodicDirection(note.midi, after.midi);
-  const incomingStep = before ? isMelodicStep(piece, before.midi, note.midi) : false;
-  const outgoingStep = isMelodicStep(piece, note.midi, after.midi);
+  const incomingStep = before ? isMelodicStep(piece, note.beat, before.midi, note.midi) : false;
+  const outgoingStep = isMelodicStep(piece, note.beat, note.midi, after.midi);
   if (before?.midi === note.midi && outgoingStep) {
     return outgoingDirection < 0 ? '掛留音' : '倚音的な保続';
   }
@@ -151,7 +163,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         const resolves = inBar === 2
           && resolution !== undefined
           && resolution.beat - note.beat <= 1.001
-          && isMelodicStep(piece, note.midi, resolution.midi)
+          && isMelodicStep(piece, note.beat, note.midi, resolution.midi)
           && chordAt(resolution.beat).pcs.includes(resolution.midi % 12);
         if (resolves) {
           observations.push({
@@ -187,8 +199,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const note = bodyMelody[position]!.note;
     const after = bodyMelody[position + 1]?.note;
     if (!before || !after) return '';
-    const incoming = `${melodicDirection(before.midi, note.midi)}${isMelodicStep(piece, before.midi, note.midi) ? 's' : 'l'}`;
-    const outgoing = `${melodicDirection(note.midi, after.midi)}${isMelodicStep(piece, note.midi, after.midi) ? 's' : 'l'}`;
+    const incoming = `${melodicDirection(before.midi, note.midi)}${isMelodicStep(piece, note.beat, before.midi, note.midi) ? 's' : 'l'}`;
+    const outgoing = `${melodicDirection(note.midi, after.midi)}${isMelodicStep(piece, note.beat, note.midi, after.midi) ? 's' : 'l'}`;
     return `${incoming}:${outgoing}`;
   };
   const motifRelationsAt = (position: number): number[] => {
@@ -202,7 +214,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const sameContext = (motifGroups.get(`${plan.motifSourceBar}:${step}`) ?? [])
       .filter((entry) => entry.position !== position && contextSignature(entry.position) === signature)
       .map((entry) => entry.beat);
-    const pitchLanguage = piece.melodicScalePcs;
+    const pitchLanguage = scalePcsAtBeat(piece, note.beat);
     return step !== 0 && step !== 4 && pitchLanguage.includes(note.midi % 12) ? sameContext : [];
   };
 
@@ -213,7 +225,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (before && Math.abs(note.midi - before.midi) > 9) {
       // 直後に反対方向の順次進行で受け止められた跳躍は、古典的な均衡跳躍として許容する。
       const balanced = after
-        && isMelodicStep(piece, note.midi, after.midi)
+        && isMelodicStep(piece, note.beat, note.midi, after.midi)
         && melodicDirection(before.midi, note.midi) !== 0
         && melodicDirection(note.midi, after.midi) === -melodicDirection(before.midi, note.midi);
       if (balanced) {
@@ -232,7 +244,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const chord = chordAt(note.beat);
     if (!after || chord.pcs.includes(note.midi % 12)) continue;
     const nextChord = chordAt(after.beat);
-    if (isMelodicStep(piece, note.midi, after.midi) || nextChord.pcs.includes(after.midi % 12)) continue;
+    if (isMelodicStep(piece, note.beat, note.midi, after.midi) || nextChord.pcs.includes(after.midi % 12)) continue;
     const embellishment = embellishmentAt(piece, before, note, after, nextChord);
     if (embellishment) {
       observations.push({
@@ -725,15 +737,14 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
-  const pedalPcs = piece.arrangementPlan.bassRole === 'pedal'
-    ? [piece.keyRoot % 12, (piece.keyRoot + 7) % 12]
-    : [];
   for (let index = 0; index < piece.bass.length; index++) {
     const note = piece.bass[index]!;
     if (note.beat < bodyStart) continue;
     const chord = chordAt(note.beat);
     if (chord.pcs.includes(note.midi % 12)) continue;
-    // 曲全体で低音主導を選んだ場合のペダル低音（主音とその5度）は、意図した保続音であり経過音ではない。
+    // 曲全体で低音主導を選んだ場合のペダル低音（区間の主音とその5度）は、意図した保続音であり経過音ではない。
+    const pedalRoot = keyRootAtBeat(piece, note.beat);
+    const pedalPcs = piece.arrangementPlan.bassRole === 'pedal' ? [pedalRoot, (pedalRoot + 7) % 12] : [];
     if (pedalPcs.includes(note.midi % 12)) continue;
     // 分数コード(bassDegrees→bassPc)のベースは意図した転回・半音経過であり、経過音違反ではない。
     if (chord.bassPc !== undefined && note.midi % 12 === chord.bassPc) continue;
@@ -846,7 +857,7 @@ export function suggestCompositionRepair(
     if (after && !protectedMelodyNote(piece, after.note)) {
       const nextChord = chordAtInPiece(piece, after.note.beat);
       for (const midi of midiCandidates(nextChord.pcs, after.note.midi)) {
-        if (!isMelodicStep(piece, target.midi, midi)) continue;
+        if (!isMelodicStep(piece, target.beat, target.midi, midi)) continue;
         candidates.push({
           edit: { beat: after.note.beat, fromMidi: after.note.midi, toMidi: midi },
           strategy: 'resolve-next',
@@ -871,7 +882,7 @@ export function suggestCompositionRepair(
     const inBar = ((relative % 4) + 4) % 4;
     const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
     const chord = chordAtInPiece(piece, target.beat);
-    const collection = piece.melodicScalePcs;
+    const collection = scalePcsAtBeat(piece, target.beat);
     const allowedPcs = strong ? chord.pcs : collection;
     for (const midi of midiCandidates(allowedPcs, target.midi)) {
       if (Math.abs(midi - before.note.midi) > 9) continue;

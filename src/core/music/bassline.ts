@@ -19,6 +19,8 @@ export interface BassPlanBar {
   tokens: readonly string[];
   durations: readonly number[];
   cadence: CadenceType | null;
+  /** 小節の調(区間ごとの転調)。省略=0。線の計算は絶対pcで行い、出力はこの調からの相対度数。 */
+  keyRoot?: number;
 }
 
 interface BassEvent {
@@ -26,12 +28,17 @@ interface BassEvent {
   index: number;
   token: string;
   dur: number;
+  /** 小節の調の主音(絶対pc)。 */
+  keyRoot: number;
+  /** 根音の絶対pc。 */
+  rootPc: number;
   /** 曲頭と終止(closed/turnaround)末尾はルートで受ける(終止検査・接近装置と整合)。 */
   locked: boolean;
 }
 
 interface Candidate {
-  degree: number;
+  /** ベース音の絶対pc(調をまたいでも連結コストが正しく測れるよう絶対で持つ)。 */
+  pc: number;
   /** 0=ルート / 1=転回(第3・5音) / 2=半音経過(コードトーン外)。同点時は小さい方を優先。 */
   penalty: number;
 }
@@ -68,22 +75,23 @@ function rootOf(token: string): number {
  */
 function candidatesFor(
   event: BassEvent,
-  previousRoot: number | null,
-  nextRoot: number | null,
+  previousRootPc: number | null,
+  nextRootPc: number | null,
 ): Candidate[] {
   const def = CHORDS[event.token];
   if (!def) throw new Error(`未知のコード: ${event.token}`);
-  if (event.locked) return [{ degree: def.root, penalty: 0 }];
+  const tonePcs = def.tones.map((tone) => (tone + event.keyRoot) % 12);
+  if (event.locked) return [{ pc: event.rootPc, penalty: 0 }];
   const candidates: Candidate[] = [];
-  for (const degree of def.tones.slice(0, 3)) {
-    if (candidates.some((candidate) => candidate.degree === degree)) continue;
-    candidates.push({ degree, penalty: degree === def.root ? 0 : INVERSION_PENALTY });
+  for (const pc of tonePcs.slice(0, 3)) {
+    if (candidates.some((candidate) => candidate.pc === pc)) continue;
+    candidates.push({ pc, penalty: pc === event.rootPc ? 0 : INVERSION_PENALTY });
   }
-  if (previousRoot === def.root && nextRoot !== null && event.dur <= 2) {
-    for (const neighbor of [(nextRoot + 1) % 12, (nextRoot + 11) % 12]) {
-      if (def.tones.includes(neighbor)) continue;
-      if (candidates.some((candidate) => candidate.degree === neighbor)) continue;
-      candidates.push({ degree: neighbor, penalty: CHROMATIC_PENALTY });
+  if (previousRootPc === event.rootPc && nextRootPc !== null && event.dur <= 2) {
+    for (const neighbor of [(nextRootPc + 1) % 12, (nextRootPc + 11) % 12]) {
+      if (tonePcs.includes(neighbor)) continue;
+      if (candidates.some((candidate) => candidate.pc === neighbor)) continue;
+      candidates.push({ pc: neighbor, penalty: CHROMATIC_PENALTY });
     }
   }
   return candidates;
@@ -101,12 +109,15 @@ export function bassDegreesFor(
 ): (readonly (number | null)[] | undefined)[] {
   const events: BassEvent[] = [];
   bars.forEach((bar, barIndex) => {
+    const keyRoot = (((bar.keyRoot ?? 0) % 12) + 12) % 12;
     bar.tokens.forEach((token, index) => {
       events.push({
         bar: barIndex,
         index,
         token,
         dur: bar.durations[index] ?? 4,
+        keyRoot,
+        rootPc: (rootOf(token) + keyRoot) % 12,
         locked: (barIndex === 0 && index === 0)
           || (index === bar.tokens.length - 1
             && (bar.cadence === 'closed' || bar.cadence === 'turnaround')),
@@ -117,8 +128,8 @@ export function bassDegreesFor(
 
   const candidateSets = events.map((event, i) => candidatesFor(
     event,
-    i > 0 ? rootOf(events[i - 1]!.token) : null,
-    i + 1 < events.length ? rootOf(events[i + 1]!.token) : options.loop ? rootOf(events[0]!.token) : null,
+    i > 0 ? events[i - 1]!.rootPc : null,
+    i + 1 < events.length ? events[i + 1]!.rootPc : options.loop ? events[0]!.rootPc : null,
   ));
 
   // Viterbi: layer[i][k] = イベントiで候補kを選んだときの最小累積コスト。
@@ -133,7 +144,7 @@ export function bassDegreesFor(
       let bestFrom = 0;
       previousLayer.forEach((cost, from) => {
         const total = cost
-          + MOTION_COST[circularDistance(previousCandidates[from]!.degree, candidate.degree)]!
+          + MOTION_COST[circularDistance(previousCandidates[from]!.pc, candidate.pc)]!
           + candidate.penalty;
         if (total < best) {
           best = total;
@@ -147,12 +158,12 @@ export function bassDegreesFor(
   }
 
   // ループ閉包: 先頭はロック済み単一候補なので、末尾からの移動コストを足すだけでよい。
-  const firstDegree = candidateSets[0]![0]!.degree;
+  const firstPc = candidateSets[0]![0]!.pc;
   let bestEnd = 0;
   let bestCost = Infinity;
   layer.forEach((cost, k) => {
     const total = cost + (events.length > 1 && options.loop
-      ? MOTION_COST[circularDistance(candidateSets.at(-1)![k]!.degree, firstDegree)]!
+      ? MOTION_COST[circularDistance(candidateSets.at(-1)![k]!.pc, firstPc)]!
       : 0);
     if (total < bestCost) {
       bestCost = total;
@@ -163,16 +174,17 @@ export function bassDegreesFor(
   const chosen: number[] = new Array<number>(events.length);
   let cursor = bestEnd;
   for (let i = events.length - 1; i >= 0; i--) {
-    chosen[i] = candidateSets[i]![cursor]!.degree;
+    chosen[i] = candidateSets[i]![cursor]!.pc;
     cursor = i > 0 ? backRefs[i - 1]![cursor]! : 0;
   }
 
   const result: ((number | null)[] | undefined)[] = bars.map(() => undefined);
   events.forEach((event, i) => {
-    if (chosen[i] === rootOf(event.token)) return;
+    if (chosen[i] === event.rootPc) return;
     const row = result[event.bar]
       ?? (result[event.bar] = bars[event.bar]!.tokens.map(() => null));
-    row[event.index] = chosen[i]!;
+    // 出力は小節の調からの相対度数(HarmonyBarPlan.bassDegrees の契約)。
+    row[event.index] = ((chosen[i]! - event.keyRoot) % 12 + 12) % 12;
   });
   return result;
 }

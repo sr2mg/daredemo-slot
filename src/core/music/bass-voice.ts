@@ -13,7 +13,7 @@ import type { NoteEvent } from './types.js';
 
 export function generateBass(ctx: ComposeContext): NoteEvent[] {
   const {
-    form, bars, style, keyRoot, idiom, grooveFeel, bassLinePolicy,
+    form, bars, style, idiom, grooveFeel, bassLinePolicy, keyRootAt,
     songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
   } = ctx;
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
@@ -34,7 +34,8 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
   for (const c of chords) {
     // ペダル低音は進行名だけで常設せず、曲全体で低音主導を選んだ場合にだけ使う。
     // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
-    const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : (c.bassPc ?? c.rootPc);
+    // ペダルは区間の主音(区間ごとの転調に追従)。
+    const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRootAt(Math.floor(c.beat / 4)) : (c.bassPc ?? c.rootPc);
     // アンカーは直前アンカーへの最短連結(D#2..D3窓)。固定写像だとE/D#間で11半音跳ぶ。
     const root = nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50);
     previousAnchor = root;

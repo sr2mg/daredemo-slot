@@ -18,6 +18,7 @@ import type {
   BassLinePolicy,
   ChordEvent,
   ComposeInput,
+  JapanesePlan,
   MelodicLanguage,
   MotifMove,
   PhrasePlan,
@@ -50,8 +51,12 @@ export interface ComposeContext {
   /** ループ本体の和声（イントロを含まない、シフト前の拍位置）。 */
   chords: readonly ChordEvent[];
   chordAt: (beat: number) => ChordEvent;
-  /** その和音の局所音組織（コードスケール）。 */
+  /** その和音の局所音組織（コードスケール）。区間の調の音組織を変位音で上書きしたもの。 */
   scaleAt: (chord: ChordEvent) => readonly number[];
+  /** 本編内の小節が属する区間の旋律語彙(絶対pc)・主音・核音計画(区間ごとの調)。 */
+  scalePcsAt: (bar: number) => readonly number[];
+  keyRootAt: (bar: number) => number;
+  japanesePlanAt: (bar: number) => JapanesePlan | null;
   /** 旋律の強拍・到達点が使える和声音（和風は共通音優先）。 */
   melodyPcsForChord: (chord: ChordEvent) => readonly number[];
   startMidi: number;

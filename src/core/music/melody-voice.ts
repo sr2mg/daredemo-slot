@@ -15,7 +15,7 @@ import type { NoteArticulation, NoteEvent } from './types.js';
 
 export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, form, bars, style, scalePcs, grooveFeel, songPlan, phrasePlan, phraseGestures,
+    opts, form, bars, style, grooveFeel, songPlan, phrasePlan, phraseGestures,
     chordAt, scaleAt, melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   } = ctx;
   // --- 実音テーマ（melodic-theme.ts） ---
@@ -106,6 +106,8 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     if (appliesReturnRegister) anchor = nearestWithPc(anchor + returnRegister!.offset, pairChordPcs);
     const span = themeDegreeSpan(pairTheme);
     const ceiling = pair === climaxPair ? MELODY_HI : climaxMidi - 1;
+    // アンカーの歩みは区間の調の音組織で(区間ごとの転調に追従)。
+    const scalePcs = pairSection.scalePcs;
     for (let guard = 0; guard < 24; guard++) {
       if (realizeDegree(anchor, span.max, scalePcs, 0, 127) <= ceiling) break;
       anchor = stepOnScale(anchor, -1, scalePcs);
@@ -325,7 +327,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
         const byChordScale = stepOnScale(prev, signatureStepBack, strong ? structuralPcs : scaleAt(chord));
         midi = strong || Math.abs(byChordScale - prev) <= 2
           ? byChordScale
-          : stepOnScale(prev, signatureStepBack, scalePcs);
+          : stepOnScale(prev, signatureStepBack, sectionDesign.scalePcs);
         signatureStepBack = null;
       }
       if (
@@ -408,8 +410,8 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       const stepwiseFromPrev = (intervalFromPrev >= 1 && intervalFromPrev <= 2)
         || (scaleStepMax > 2
           && intervalFromPrev >= 1 && intervalFromPrev <= scaleStepMax
-          && scalePcs.includes(((prev % 12) + 12) % 12)
-          && stepOnScale(prev, midi > prev ? 1 : -1, scalePcs) === midi);
+          && sectionDesign.scalePcs.includes(((prev % 12) + 12) % 12)
+          && stepOnScale(prev, midi > prev ? 1 : -1, sectionDesign.scalePcs) === midi);
       if (
         !strong
         && melody.length > 0
