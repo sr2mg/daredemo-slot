@@ -50,7 +50,8 @@ export type ArrangementArc = 'build' | 'contrast' | 'terrace' | 'compact' | 'hoo
 export type CounterRole = 'response' | 'counterline' | 'guideline';
 export type TextureStrategy = 'classic' | 'arpDrive' | 'counterDrive' | 'bassDrive' | 'hybrid';
 export type BassRole = 'rootMotion' | 'pedal';
-export type PhraseSection = 'A' | 'B' | 'C' | 'D' | 'E';
+/** 区間の識別子(SectionSpec.id)。曲型が可変長になったので固定の英字ではなく任意の一意ラベル。 */
+export type PhraseSection = string;
 export type NoteArticulation = 'normal' | 'staccato' | 'tenuto' | 'accent' | 'ornament';
 export type HarmonicFunction = 'tonic' | 'predominant' | 'dominant' | 'colour';
 
@@ -521,6 +522,64 @@ export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale
  */
 export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast' | 'literal';
 export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
+
+// ---------------------------------------------------------------------------
+// 曲型（SongFormSpec）: 区間の列。保存される作曲入力の一部。
+//
+// 曲型は「小節数」ではなく「区間の列」で表す。各区間が役割・長さ・エネルギー・主題・
+// 進行・調を宣言し、生成器はこの列だけを見て計画する(区間数の上限を持たない)。
+// プリセット(FormPresetId)は form.ts が同じ SongFormSpec へ展開する。
+// 拍の割り方(12/8↔6/4↔4/4)とテンポの区間属性は次の拡張で、ここへ足す。
+// ---------------------------------------------------------------------------
+
+/** 区間の長さ。4=1小節ずつSRDC、8=2小節ずつSRDC(phraseFunctionFor)。 */
+export type SectionBars = 4 | 8;
+export type SectionEnergy = 1 | 2 | 3 | 4 | 5;
+/** loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。 */
+export type SongEnding = 'loop' | 'final';
+
+/** 他区間のフレーズを部分引用する宣言(loop16 の「ループ直前にフックを予告」など)。 */
+export interface SectionQuote {
+  /** 引用元の区間id(自分より前の区間)。 */
+  from: string;
+  /** 借りるフレーズ番号。4小節区間は 0|2 のみ(1小節=1フレーズ機能のため)。 */
+  phrases: readonly (0 | 1 | 2 | 3)[];
+  /** 省略=literal。 */
+  transform?: MotifTransform;
+}
+
+export interface SectionSpec {
+  /** 一意ラベル。'intro'・空文字・重複は不可(piece-diff の 'intro' と衝突する)。 */
+  id: string;
+  /** 編成・音色・エネルギー順位の機能。 */
+  role: SectionRole;
+  bars: SectionBars;
+  energy: SectionEnergy;
+  /**
+   * 主題ID。初出の区間が主題を提示し(original)、再登場の区間は「同じ theme の直前の区間」を
+   * 元に transform で区間全体を作り直す(externalMotifPhrases=[0] 型: 区間全体がその主題)。
+   */
+  theme: string;
+  /** 再登場時の変形。省略=literal。初出では無視。 */
+  transform?: MotifTransform;
+  /** 部分引用(主題は自分のまま、指定フレーズだけ他区間から)。theme の再登場とは併用不可。 */
+  quote?: SectionQuote;
+  /** 省略=曲既定(ComposeInput.progressionId)。 */
+  progressionId?: string;
+  /** 省略=曲既定。区間ごとの転調。 */
+  keyRoot?: number;
+  /** 省略=曲既定。平行長調のサビなど。 */
+  tonality?: Tonality;
+}
+
+export interface SongFormSpec {
+  sections: readonly SectionSpec[];
+  ending: SongEnding;
+}
+
+export type FormPresetId = 'loop4' | 'loop8' | 'loop16' | 'arc40' | 'song';
+/** 保存される曲型: プリセットidか明示の区間列。 */
+export type SongFormRef = FormPresetId | SongFormSpec;
 export type IntroLeadGesture =
   | 'motifFragment'
   | 'motifAnswer'
