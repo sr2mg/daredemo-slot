@@ -4,7 +4,7 @@ import { compose } from '../core/music/compose.js';
 import { BLIND_STUDY_FORM } from '../core/music/blind-study.js';
 import {
   FORM_PRESET_IDS, FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, resolveForm,
-  sectionStartBars, totalBars,
+  sectionStartBars, totalBars, validateForm,
 } from '../core/music/form.js';
 import {
   ARRANGEMENT_ARC_LABELS,
@@ -131,6 +131,7 @@ import {
   voiceLabel,
 } from './composer-form.js';
 import { DeviceRow, SettingField, SettingRow, SettingStatus, SettingsLayer } from './composer-settings.js';
+import { FormSectionTable } from './form-section-table.js';
 import { CompositionResearchPanel } from './composition-research-panel.js';
 import { DiagnosisPanel } from './diagnosis-panel.js';
 import { PROGRESSION_USAGE } from './progression-usage.js';
@@ -294,15 +295,20 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     setAutoVary(true);
   };
 
-  const selectForm = (next: SongFormRef) => {
+  const selectForm = (next: SongFormRef, options: { resetIntro: boolean } = { resetIntro: true }) => {
     const nextMin = Math.min(...resolveForm(next).sections.map((section) => section.bars));
     const available = progressionsForTonality(tonality).filter((p) => p.slots.length <= nextMin);
     const nextProgId = available.some((p) => p.id === prog.id) ? prog.id : available[0]!.id;
     setForm(next);
     setProgId(nextProgId);
-    setIntro(introDefaultFor(next));
+    if (options.resetIntro) setIntro(introDefaultFor(next));
     resetChoice(nextProgId, next);
   };
+  // 区間テーブルの検証。compose も同じ規則で拒否するので、ここでは行ごとに見せるだけ。
+  const formIssues = useMemo(
+    () => validateForm(formSpec, { tonality, progressionId: prog.id }),
+    [formSpec, tonality, prog.id],
+  );
 
   const selectProg = (id: string) => {
     setProgId(id);
@@ -978,6 +984,29 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                 ))}
               </select>
             </SettingField>
+          </div>
+
+          {/* 曲型の区間列: プリセットは展開して編集できる(編集した時点でカスタム) */}
+          <div className="form-editor">
+            {formPresetId !== null ? (
+              <button
+                type="button"
+                onClick={() => selectForm(
+                  { ...formSpec, sections: formSpec.sections.map((section) => ({ ...section })) },
+                  { resetIntro: false },
+                )}
+                data-testid="st-form-edit"
+              >
+                区間を編集する（{FORM_PRESET_LABELS[formPresetId]} を展開）
+              </button>
+            ) : (
+              <FormSectionTable
+                form={formSpec}
+                defaults={{ progressionId: prog.id, keyRoot, tonality }}
+                issues={formIssues}
+                onChange={(next) => selectForm(next, { resetIntro: false })}
+              />
+            )}
           </div>
 
           {/* コード進行のスロット選択: 選択肢が 1 つの小節は固定表示 */}

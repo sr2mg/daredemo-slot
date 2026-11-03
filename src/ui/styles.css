@@ -2151,3 +2151,74 @@ button:disabled {
 .studio-voices select {
   max-width: 240px;
 }
+
+/* 曲型の区間テーブル(作曲フォーム1層) */
+.form-editor {
+  margin: 6px 0 12px;
+}
+
+.form-table table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.form-table th,
+.form-table td {
+  padding: 3px 5px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.form-table th {
+  color: #888;
+  font-weight: normal;
+  border-bottom: 1px solid #2e2e44;
+}
+
+.form-table input,
+.form-table select {
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
+.form-table .form-row-error input,
+.form-table .form-row-error select {
+  border-color: #e57373;
+}
+
+.form-row-actions button {
+  padding: 2px 6px;
+  margin-right: 2px;
+}
+
+.form-row-issue {
+  margin-left: 4px;
+  color: #ffb74d;
+}
+
+.form-cell-note {
+  color: #888;
+  font-size: 12px;
+}
+
+.form-table-foot {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.form-issues {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.form-issue-warning {
+  color: #ffb74d;
+}
