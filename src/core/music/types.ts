@@ -504,9 +504,7 @@ export interface ArrangementPlan {
   textureStrategy: TextureStrategy;
   /** ペダル低音も常設せず、低音主導の戦略でだけ選べる道具として扱う。 */
   bassRole: BassRole;
-  sectionA: ArrangementSectionPlan;
-  sectionB: ArrangementSectionPlan;
-  /** 4/8小節=1区間、16小節=2区間、40小節=5区間。 */
+  /** 曲型の区間と同じ順・同じ数。小節→区間の対応は form.ts の sectionIndexAt。 */
   sections: readonly ArrangementSectionPlan[];
 }
 
@@ -672,9 +670,14 @@ export interface HarmonyBarPlan {
 }
 
 export interface SongFormPlan {
+  /** 解決済みの曲型(プリセットは展開済み)。 */
+  spec: SongFormSpec;
+  /** プリセット参照で作った曲ならその id。上位戦略(arc40 限定)が読む。 */
+  presetId: FormPresetId | null;
   sections: readonly SongSectionPlan[];
   climaxBar: number;
-  loopCadence: 'turnaround';
+  /** loop=最終小節ターンアラウンド、final=導出した終止で閉じる。 */
+  ending: SongEnding;
 }
 
 /** 各声部を生成する前に確定する、曲全体の単一の設計図。 */

@@ -4,6 +4,7 @@
  * 度数計画は bassline.ts（HarmonyBarPlan.bassDegrees）が済ませている。
  */
 
+import { sectionIndexAt } from './form.js';
 import { grooveBeat } from './groove.js';
 import { nearestWithPc } from './pitch.js';
 import { CHORDS, drumPatternStep } from './theory.js';
@@ -12,8 +13,8 @@ import type { NoteEvent } from './types.js';
 
 export function generateBass(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, style, keyRoot, idiom, grooveFeel, engineRev, bassLinePolicy,
-    arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
+    form, bars, style, keyRoot, idiom, grooveFeel, engineRev, bassLinePolicy,
+    songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
   } = ctx;
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
   const bass: NoteEvent[] = [];
@@ -23,8 +24,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
   const kickStepLevel = (bar: number, step: number): number => {
     // 打楽器のない様式にはキック骨格が無い(kickSync はキット前提の刻み)。
     if (style.percussion.kind !== 'kit') return 0;
-    const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
-    const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
+    const sectionPlan = arrangementPlan.sections[sectionIndexAt(form, bar)] ?? arrangementPlan.sections[0]!;
     if (sectionPlan.drum === 'breakdown') return step === 0 || step === 8 ? 1 : 0;
     const pattern = sectionPlan.drum === 'sectionB' ? style.percussion.sectionB.kick : style.percussion.kick;
     return drumPatternStep(pattern, bar, step);
@@ -39,8 +39,10 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
     const chordRootPc = (CHORDS[c.token]!.root + keyRoot) % 12;
     const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : (c.bassPc ?? chordRootPc);
-    const root: number = opts.bars === 40
-      ? nearestWithPc(40, [anchorPc], 36, 47) // BIGはC2前後まで下げ、低音の土台を明確にする。
+    // 40小節の5区間弧(BIG)はC2前後まで下げ、低音の土台を明確にする(曲型プリセット由来の例外。
+    // 次段の rev5 で廃止し、音域は様式の bass ファセットに従わせる)。
+    const root: number = songPlan.form.presetId === 'arc40'
+      ? nearestWithPc(40, [anchorPc], 36, 47)
       : linkedAnchors
         ? nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50) // D#2..D3窓で直前へ最短連結。
         : 40 + ((anchorPc - 4 + 12) % 12); // rev0の通常フォーム: 従来のE2..D#3帯固定写像。
@@ -90,16 +92,13 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
 
   for (const barPlan of phrasePlan.bars) {
     const bar = barPlan.bar;
-    const sectionIndex = opts.bars === 40
-      ? Math.floor(bar / 8)
-      : opts.bars === 16 ? Math.floor(bar / 8) : 0;
-    const phraseGesture = phraseGestures[sectionIndex]!;
+    const phraseGesture = phraseGestures[sectionIndexAt(form, bar)]!;
     const inBar = bass.filter((note) => note.beat >= bar * 4 && note.beat < (bar + 1) * 4);
     const last = inBar[inBar.length - 1];
     if (!last) continue;
     const endChord = chordAt((bar + 1) * 4 - 0.001);
     const endRootPc = (CHORDS[endChord.token]!.root + keyRoot) % 12;
-    const nextChord = bar + 1 < opts.bars ? chordAt((bar + 1) * 4) : chordAt(0);
+    const nextChord = bar + 1 < bars ? chordAt((bar + 1) * 4) : chordAt(0);
     // 接近の目標は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
     const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + keyRoot) % 12;
     // 持続サブの終止音: 長音そのものを再ピッチすると小節全体の低音が動いてしまうため、
@@ -196,7 +195,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     }
   }
   for (const note of bass) {
-    const barPlan = phrasePlan.bars[Math.min(opts.bars - 1, Math.floor(note.beat / 4))]!;
+    const barPlan = phrasePlan.bars[Math.min(bars - 1, Math.floor(note.beat / 4))]!;
     note.velocity = Math.min(1, barPlan.dynamic + (note.beat % 1 === 0 ? 0.06 : -0.05));
     // 持続サブの長音はテヌート(終止の接近音など短音はスタッカートのまま)。
     note.articulation = bassPattern === 'sustain' && note.dur >= 0.5

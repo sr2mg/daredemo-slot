@@ -23,6 +23,7 @@ import { idiomFor } from './melodic-idiom.js';
 import type { StyleDef } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
+import { introDefaultFor, presetForBars, resolveForm, totalBars } from './form.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import {
   DEFAULT_GROOVE_FEEL, grooveBeat, grooveFor, hasStraightSixteenths, tripletHatOffsets,
@@ -53,7 +54,6 @@ import type {
   BassLinePolicy,
   CadenceType,
   ChordEvent,
-  ComposeBars,
   ComposeInput,
   DiminutionPolicy,
   DrumEvent,
@@ -115,8 +115,12 @@ export function compose(opts: ComposeInput): Piece {
   if (!prog) {
     throw new Error(`${tonality === 'minor' ? '短調' : '長調'}では進行「${progression.name}」を使用できません`);
   }
+  // 曲型: 小節数(ComposeBars)は曲型プリセットへ写し、以降は区間列だけを見る。
+  const presetId = presetForBars(opts.bars);
+  const form = resolveForm(presetId);
+  const bars = totalBars(form);
   const progBars = prog.slots.length;
-  if (progBars > opts.bars) throw new Error(`進行(${progBars}小節)が尺(${opts.bars}小節)より長い`);
+  if (progBars > bars) throw new Error(`進行(${progBars}小節)が尺(${bars}小節)より長い`);
 
   const rng = new Xoshiro128(opts.seed >>> 0);
   const keyRoot = ((opts.keyRoot % 12) + 12) % 12;
@@ -172,7 +176,8 @@ export function compose(opts: ComposeInput): Piece {
     ? chooseVariedHarmony(prog, opts.bars, opts.seed)
     : defaultChoiceFor(prog, opts.bars));
   const songPlan = createSongPlan({
-    bars: opts.bars,
+    form,
+    presetId,
     seed: opts.seed,
     tonality,
     melodicLanguage,
@@ -181,12 +186,12 @@ export function compose(opts: ComposeInput): Piece {
     progression: prog,
     style,
     choice,
-    intro: opts.intro !== false,
+    intro: opts.intro !== false && introDefaultFor(presetId),
     bassLine: bassLinePolicy,
     ...(opts.compositionStrategy ? { compositionStrategy: opts.compositionStrategy } : {}),
   });
   const arrangementPlan = arrangementPlanFor(
-    opts.bars, opts.seed, opts.progressionId, songPlan, devices.tupletOverlay.value,
+    form, opts.seed, opts.progressionId, songPlan, devices.tupletOverlay.value,
   );
 
   // --- SongPlanで確定した和声機能と変化位置を、実コードへ展開する。 ---
@@ -256,7 +261,7 @@ export function compose(opts: ComposeInput): Piece {
   const melodyPcsForChord = (chord: ChordEvent): readonly number[] => idiom.landingPcs(chord.pcs, scalePcs);
   const startMidi = nearestWithPc(76, melodyPcsForChord(chordAt(0)));
   const phrasePlan = makePhrasePlan(
-    opts, style, rng, chordAt, startMidi, idiom, scalePcs, japanesePlan, arrangementPlan, songPlan,
+    opts, form, style, rng, chordAt, startMidi, idiom, scalePcs, japanesePlan, arrangementPlan, songPlan,
   );
   // 区間ごとに別の音程ジェスチャーを持つ。リズムだけ変えて同じ上下動をA〜Eへ貼らない。
   // rev2: 主題ジェスチャーは主系列rngでなく区間ごとの独立ストリームから抽選する。
@@ -286,7 +291,7 @@ export function compose(opts: ComposeInput): Piece {
 
   // --- 各声部の実音化（声部ジェネレータは乱数を持たない決定論的実現） ---
   const ctx: ComposeContext = {
-    opts, style, keyRoot, melodicLanguage, idiom, scalePcs, grooveFeel, engineRev, bassLinePolicy,
+    opts, style, form, bars, keyRoot, melodicLanguage, idiom, scalePcs, grooveFeel, engineRev, bassLinePolicy,
     songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
     melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   };
@@ -356,7 +361,7 @@ export function compose(opts: ComposeInput): Piece {
 
   // --- ハモリ層(平行下3度、duet.ts) ---
   // 音量はここでは決めない: velocityは主旋律を継承し、バランスは各ミキサーが所有する。
-  const sectionSource = { bars: opts.bars, loopStartBeat, arrangementPlan };
+  const sectionSource = { songPlan, loopStartBeat, arrangementPlan };
   const duet: NoteEvent[] = duetPolicy === 'on'
     ? duetLayerFor(
       finalMelody,
@@ -379,11 +384,11 @@ export function compose(opts: ComposeInput): Piece {
     melodicScalePcs: [...scalePcs],
     motif: { moves: phraseGestures[0]!.map((move) => ({ ...move })) },
     grooveFeel,
-    bars: opts.bars,
+    bars,
     introBars,
     introRole,
     loopStartBeat,
-    beats: loopStartBeat + opts.bars * 4,
+    beats: loopStartBeat + bars * 4,
     keyRoot,
     chords: [...introChords, ...chords],
     melody: finalMelody,
@@ -394,7 +399,7 @@ export function compose(opts: ComposeInput): Piece {
     drums: applyDrumArticulation(
       [...introDrums, ...drums],
       loopStartBeat,
-      loopStartBeat + opts.bars * 4,
+      loopStartBeat + bars * 4,
     ),
     phrasePlan,
     songPlan,

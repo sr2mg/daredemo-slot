@@ -4,6 +4,7 @@ import {
 } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
+import { sectionStartBars } from './form.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
@@ -342,7 +343,9 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
-  const expectedSections = piece.bars === 40 ? 5 : piece.bars === 16 ? 2 : 1;
+  const formSections = piece.songPlan.form.sections;
+  const expectedSections = formSections.length;
+  const formStarts = sectionStartBars(piece.songPlan.form);
   if (piece.songPlan.harmony.length !== piece.bars) {
     add('form', 'error', bodyStart, -1, 'SongPlanの和声設計と曲の小節数が一致しない');
   }
@@ -498,7 +501,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     add(
       'melody',
       'warning',
-      bodyStart + comparison.secondSection * 8 * 4,
+      bodyStart + (formStarts[comparison.secondSection] ?? 0) * 4,
       -1,
       `${first}と${second}の旋律が、完全一致ではないがリズムと輪郭の似たフレーズへ収束している`,
     );
@@ -598,14 +601,11 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const optionalLayers = Number(section.echo)
       + Number(section.counterDensity > 0)
       + Number(!ostinatoIsAccompaniment && section.ostinatoDensity > 0);
+    const sectionStart = bodyStart + (formStarts[sectionIndex] ?? 0) * 4;
+    const sectionEnd = sectionStart + (formSections[sectionIndex]?.bars ?? piece.bars) * 4;
     if (textureSections.length > 1 && optionalLayers > 1) {
-      add(
-        'texture', 'warning', bodyStart + sectionIndex * 8 * 4, -1,
-        'エコー・対旋律・分散和音が同一区間で足し算になっている',
-      );
+      add('texture', 'warning', sectionStart, -1, 'エコー・対旋律・分散和音が同一区間で足し算になっている');
     }
-    const sectionStart = bodyStart + sectionIndex * (piece.bars === 40 ? 8 : piece.bars === 16 ? 8 : piece.bars) * 4;
-    const sectionEnd = sectionStart + (piece.bars === 40 || piece.bars === 16 ? 8 : piece.bars) * 4;
     if (
       section.counterDensity > 0
       && !piece.counterMelody.some((note) => note.beat >= sectionStart && note.beat < sectionEnd)
@@ -660,8 +660,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     add('rhythm', 'error', bodyStart, -1, '三連オーバーレイと連符レイヤーが同一曲へ計画されている');
   }
   textureSections.forEach((section, sectionIndex) => {
-    const sectionStart = bodyStart + sectionIndex * (piece.bars === 40 ? 8 : piece.bars === 16 ? 8 : piece.bars) * 4;
-    const sectionEnd = sectionStart + (piece.bars === 40 || piece.bars === 16 ? 8 : piece.bars) * 4;
+    const sectionStart = bodyStart + (formStarts[sectionIndex] ?? 0) * 4;
+    const sectionEnd = sectionStart + (formSections[sectionIndex]?.bars ?? piece.bars) * 4;
     for (const note of piece.ostinato) {
       if (note.beat < sectionStart || note.beat >= sectionEnd) continue;
       const offsetInBar = (note.beat - bodyStart) % 4;

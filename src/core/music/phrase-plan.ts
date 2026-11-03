@@ -12,7 +12,7 @@
 import { Xoshiro128 } from '../rng.js';
 import type { Rng } from '../rng.js';
 import { appoggiaturaRatePercent } from './melodic-theme.js';
-import { phraseFunctionFor } from './song-plan.js';
+import { barInSection, sectionIndexAt, totalBars } from './form.js';
 import { nearestWithPc } from './pitch.js';
 import type { StyleDef } from './theory.js';
 import type { MelodicIdiom } from './melodic-idiom.js';
@@ -20,7 +20,6 @@ import type {
   ArrangementPlan,
   CadenceType,
   ChordEvent,
-  ComposeBars,
   ComposeInput,
   JapanesePlan,
   MelodicMotif,
@@ -28,6 +27,7 @@ import type {
   OrnamentType,
   PhraseBarPlan,
   PhrasePlan,
+  SongFormSpec,
   SongPlan,
 } from './types.js';
 
@@ -122,7 +122,7 @@ export function makePhraseGesture(rng: Rng, style: StyleDef): PhraseMove[] {
  * 標準語法向けの控えめな装飾計画。16小節に0〜1個、終止付近の応答小節へ
  * grace/turn だけを置く（shake は和風の語彙として残す）。
  */
-function sparseOrnamentPlanFor(bars: ComposeBars, seed: number): Map<number, OrnamentType> {
+function sparseOrnamentPlanFor(bars: number, seed: number): Map<number, OrnamentType> {
   const rng = new Xoshiro128((seed ^ 0x4752_4143) >>> 0);
   const plan = new Map<number, OrnamentType>();
   for (let phrase = 0; phrase < bars; phrase += 16) {
@@ -134,7 +134,7 @@ function sparseOrnamentPlanFor(bars: ComposeBars, seed: number): Map<number, Orn
 }
 
 /** 4小節ごとに一度だけ装飾し、同じ応答処理が2小節おきに続くのを避ける。 */
-function ornamentPlanFor(bars: ComposeBars, seed: number): Map<number, OrnamentType> {
+function ornamentPlanFor(bars: number, seed: number): Map<number, OrnamentType> {
   const rng = new Xoshiro128((seed ^ 0x4f52_4e4d) >>> 0);
   const selected: number[] = [];
   for (let phrase = 0; phrase < bars; phrase += 4) {
@@ -155,6 +155,7 @@ function closestPcToMidi(target: number, pcs: readonly number[], lo = 48, hi = 9
 /** フレーズの役割・終止目標・対旋律の空間を、各声部より先に決める。 */
 export function makePhrasePlan(
   opts: ComposeInput,
+  form: SongFormSpec,
   style: StyleDef,
   rng: Rng,
   chordAt: (beat: number) => ChordEvent,
@@ -165,6 +166,8 @@ export function makePhrasePlan(
   arrangementPlan: ArrangementPlan,
   songPlan: SongPlan,
 ): PhrasePlan {
+  const bars = totalBars(form);
+  const sections = songPlan.form.sections;
   const promptA = makeMotifRhythm(style, rng);
   const answerA = makeMotifRhythm(style, rng, promptA);
   const promptB = makeDistinctMotifRhythm(style, rng, [promptA]);
@@ -183,10 +186,10 @@ export function makePhrasePlan(
     [promptE, answerE],
   ] as const;
   const ornaments = idiom.ornamentDensity === 'dense'
-    ? ornamentPlanFor(opts.bars, opts.seed)
-    : sparseOrnamentPlanFor(opts.bars, opts.seed);
+    ? ornamentPlanFor(bars, opts.seed)
+    : sparseOrnamentPlanFor(bars, opts.seed);
   const climaxBar = songPlan.form.climaxBar;
-  const bars: PhraseBarPlan[] = [];
+  const barPlans: PhraseBarPlan[] = [];
 
   // 新しい表現デバイスは主系列の rng を消費せず、既存の抽選列を乱さない独立ストリームで決める。
   // 進行IDも混ぜ、同じシードでも進行が違えば別の表情の抽選になるようにする。
@@ -204,7 +207,7 @@ export function makePhrasePlan(
   const appoggRng = new Xoshiro128((featureSeed ^ 0x4150_5047) >>> 0);
 
   // セクション別テッシトゥーラ: Aは主題の基準。以降の区間は±4半音まで変位し、対比を作る。
-  const sectionCount = opts.bars === 40 ? 5 : opts.bars === 16 ? 2 : 1;
+  const sectionCount = sections.length;
   const registerOffsets: number[] = Array.from({ length: sectionCount }, (_, index) => {
     if (index === 0) return 0;
     const choices = [-4, -2, 0, 2, 4] as const;
@@ -214,12 +217,13 @@ export function makePhrasePlan(
     registerOffsets[Math.max(1, sectionCount - 2)] = 3;
   }
 
-  // 署名跳躍: 低音域の区間（40小節は谷のC）の展開頭で一度だけ許す9半音超の跳躍。
+  // 署名跳躍: 低音域の区間(谷の役割、無ければ2番目の区間)の展開頭で一度だけ許す9半音超の跳躍。
   // 高音域からは音域の天井とクライマックスの一意性を壊さずに跳べないため、谷から跳ぶ。
   let signatureLeapBar: number | null = null;
-  if (opts.bars >= 16 && leapRng.nextInt(100) < 60) {
-    const candidateBar = opts.bars === 40 ? 20 : 12;
-    if (candidateBar !== climaxBar && candidateBar < opts.bars) signatureLeapBar = candidateBar;
+  if (sectionCount > 1 && leapRng.nextInt(100) < 60) {
+    const leapSection = sections.find((section) => section.role === 'relief') ?? sections[1]!;
+    const candidateBar = leapSection.startBar + 4;
+    if (candidateBar !== climaxBar && candidateBar < bars) signatureLeapBar = candidateBar;
   }
 
   let pendingSustainEntry = false;
@@ -229,13 +233,13 @@ export function makePhrasePlan(
   let lastAppoggiaturaBar = -8;
   let pendingAnacrusis = false;
 
-  for (let bar = 0; bar < opts.bars; bar++) {
-    const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
-    const section = (['A', 'B', 'C', 'D', 'E'] as const)[sectionIndex]!;
-    const barInSection = opts.bars >= 16 ? bar % 8 : bar;
+  for (let bar = 0; bar < bars; bar++) {
+    const sectionIndex = sectionIndexAt(form, bar);
+    const sectionDesign = sections[sectionIndex]!;
+    const section = sectionDesign.id;
+    const offsetInSection = barInSection(form, bar);
     const harmonyBar = songPlan.harmony[bar]!;
     const phraseFunction = harmonyBar.phraseFunction;
-    const sectionDesign = songPlan.form.sections[sectionIndex]!;
     const phraseIndex = (['statement', 'restatement', 'departure', 'conclusion'] as const)
       .indexOf(phraseFunction) as 0 | 1 | 2 | 3;
     const borrowsExternalMotif = sectionDesign.motifSourceSection !== null
@@ -245,14 +249,16 @@ export function makePhrasePlan(
       : sectionDesign;
     const sourcePhrase = sectionDesign.motifSourcePhrases[phraseIndex];
     const motifSourceBar = sourceSection.startBar + (sectionDesign.bars >= 8
-      ? sourcePhrase * 2 + (barInSection % 2)
+      ? sourcePhrase * 2 + (offsetInSection % 2)
       : sourcePhrase);
-    const isAnswer = barInSection % 2 === 1;
+    const isAnswer = offsetInSection % 2 === 1;
     const rhythmFamily = rhythmFamilies[sectionDesign.phraseRhythmVariants[phraseIndex]]!;
     const sectionRhythm = rhythmFamily[isAnswer ? 1 : 0];
     const rhythm = [...sectionRhythm];
-    const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
-    const sectionBoundary = opts.bars >= 16 && barInSection === 7 && bar !== opts.bars - 1;
+    const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sections[0]!;
+    const sectionBoundary = sectionCount > 1
+      && offsetInSection === sectionDesign.bars - 1
+      && bar !== bars - 1;
     const cadence = isAnswer ? harmonyBar.cadence : null;
 
     const counterSteps: number[] = [];
@@ -269,10 +275,10 @@ export function makePhrasePlan(
       } else if (
         arrangementPlan.counterRole === 'response'
         && sectionPlan.counterDensity > 0
-        && bar !== opts.bars - 1
+        && bar !== bars - 1
         // 薄い応答は各区間の中盤に一度。絶対4小節目へ固定するとB区間で鳴らなくなる。
         // 変奏反復(restatement)の答句はフックのリテラル反復を担うため空けない。
-        && (sectionPlan.counterDensity === 2 || barInSection === (opts.bars === 4 ? 1 : 5))
+        && (sectionPlan.counterDensity === 2 || offsetInSection === (sectionDesign.bars === 4 ? 1 : 5))
       ) {
         for (let step = 5; step < 8; step++) rhythm[step] = false;
         rhythm[4] = true;
@@ -312,7 +318,7 @@ export function makePhrasePlan(
     if (
       arrangementPlan.counterRole === 'counterline'
       && sectionPlan.counterDensity > 0
-      && bar !== opts.bars - 1
+      && bar !== bars - 1
       && !sectionBoundary
       // 薄い対旋律は応答小節だけ、密な対旋律も展開の開始を足す程度に留める。
       && (isAnswer || (sectionPlan.counterDensity === 2 && phraseFunction === 'departure'))
@@ -405,7 +411,7 @@ export function makePhrasePlan(
       isAnswer
       && (targetStep === 4 || targetStep === 6)
       && counterSteps.every((counterStep) => counterStep <= targetStep!)
-      && bar + 1 < opts.bars
+      && bar + 1 < bars
       && bar + 1 !== climaxBar
       && bar - lastLongToneBar >= 4
       && longToneRng.nextInt(100) < 30
@@ -489,7 +495,7 @@ export function makePhrasePlan(
       && !rhythm[7]
       && targetStep !== null
       && targetStep <= 5
-      && bar + 1 < opts.bars
+      && bar + 1 < bars
       && bar + 1 !== signatureLeapBar
       && bar - lastAnacrusisBar >= 4
       && anacrusisRng.nextInt(100) < 35
@@ -508,15 +514,15 @@ export function makePhrasePlan(
       ? 'cadence'
       : isAnswer
         ? 'answer'
-        : barInSection >= 4
+        : offsetInSection >= 4
           ? 'continuation'
           : 'statement';
-    bars.push({
+    barPlans.push({
       bar, section, role, rhythm, counterSteps, ornamentSteps, ornamentType, maSteps,
       phraseFunction, motifSourceBar, cadence, targetPc, targetStep, energy, dynamic,
       restStart, sustainedEntry, longToneStep, anchorTie, anacrusis, appoggiaturaStep,
       registerOffset: registerOffsets[sectionIndex] ?? 0,
     });
   }
-  return { climaxBar, signatureLeapBar, rhythmFamilies, bars };
+  return { climaxBar, signatureLeapBar, rhythmFamilies, bars: barPlans };
 }

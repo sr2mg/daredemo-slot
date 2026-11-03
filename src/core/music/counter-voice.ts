@@ -3,6 +3,7 @@
  * （counterRole=guideline のとき、進行から導出した最短連結ストランドのロングトーン化）。
  */
 
+import { sectionIndexAt } from './form.js';
 import { grooveBeat } from './groove.js';
 import { nearestWithPc, stepOnScale } from './pitch.js';
 import { COUNTER_HI, COUNTER_LO, MELODY_LO } from './theory.js';
@@ -12,7 +13,7 @@ import type { NoteEvent } from './types.js';
 
 export function generateCounterMelody(ctx: ComposeContext, melody: readonly NoteEvent[]): NoteEvent[] {
   const {
-    opts, style, grooveFeel, arrangementPlan, phrasePlan, chords, chordAt, scaleAt, melodyPcsForChord,
+    opts, form, bars, style, grooveFeel, arrangementPlan, phrasePlan, chords, chordAt, scaleAt, melodyPcsForChord,
   } = ctx;
   // --- 副旋律（主旋律と同時に予約した空間へ、反行を優先して返答） ---
   const counterMelody: NoteEvent[] = [];
@@ -101,9 +102,8 @@ export function generateCounterMelody(ctx: ComposeContext, melody: readonly Note
     let previousGuide: number | null = null;
     if (strand) {
       chords.forEach((chord, index) => {
-        const bar = Math.min(opts.bars - 1, Math.floor(chord.beat / 4));
-        const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
-        const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
+        const bar = Math.min(bars - 1, Math.floor(chord.beat / 4));
+        const sectionPlan = arrangementPlan.sections[sectionIndexAt(form, bar)] ?? arrangementPlan.sections[0]!;
         if (sectionPlan.counterDensity === 0) {
           previousGuide = null;
           return;

@@ -6,6 +6,7 @@ import type {
   CompositionStrategy,
   StrategySectionId,
 } from './composition-strategy.js';
+import { barInSection, phraseFunctionFor, sectionIndexAt, sectionStartBars, totalBars } from './form.js';
 import { hasGrooveDevice } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
@@ -15,7 +16,7 @@ import type { ProgressionDef, StyleDef } from './theory.js';
 import type {
   BassLinePolicy,
   CadenceType,
-  ComposeBars,
+  FormPresetId,
   HarmonicFunction,
   HarmonicGoal,
   HarmonyBarPlan,
@@ -26,12 +27,11 @@ import type {
   IntroRole,
   MelodicLanguage,
   MelodyMode,
-  MotifTransform,
   PhraseFunction,
-  PhraseSection,
   RhythmVariant,
-  SectionRole,
+  SectionBars,
   SongFormPlan,
+  SongFormSpec,
   SongIntroPlan,
   SongPlan,
   SongSectionPlan,
@@ -58,25 +58,11 @@ export function legacyMelodyMode(tonality: Tonality, language: MelodicLanguage):
   return idiomFor(language).legacyMelodyMode ?? tonality;
 }
 
-/** 4小節では1小節ずつ、8小節以上では2小節ずつSRDCへ割り当てる。 */
-export function phraseFunctionFor(bar: number, bars: ComposeBars): PhraseFunction {
-  const functions: readonly PhraseFunction[] = ['statement', 'restatement', 'departure', 'conclusion'];
-  if (bars === 4) return functions[bar]!;
-  const barInSection = bars >= 16 ? bar % 8 : bar;
-  return functions[Math.min(3, Math.floor(barInSection / 2))]!;
-}
-
-function sectionCountFor(bars: ComposeBars): number {
-  return bars === 40 ? 5 : bars === 16 ? 2 : 1;
-}
-
-function sectionRoleFor(index: number, count: number): SectionRole {
-  if (count === 1) return 'hook';
-  if (count === 2) return index === 0 ? 'hook' : 'development';
-  return (['hook', 'development', 'relief', 'return', 'finale'] as const)[index]!;
-}
-
-function sectionEnergiesFor(
+/**
+ * プリセット曲型のエネルギー弧。16小節は対比の向き、40小節は4本の弧をシードで選ぶ
+ * (明示の区間列は spec.energy をそのまま使う)。
+ */
+function presetEnergiesFor(
   count: number,
   seed: number,
   policy: CompositionPolicy,
@@ -96,12 +82,7 @@ function sectionEnergiesFor(
   return arcs[(seed >>> 2) % arcs.length]!;
 }
 
-function sectionMotifPlanFor(
-  index: number,
-  count: number,
-  seed: number,
-  policy: CompositionPolicy,
-): Pick<
+type SectionMotifPlan = Pick<
   SongSectionPlan,
   | 'rhythmVariant'
   | 'phraseRhythmVariants'
@@ -110,7 +91,14 @@ function sectionMotifPlanFor(
   | 'motifSourceSection'
   | 'motifTransform'
   | 'cadenceDegrees'
-> {
+>;
+
+function sectionMotifPlanFor(
+  index: number,
+  count: number,
+  seed: number,
+  policy: CompositionPolicy,
+): SectionMotifPlan {
   // SRDCの反復設計: 変奏反復(restatement)は提示と同じリズム族を使い、フックを
   // リテラルに繰り返す（違いは終止音度だけ＝平行ピリオド）。展開と結論だけ型を替え、
   // 「同じ2小節を4回貼らない」多様性は展開(variant+2/3)と結論(variant+1)で担保する。
@@ -152,6 +140,13 @@ function sectionMotifPlanFor(
       externalMotifPhrases: [3], motifSourceSection: 'A', motifTransform: 'literal',
     };
   }
+  if (count !== 5) {
+    // 5区間以外の明示曲型は、主題宣言から導く計画(次段)までの暫定: 区間ごとに独自主題。
+    return {
+      ...phrasePlan((index % 5) as RhythmVariant, 3 + (index % 5) * 4),
+      externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original',
+    };
+  }
   const bVariant = (1 + ((seed >>> 3) % 2)) as 1 | 2;
   const dVariant = (1 + ((seed >>> 4) & 1)) as 1 | 2;
   const eVariant = (3 + ((seed >>> 5) & 1)) as 3 | 4;
@@ -173,16 +168,7 @@ function sectionMotifPlanFor(
     };
     const e = phrasePlan(eVariant, 19);
     const sectionIds = ['A', 'B', 'C', 'D', 'E'] as const;
-    const memoryPlans: Array<Pick<
-      SongSectionPlan,
-      | 'rhythmVariant'
-      | 'phraseRhythmVariants'
-      | 'motifSourcePhrases'
-      | 'externalMotifPhrases'
-      | 'motifSourceSection'
-      | 'motifTransform'
-      | 'cadenceDegrees'
-    >> = [
+    const memoryPlans: SectionMotifPlan[] = [
       { ...a, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'original' },
       { ...b, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
       { ...c, externalMotifPhrases: [], motifSourceSection: null, motifTransform: 'contrast' },
@@ -241,39 +227,30 @@ function sectionMotifPlanFor(
       motifSourceSection: ((seed >>> 8) & 1) === 0 ? 'B' : 'D',
       motifTransform: ((seed >>> 9) & 1) === 0 ? 'invert' : 'transpose',
     },
-  ] satisfies Array<Pick<
-    SongSectionPlan,
-    | 'rhythmVariant'
-    | 'phraseRhythmVariants'
-    | 'motifSourcePhrases'
-    | 'externalMotifPhrases'
-    | 'motifSourceSection'
-    | 'motifTransform'
-    | 'cadenceDegrees'
-  >>;
+  ] satisfies SectionMotifPlan[];
   return plans[index]!;
 }
 
+/**
+ * 終止の種類。答句(区間内の奇数小節)だけが終止を持つ。曲の最終小節はターンアラウンド、
+ * 区間の最終小節は半終止/開放終止、結論フレーズは機能に応じて閉じる。
+ */
 function cadenceFor(
-  bar: number,
-  bars: ComposeBars,
+  offsetInSection: number,
+  isLastBar: boolean,
+  isSectionLastBar: boolean,
   phraseFunction: PhraseFunction,
   exitFunction: HarmonicFunction,
 ): CadenceType | null {
-  const barInSection = bars >= 16 ? bar % 8 : bar;
-  if (barInSection % 2 === 0) return null;
-  if (bar === bars - 1) return 'turnaround';
-  if (barInSection === 7) return exitFunction === 'dominant' ? 'half' : 'open';
+  if (offsetInSection % 2 === 0) return null;
+  if (isLastBar) return 'turnaround';
+  if (isSectionLastBar) return exitFunction === 'dominant' ? 'half' : 'open';
   if (phraseFunction !== 'conclusion') return 'open';
   return exitFunction === 'tonic' ? 'closed' : exitFunction === 'dominant' ? 'half' : 'open';
 }
 
-function harmonicGoalFor(
-  bar: number,
-  bars: ComposeBars,
-  phraseFunction: PhraseFunction,
-): HarmonicGoal {
-  if (bar === bars - 1) return 'turnaround';
+function harmonicGoalFor(isLastBar: boolean, phraseFunction: PhraseFunction): HarmonicGoal {
+  if (isLastBar) return 'turnaround';
   if (phraseFunction === 'statement') return 'establish';
   if (phraseFunction === 'restatement') return 'continue';
   if (phraseFunction === 'departure') return 'depart';
@@ -336,7 +313,10 @@ function absenceChoiceIndex(
 }
 
 export interface CreateSongPlanOptions {
-  bars: ComposeBars;
+  /** 解決済みの曲型(プリセットは展開済み)。 */
+  form: SongFormSpec;
+  /** プリセット参照なら id。エネルギー弧のシード揺らぎと上位戦略(arc40 限定)が読む。 */
+  presetId: FormPresetId | null;
   seed: number;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
@@ -345,8 +325,8 @@ export interface CreateSongPlanOptions {
   progression: ProgressionDef;
   style: StyleDef;
   choice: readonly number[];
-  /** 16/40小節フォームで初回専用イントロを使うか。省略時は有効。 */
-  intro?: boolean;
+  /** 初回専用の2小節イントロを使うか(曲型の既定とユーザー指定を compose が解決済み)。 */
+  intro: boolean;
   compositionStrategy?: CompositionStrategy;
   /**
    * ベースライン生成器(bassline.ts)のポリシー。'on' は harmony の各小節へ
@@ -411,8 +391,7 @@ function introPlanFor(
 ): SongIntroPlan {
   const entryToken = harmony[0]!.tokens[0]!;
   const entryFunction = harmonicFunctionForToken(entryToken);
-  const enabled = (options.bars === 16 || options.bars === 40) && options.intro !== false;
-  if (!enabled) {
+  if (!options.intro) {
     return { enabled: false, bars: 0, role: null, entryToken, entryFunction, breakBeats: 0, barPlans: [] };
   }
 
@@ -473,52 +452,54 @@ function introPlanFor(
   };
 }
 
+/** クライマックス小節: 先頭以外(2区間以下なら全区間)の最大エネルギー区間の中盤。 */
+function climaxBarFor(sections: readonly SongSectionPlan[], seed: number): number {
+  const lateClimax = (seed & 1) === 1;
+  const candidates = sections.length > 2 ? sections.slice(1) : sections;
+  const peakEnergy = Math.max(...candidates.map((section) => section.energy));
+  const peaks = candidates.filter((section) => section.energy === peakEnergy);
+  const peak = peaks[(seed >>> 10) % peaks.length]!;
+  const offset = peak.bars === 4 ? (lateClimax ? 3 : 2) : lateClimax ? 6 : 4;
+  return peak.startBar + offset;
+}
+
 export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
-  const { bars, seed, progression, style } = options;
+  const { form, presetId, seed, progression, style } = options;
+  const bars = totalBars(form);
   const compositionStrategy = options.compositionStrategy ?? 'current';
-  const compositionPolicy = resolveCompositionPolicy(compositionStrategy, bars, seed);
-  const count = sectionCountFor(bars);
-  const sectionBars = bars / count;
-  const sectionEnergies = sectionEnergiesFor(count, seed, compositionPolicy);
-  const sections: SongSectionPlan[] = Array.from({ length: count }, (_, index) => ({
+  const compositionPolicy = resolveCompositionPolicy(compositionStrategy, presetId === 'arc40', seed);
+  const count = form.sections.length;
+  const starts = sectionStartBars(form);
+  // プリセットのエネルギー弧はシードで揺らす(16小節の対比の向き、40小節の4本の弧)。
+  // 明示の区間列は宣言どおり。
+  const presetEnergies = presetId === 'loop16' || presetId === 'arc40'
+    ? presetEnergiesFor(count, seed, compositionPolicy)
+    : null;
+  const sections: SongSectionPlan[] = form.sections.map((spec, index) => ({
     index,
-    id: (['A', 'B', 'C', 'D', 'E'] as const)[index]!,
-    startBar: index * sectionBars,
-    bars: sectionBars,
-    role: sectionRoleFor(index, count),
-    energy: sectionEnergies[index]!,
+    id: spec.id,
+    startBar: starts[index]!,
+    bars: spec.bars,
+    role: spec.role,
+    energy: presetEnergies?.[index] ?? spec.energy,
     ...sectionMotifPlanFor(index, count, seed, compositionPolicy),
   }));
-  const lateClimax = (seed & 1) === 1;
-  const climaxBar = bars === 40
-    ? (() => {
-      const candidates = sections.slice(1);
-      const peakEnergy = Math.max(...candidates.map((section) => section.energy));
-      const peaks = candidates.filter((section) => section.energy === peakEnergy);
-      const peak = peaks[(seed >>> 10) % peaks.length]!;
-      return peak.startBar + (lateClimax ? 6 : 4);
-    })()
-    : bars === 16
-      ? (() => {
-        const peakEnergy = Math.max(...sections.map((section) => section.energy));
-        const peaks = sections.filter((section) => section.energy === peakEnergy);
-        const peak = peaks[(seed >>> 10) % peaks.length]!;
-        return peak.startBar + (lateClimax ? 6 : 4);
-      })()
-      : bars === 8
-        ? (lateClimax ? 6 : 4)
-        : lateClimax ? 3 : 2;
+  const climaxBar = climaxBarFor(sections, seed);
 
-  const baseChoices = Array.from({ length: bars }, (_, bar) => {
-    const slot = progression.slots[bar % progression.slots.length]!;
-    return clampedChoiceIndex(slot, options.choice[bar]);
-  });
+  const slotAt = (bar: number): ProgressionSlot => {
+    const offset = barInSection(form, bar);
+    return progression.slots[offset % progression.slots.length]!;
+  };
+  const baseChoices = Array.from({ length: bars }, (_, bar) => (
+    clampedChoiceIndex(slotAt(bar), options.choice[bar])
+  ));
   const sectionById = new Map(sections.map((section) => [section.id as StrategySectionId, section]));
   const harmony: HarmonyBarPlan[] = [];
   for (let bar = 0; bar < bars; bar++) {
-    const sectionIndex = Math.min(count - 1, Math.floor(bar / sectionBars));
+    const sectionIndex = sectionIndexAt(form, bar);
     const section = sections[sectionIndex]!;
-    const slot = progression.slots[bar % progression.slots.length]!;
+    const offset = bar - section.startBar;
+    const slot = slotAt(bar);
     let selected = baseChoices[bar]!;
     let strategyRole: HarmonyBarPlan['strategyRole'] = 'base';
     if (
@@ -532,18 +513,18 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
     if (harmonicReturn && section.id === harmonicReturn.to) {
       const sourceSection = sectionById.get(harmonicReturn.from);
       if (sourceSection) {
-        const sourceBar = sourceSection.startBar + ((bar - section.startBar) % sourceSection.bars);
+        const sourceBar = sourceSection.startBar + (offset % sourceSection.bars);
         selected = clampedChoiceIndex(slot, baseChoices[sourceBar]);
         strategyRole = 'return';
       }
     }
     const tokens = [...slot[selected]!];
-    const phraseFunction = phraseFunctionFor(bar, bars);
-    const harmonicGoal = harmonicGoalFor(bar, bars, phraseFunction);
+    const phraseFunction = phraseFunctionFor(offset, section.bars as SectionBars);
+    const isLastBar = bar === bars - 1;
+    const harmonicGoal = harmonicGoalFor(isLastBar, phraseFunction);
     const entryFunction = harmonicFunctionForToken(tokens[0]!);
     const exitFunction = harmonicFunctionForToken(tokens.at(-1)!);
-    const barInSection = bars >= 16 ? bar % 8 : bar;
-    const localEnergy = [0, 1, 1, 0][Math.floor((barInSection % 8) / 2)]!;
+    const localEnergy = [0, 1, 1, 0][Math.floor((offset % 8) / 2)]!;
     harmony.push({
       bar,
       section: section.id,
@@ -554,7 +535,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       strategyRole,
       entryFunction,
       exitFunction,
-      cadence: cadenceFor(bar, bars, phraseFunction, exitFunction),
+      cadence: cadenceFor(offset, isLastBar, offset === section.bars - 1, phraseFunction, exitFunction),
       energy: bar === climaxBar ? 5 : Math.max(1, Math.min(4, section.energy + localEnergy - 1)),
     });
   }
@@ -568,6 +549,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
   }
 
   const harmonicActivity = harmony.filter((bar) => bar.tokens.length > 1).length / bars;
+  const formPlan: SongFormPlan = { spec: form, presetId, sections, climaxBar, ending: form.ending };
   return {
     compositionStrategy,
     compositionPolicy,
@@ -580,7 +562,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
     progressionBars: progression.slots.length,
     soundChip: options.soundChip,
     intro: introPlanFor(options, harmony, harmonicActivity),
-    form: { sections, climaxBar, loopCadence: 'turnaround' },
+    form: formPlan,
     harmony,
     melodyDensity: (style.melody.density[0] + style.melody.density[1]) / 2,
     harmonicActivity,

@@ -21,12 +21,17 @@ import type {
   MelodicLanguage,
   MotifMove,
   PhrasePlan,
+  SongFormSpec,
   SongPlan,
 } from './types.js';
 
 export interface ComposeContext {
   opts: ComposeInput;
   style: StyleDef;
+  /** 解決済みの曲型(区間列)。小節→区間は form.ts のヘルパで引く。 */
+  form: SongFormSpec;
+  /** 本編の総小節数(イントロを含まない)。 */
+  bars: number;
   /** 0..11 に正規化済みのキー主音。 */
   keyRoot: number;
   /** 語法の識別子(Pieceへそのまま書く)。判断は idiom を参照し、ここでは比較しない。 */

@@ -570,7 +570,7 @@ describe('compose', () => {
       const pieces = Array.from({ length: 32 }, (_, seed) => compose({ ...base, bars, seed }));
       expect(new Set(pieces.map((piece) => piece.arrangementPlan.textureStrategy)).size).toBeGreaterThan(1);
       expect(new Set(pieces.map((piece) => {
-        const section = piece.arrangementPlan.sectionA;
+        const section = piece.arrangementPlan.sections[0]!;
         return [
           piece.arrangementPlan.textureStrategy,
           section.backingDensity,
@@ -581,7 +581,7 @@ describe('compose', () => {
         ].join(':');
       })).size).toBeGreaterThan(3);
       pieces.forEach((piece, seed) => {
-        const section = piece.arrangementPlan.sectionA;
+        const section = piece.arrangementPlan.sections[0]!;
         if (section.counterDensity > 0) expect(piece.counterMelody.length, `counter/${bars}/${seed}`).toBeGreaterThan(0);
         if (section.ostinatoDensity > 0) expect(piece.ostinato.length, `arp/${bars}/${seed}`).toBeGreaterThan(0);
       });
@@ -594,7 +594,7 @@ describe('compose', () => {
     expect(nesPieces.every((piece) => piece.ostinato.length === 0)).toBe(true);
 
     const bResponse = compose({ ...base, bars: 16, seed: 20 });
-    expect(bResponse.arrangementPlan.sectionB.counterDensity).toBeGreaterThan(0);
+    expect(bResponse.arrangementPlan.sections[1]!.counterDensity).toBeGreaterThan(0);
     expect(bResponse.counterMelody.some((note) => note.beat >= bResponse.loopStartBeat + 8 * 4)).toBe(true);
   });
 
@@ -750,8 +750,8 @@ describe('compose', () => {
   it('16小節ではSongPlanの低密度区間と高密度区間で仕掛けを交替し、同時に足さない', () => {
     const piece = compose({ ...base, progressionId: 'tanaka-manabe', bars: 16, seed: 42 });
     expect(piece.arrangementPlan.textureStrategy).toBe('arpDrive');
-    expect(piece.arrangementPlan.sectionA.echo).toBe(true);
-    expect(piece.arrangementPlan.sectionB.ostinatoDensity).toBeGreaterThan(0);
+    expect(piece.arrangementPlan.sections[0]!.echo).toBe(true);
+    expect(piece.arrangementPlan.sections[1]!.ostinatoDensity).toBeGreaterThan(0);
     expect(piece.ostinato.some((note) => note.beat >= piece.loopStartBeat + 8 * 4)).toBe(true);
     expect(piece.arrangementPlan.sections.every((section) => (
       Number(section.echo) + Number(section.counterDensity > 0) + Number(section.ostinatoDensity > 0)

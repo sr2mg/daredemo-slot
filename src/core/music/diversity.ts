@@ -93,21 +93,25 @@ export function melodicPhraseFingerprint(piece: Piece, startBar: number): string
   return `${profile.count}|${profile.rhythm.join(',')}|${profile.contour.join(',')}`;
 }
 
-/** 8小節区間同士を、4つの対応フレーズのリズム・輪郭で比較する。 */
+/**
+ * 8小節区間同士を、4つの対応フレーズのリズム・輪郭で比較する。
+ * 添字は曲型の区間添字(4小節区間は比較対象外、単一区間なら空)。
+ */
 export function melodicSectionSimilarities(piece: Piece): MelodicSectionSimilarity[] {
-  if (piece.bars < 16) return [];
-  const sectionBars = 8;
-  const sectionCount = Math.floor(piece.bars / sectionBars);
-  const profiles = Array.from({ length: sectionCount }, (_, sectionIndex) => (
-    Array.from({ length: 4 }, (_, phraseIndex) => (
-      melodicWindowProfile(piece, sectionIndex * sectionBars + phraseIndex * 2, 2)
-    ))
-  ));
+  const sections = piece.songPlan.form.sections;
+  if (sections.length < 2) return [];
+  const profiles = new Map(sections
+    .filter((section) => section.bars === 8)
+    .map((section) => [section.index, Array.from({ length: 4 }, (_, phraseIndex) => (
+      melodicWindowProfile(piece, section.startBar + phraseIndex * 2, 2)
+    ))] as const));
+  const indices = [...profiles.keys()];
   const result: MelodicSectionSimilarity[] = [];
-  for (let firstSection = 0; firstSection < sectionCount; firstSection++) {
-    for (let secondSection = firstSection + 1; secondSection < sectionCount; secondSection++) {
-      const phraseScores = profiles[firstSection]!.map((profile, phraseIndex) => (
-        profileSimilarity(profile, profiles[secondSection]![phraseIndex]!)
+  for (const firstSection of indices) {
+    for (const secondSection of indices) {
+      if (secondSection <= firstSection) continue;
+      const phraseScores = profiles.get(firstSection)!.map((profile, phraseIndex) => (
+        profileSimilarity(profile, profiles.get(secondSection)![phraseIndex]!)
       ));
       result.push({
         firstSection,

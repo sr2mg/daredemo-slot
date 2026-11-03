@@ -6,6 +6,7 @@
 
 import { fragmentOf, invertTheme, realizeDegree, themeDegreeSpan, themeFromGesture, transposeTheme } from './melodic-theme.js';
 import type { ThemeSpec } from './melodic-theme.js';
+import { barInSection } from './form.js';
 import { grooveBeat } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
 import { LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
@@ -14,7 +15,7 @@ import type { NoteArticulation, NoteEvent } from './types.js';
 
 export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   const {
-    opts, style, scalePcs, grooveFeel, engineRev, songPlan, phrasePlan, phraseGestures,
+    opts, form, bars, style, scalePcs, grooveFeel, engineRev, songPlan, phrasePlan, phraseGestures,
     chordAt, scaleAt, melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   } = ctx;
   // --- 実音テーマ（melodic-theme.ts） ---
@@ -62,7 +63,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   // アンカーの置き場所で解決する(テーマの頂点がクライマックス未満へ収まるまでアンカーを
   // 下げる)。変奏反復は提示のアンカーを継いでフックをリテラルに繰り返し(平行ピリオド)、
   // リテラル帰還は元フレーズのアンカー(=実音高)を継ぐ。
-  const pairCount = Math.ceil(opts.bars / 2);
+  const pairCount = Math.ceil(bars / 2);
   const climaxPair = phrasePlan.climaxBar >> 1;
   const phraseAnchors: number[] = [];
   const sectionStartAnchors: number[] = [];
@@ -177,16 +178,16 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       ? turnaroundLandingFor(barPlan, barPlan.targetPc)
       : null;
     const { bar } = barPlan;
-    const barInSection = opts.bars >= 16 ? bar % 8 : bar;
-    // 4小節フォームは1小節=1機能のSRDCなので、毎小節テーマの前半(問い)を実現する
+    const offsetInSection = barInSection(form, bar);
+    const sectionDesign = songPlan.form.sections.find((section) => section.id === barPlan.section)!;
+    // 4小節区間は1小節=1機能のSRDCなので、毎小節テーマの前半(問い)を実現する
     // (提示→リテラル反復→展開→結論の8ステップ版。フックが4小節で3回聴こえる)。
-    const phraseStepOffset = opts.bars === 4 ? 0 : (barInSection % 2) * 8;
+    const phraseStepOffset = sectionDesign.bars === 4 ? 0 : (offsetInSection % 2) * 8;
     const center = bar === phrasePlan.climaxBar
       ? MELODY_HI - 2
       : baseCenter + barPlan.energy - 2 + barPlan.registerOffset;
     const onsets: number[] = [];
     barPlan.rhythm.forEach((on, step) => on && onsets.push(step));
-    const sectionDesign = songPlan.form.sections.find((section) => section.id === barPlan.section)!;
     const borrowsExternalMotif = barPlan.motifSourceBar < sectionDesign.startBar
       || barPlan.motifSourceBar >= sectionDesign.startBar + sectionDesign.bars;
     const barTheme = borrowsExternalMotif && borrowedThemes[sectionDesign.index] !== null
@@ -198,7 +199,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     const sequenceAscending = phrasePlan.climaxBar > bar
       || (phrasePlan.climaxBar < bar && ((opts.seed >>> (5 + sectionDesign.index)) & 1) === 0);
     pendingAppoggiaturaResolution = null;
-    if (barPlan.phraseFunction !== 'departure' || barInSection % 2 === 0) lastSequenceHead = null;
+    if (barPlan.phraseFunction !== 'departure' || offsetInSection % 2 === 0) lastSequenceHead = null;
 
     for (let index = 0; index < onsets.length; index++) {
       const step = onsets[index]!;

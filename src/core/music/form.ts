@@ -135,12 +135,25 @@ export function introDefaultFor(ref: SongFormRef): boolean {
   return preset !== 'loop4' && preset !== 'loop8';
 }
 
-export function totalBars(form: SongFormSpec): number {
+/**
+ * 旧入力(ComposeBars)からのプリセット対応。保存曲の移行(bgm-library)と、
+ * 曲型入力へ切り替えるまでの compose の内部経路が使う。
+ */
+export function presetForBars(bars: number): FormPresetId {
+  return bars === 40 ? 'arc40' : bars === 16 ? 'loop16' : bars === 8 ? 'loop8' : 'loop4';
+}
+
+/** 小節→区間の検索は区間の長さ列だけに依存する(SongFormSpec と SongFormPlan の両方で引ける)。 */
+export interface SectionLengths {
+  sections: readonly { bars: number }[];
+}
+
+export function totalBars(form: SectionLengths): number {
   return form.sections.reduce((sum, item) => sum + item.bars, 0);
 }
 
 /** 各区間の開始小節(本編内、イントロを含まない)。 */
-export function sectionStartBars(form: SongFormSpec): number[] {
+export function sectionStartBars(form: SectionLengths): number[] {
   const starts: number[] = [];
   let bar = 0;
   for (const item of form.sections) {
@@ -151,7 +164,7 @@ export function sectionStartBars(form: SongFormSpec): number[] {
 }
 
 /** 小節 bar(本編内)が属する区間の添字。範囲外は両端へクランプする。 */
-export function sectionIndexAt(form: SongFormSpec, bar: number): number {
+export function sectionIndexAt(form: SectionLengths, bar: number): number {
   let start = 0;
   for (let index = 0; index < form.sections.length; index++) {
     const end = start + form.sections[index]!.bars;
@@ -162,8 +175,14 @@ export function sectionIndexAt(form: SongFormSpec, bar: number): number {
 }
 
 /** 小節 bar の区間内オフセット。 */
-export function barInSection(form: SongFormSpec, bar: number): number {
+export function barInSection(form: SectionLengths, bar: number): number {
   return bar - sectionStartBars(form)[sectionIndexAt(form, bar)]!;
+}
+
+/** 区間の最終小節か(区間境界のフィル・終止の判定)。 */
+export function isSectionLastBar(form: SectionLengths, bar: number): boolean {
+  const index = sectionIndexAt(form, bar);
+  return barInSection(form, bar) === form.sections[index]!.bars - 1;
 }
 
 /** 4小節区間は1小節ずつ、8小節区間は2小節ずつ SRDC(提示・変奏反復・展開・結論)へ割り当てる。 */

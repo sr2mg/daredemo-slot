@@ -78,8 +78,6 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
       ...piece,
       arrangementPlan: {
         ...piece.arrangementPlan,
-        sectionA: { ...piece.arrangementPlan.sectionA, echo: false },
-        sectionB: { ...piece.arrangementPlan.sectionB, echo: false },
         sections: piece.arrangementPlan.sections.map((section) => ({ ...section, echo: false })),
       },
     };
@@ -132,7 +130,7 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
     const echoPiece = compose({
       progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 4, seed: 256,
     });
-    expect(echoPiece.arrangementPlan.sectionA.echo).toBe(true);
+    expect(echoPiece.arrangementPlan.sections[0]!.echo).toBe(true);
     expect(arrangePiece(echoPiece, 'eurobeat').voiceStats.parts.doubling.assigned).toBeGreaterThan(0);
     expect(arranged.voiceStats.maxConcurrent).toBeLessThanOrEqual(6);
     expect(arranged.loopStart).toBeCloseTo(bigPiece.loopStartBeat * 60 / bigPiece.bpm, 9);

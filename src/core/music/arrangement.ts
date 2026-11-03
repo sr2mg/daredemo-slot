@@ -1,12 +1,13 @@
 import type {
   ArrangementPlan,
   ArrangementSectionPlan,
-  ComposeBars,
   Piece,
+  SongFormSpec,
   TupletDivision,
   TupletOverlayPolicy,
 } from './types.js';
 import type { SectionRole, SongPlan } from './types.js';
+import { sectionIndexAt } from './form.js';
 import { grooveFor } from './groove.js';
 import { GROUPING_DISSONANCES } from './metric-modulation.js';
 import { capabilitiesFor } from './sound-capabilities.js';
@@ -118,16 +119,17 @@ function withTransitions(
 
 /** seedは互換候補内の揺らぎにだけ使い、候補集合そのものは曲調・密度・チップで決める。 */
 function textureStrategyFor(
-  bars: ComposeBars,
+  form: SongFormSpec,
   seed: number,
   plan: SongPlan | undefined,
   texture: TextureFacet | undefined,
   forceArp: boolean,
 ): ArrangementPlan['textureStrategy'] {
+  const singleSection = form.sections.length === 1;
   // 連符レイヤー有効時は、担い手のオスティナート区間が必ず生まれる編成に固定する。
   if (forceArp) return 'arpDrive';
   if (!plan) {
-    const fallback = bars < 16
+    const fallback = singleSection
       ? ['classic', 'counterDrive', 'arpDrive', 'bassDrive'] as const
       : ['counterDrive', 'arpDrive', 'bassDrive', 'hybrid'] as const;
     return fallback[(seed >>> 1) % fallback.length]!;
@@ -141,10 +143,10 @@ function textureStrategyFor(
   }
   if (plan.melodyDensity >= 5.75) candidates = candidates.filter((item) => item !== 'hybrid');
   // 短形式の細分オーバーレイは既存フレーズへ重ねる層なので、ここで編成候補まで変えて主旋律を作り直さない。
-  if (grooveFor(plan.grooveFeel).subdivisionOverlay !== 'none' && bars >= 16) {
+  if (grooveFor(plan.grooveFeel).subdivisionOverlay !== 'none' && !singleSection) {
     candidates = candidates.filter((item) => item !== 'arpDrive');
   }
-  if (bars < 16) {
+  if (singleSection) {
     // 1区間しかない短形式では、複数奏法の交替を前提にするhybridを選ばない。
     candidates = [
       ...new Set<ArrangementPlan['textureStrategy']>([
@@ -199,12 +201,7 @@ function withTupletLayer(
         : arpEnergies[i] === peakEnergy ? tensest : energies[i]! >= median ? middle : calmest;
     return { ...item, ostinatoTuplet: division };
   });
-  return {
-    ...plan,
-    sectionA: mapped[0]!,
-    sectionB: mapped[1] ?? mapped[0]!,
-    sections: mapped,
-  };
+  return { ...plan, sections: mapped };
 }
 
 /**
@@ -212,7 +209,7 @@ function withTupletLayer(
  * 主役を一つ決め、別区間で休止・再登場させる。音数制限より前に密度を整理する。
  */
 export function arrangementPlanFor(
-  bars: ComposeBars,
+  form: SongFormSpec,
   seed: number,
   progressionId?: string,
   songPlan?: SongPlan,
@@ -220,19 +217,20 @@ export function arrangementPlanFor(
   tupletOverlay: TupletOverlayPolicy = 'off',
 ): ArrangementPlan {
   const texture = songPlan ? styleForId(songPlan.styleId)?.texture : undefined;
-  const plan = planArrangement(bars, seed, progressionId, songPlan, texture, tupletOverlay !== 'off');
+  const plan = planArrangement(form, seed, progressionId, songPlan, texture, tupletOverlay !== 'off');
   return tupletOverlay === 'off' ? plan : withTupletLayer(plan, tupletOverlay, seed, songPlan);
 }
 
 function planArrangement(
-  bars: ComposeBars,
+  form: SongFormSpec,
   seed: number,
   progressionId: string | undefined,
   songPlan: SongPlan | undefined,
   texture: TextureFacet | undefined,
   forceArp: boolean,
 ): ArrangementPlan {
-  const textureStrategy = textureStrategyFor(bars, seed, songPlan, texture, forceArp);
+  const count = form.sections.length;
+  const textureStrategy = textureStrategyFor(form, seed, songPlan, texture, forceArp);
   // 伴奏型の分散和音(様式の宣言 texture.ostinato)は全区間に密度≥1の床を敷く。独立
   // アルペジオの予算が無いバックエンドでは敷かない(compactStrategy が主導する編成に従う)。
   const ostinatoFloor = texture?.ostinato === 'accompaniment'
@@ -254,8 +252,10 @@ function planArrangement(
     ? 'pedal'
     : 'rootMotion';
 
-  if (bars === 40) {
-    const energies = songPlan?.form.sections.map((item) => item.energy) ?? [4, 3, 2, 4, 5];
+  if (count >= 3) {
+    // 3区間以上: エネルギーの順位で厚み・装置を配る(区間数に上限はない)。
+    const energies = songPlan?.form.sections.map((item) => item.energy)
+      ?? form.sections.map((item) => item.energy);
     const sortedEnergy = [...energies].sort((a, b) => a - b);
     const median = sortedEnergy[Math.floor(sortedEnergy.length / 2)]!;
     const minimum = sortedEnergy[0]!;
@@ -324,16 +324,14 @@ function planArrangement(
       if (absenceIndex >= 0) plannedSections[absenceIndex]!.exitFill = 'full';
       if (returnIndex >= 0) plannedSections[returnIndex]!.entrance = 'cymbal';
     }
-    return {
-      arc: 'hookFirst', counterRole, textureStrategy, bassRole,
-      sectionA: plannedSections[0]!, sectionB: plannedSections[1]!, sections: plannedSections,
-    };
+    return { arc: 'hookFirst', counterRole, textureStrategy, bassRole, sections: plannedSections };
   }
-  if (bars !== 16) {
+  if (count === 1) {
+    const eightBars = form.sections[0]!.bars === 8;
     const device = textureStrategy === 'counterDrive'
-      ? bars === 8 && ((seed >>> 4) & 1) === 1 ? 'counter2' : 'counter1'
+      ? eightBars && ((seed >>> 4) & 1) === 1 ? 'counter2' : 'counter1'
       : textureStrategy === 'arpDrive'
-        ? bars === 8 && ((seed >>> 4) & 1) === 1 ? 'arp2' : 'arp1'
+        ? eightBars && ((seed >>> 4) & 1) === 1 ? 'arp2' : 'arp1'
         : textureStrategy === 'classic' && ((seed >>> 5) & 1) === 1 ? 'counter1' : 'none';
     const compact = section(
       ((seed >>> 6) & 1) === 0 ? 'full' : 'sparse',
@@ -357,15 +355,10 @@ function planArrangement(
         ostinatoPeak: (['restatement', 'departure', 'conclusion'] as const)[seed % 3]!,
       }
       : compact;
-    return {
-      arc: 'compact',
-      counterRole,
-      textureStrategy,
-      bassRole,
-      sectionA: single, sectionB: single, sections: [single],
-    };
+    return { arc: 'compact', counterRole, textureStrategy, bassRole, sections: [single] };
   }
-  const energies = songPlan?.form.sections.map((item) => item.energy) ?? [2, 4];
+  const energies = songPlan?.form.sections.map((item) => item.energy)
+    ?? form.sections.map((item) => item.energy);
   const arc = energies[1]! > energies[0]! ? 'build' : energies[1]! < energies[0]! ? 'contrast' : 'terrace';
   const firstFull = energies[0]! >= energies[1]!;
   const low = firstFull ? 1 : 0;
@@ -387,21 +380,16 @@ function planArrangement(
   plannedSections.forEach((section, index) => {
     section.leadColor = LEAD_COLOR_BY_ROLE[songPlan?.form.sections[index]?.role ?? 'hook'];
   });
-  return {
-    arc, counterRole, textureStrategy, bassRole,
-    sectionA: plannedSections[0]!, sectionB: plannedSections[1]!, sections: plannedSections,
-  };
+  return { arc, counterRole, textureStrategy, bassRole, sections: plannedSections };
 }
 
-/** 本編内の小節を編成区間へ写す。イントロは sectionA の薄い導入として扱う。 */
+/** 本編内の小節を編成区間へ写す。イントロは先頭区間の薄い導入として扱う。 */
 export function arrangementSectionFor(
-  piece: Pick<Piece, 'bars' | 'loopStartBeat' | 'arrangementPlan'>,
+  piece: Pick<Piece, 'loopStartBeat' | 'arrangementPlan'> & { songPlan: Pick<SongPlan, 'form'> },
   beat: number,
 ): ArrangementSectionPlan {
-  if (beat < piece.loopStartBeat) return piece.arrangementPlan.sectionA;
+  const sections = piece.arrangementPlan.sections;
+  if (beat < piece.loopStartBeat) return sections[0]!;
   const bodyBar = Math.max(0, Math.floor((beat - piece.loopStartBeat) / 4));
-  const index = piece.bars === 40
-    ? Math.min(4, Math.floor(bodyBar / 8))
-    : piece.bars === 16 && bodyBar >= 8 ? 1 : 0;
-  return piece.arrangementPlan.sections[index] ?? piece.arrangementPlan.sectionA;
+  return sections[sectionIndexAt(piece.songPlan.form, bodyBar)] ?? sections[0]!;
 }
