@@ -7,7 +7,7 @@ import type {
   StrategySectionId,
 } from './composition-strategy.js';
 import {
-  RHYTHM_FAMILY_COUNT, barInSection, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
+  RHYTHM_FAMILY_COUNT, barInSection, closesWithCadence, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
   sectionRng, sectionStartBars, sectionTonality, totalBars,
 } from './form.js';
 import { DEFAULT_GROUPING, gridFor, snapDurationsToPulses } from './grid.js';
@@ -574,7 +574,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       }
     }
     const isLastBar = bar === bars - 1;
-    const finalCadence = isLastBar && form.ending === 'final';
+    const finalCadence = isLastBar && closesWithCadence(form.ending);
     const tokens = finalCadence ? finalCadenceTokens(section.tonality) : [...slot[selected]!];
     const phraseFunction = phraseFunctionFor(offset, section.bars as SectionBars);
     const harmonicGoal = harmonicGoalFor(isLastBar, form.ending, phraseFunction);

@@ -62,14 +62,18 @@ export const ROLE_DELAY_SEND: Record<StageRole, number> = {
 export function withEchoTracks<T extends { startSec: number; gain: number }>(
   notes: readonly T[],
   specOrAt: NoteStageEcho | ((note: T) => NoteStageEcho),
-  beatSec: number,
+  beatSec: number | { toSec: (beat: number) => number; toBeat: (sec: number) => number },
   loop?: { startSec: number; endSec: number },
 ): T[] {
   const result: T[] = [...notes];
+  // 一定テンポなら拍長の掛け算、写像ならタップを拍で歩いて秒へ写す(減速区間でタップも伸びる)。
+  const tapStart = typeof beatSec === 'number'
+    ? (startSec: number, delayBeats: number): number => startSec + delayBeats * beatSec
+    : (startSec: number, delayBeats: number): number => beatSec.toSec(beatSec.toBeat(startSec) + delayBeats);
   for (const note of notes) {
     const spec = typeof specOrAt === 'function' ? specOrAt(note) : specOrAt;
     for (let tap = 1; tap <= spec.taps; tap++) {
-      let startSec = note.startSec + spec.delayBeats * beatSec * tap;
+      let startSec = tapStart(note.startSec, spec.delayBeats * tap);
       if (loop && startSec >= loop.endSec) {
         startSec = loop.startSec + (startSec - loop.endSec);
       }

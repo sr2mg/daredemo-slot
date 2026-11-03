@@ -14,6 +14,7 @@
 
 import { arrangementSectionFor } from '../core/music/arrangement.js';
 import { gridAtBeat } from '../core/music/form.js';
+import { beatToSeconds, bpmAt, secondsToBeat, tempoMapOf } from '../core/music/tempo.js';
 import type {
   LeadColorSlot,
   PcmPart,
@@ -100,7 +101,8 @@ export function arrangeSf2Parts(
   const refFor = (part: Exclude<PcmPart, 'drums' | 'duet' | 'lead'>): PcmPresetRef =>
     overrides[part] ?? { bank: 0, program: programs[part] };
   const drumRef = overrides.drums ?? { bank: 128, program: programs.drumKit ?? 0 };
-  const spb = 60 / piece.bpm;
+  const tempo = tempoMapOf(piece);
+  const toSec = (beat: number): number => beatToSeconds(tempo, beat);
   // 主旋律の音色はセクションのleadColorでパレットから選ぶ(受け渡し)。
   // 上書きは色別(leadColorVoices)が最優先で、次に全区間固定(lead)。
   const leadRefAt = (beat: number): PcmPresetRef => {
@@ -118,8 +120,8 @@ export function arrangeSf2Parts(
     bank: ref.bank,
     midi: event.midi,
     velocity: velocityOf(event.velocity),
-    startSec: event.beat * spb,
-    durSec: Math.max(0.03, event.dur * spb),
+    startSec: toSec(event.beat),
+    durSec: Math.max(0.03, toSec(event.beat + event.dur) - toSec(event.beat)),
     gain,
     ...(event.glideFrom !== undefined ? { glideFromMidi: event.glideFrom } : {}),
   });
@@ -135,8 +137,8 @@ export function arrangeSf2Parts(
     bank: backing.bank,
     midi,
     velocity: 68,
-    startSec: chord.beat * spb,
-    durSec: Math.max(0.05, chord.dur * spb * 0.97),
+    startSec: toSec(chord.beat),
+    durSec: Math.max(0.05, (toSec(chord.beat + chord.dur) - toSec(chord.beat)) * 0.97),
     gain: PART_GAINS.backing,
   })));
   const drumNotes: Sf2Note[] = [];
@@ -150,7 +152,7 @@ export function arrangeSf2Parts(
       midi: mapped.key,
       // 拍節アクセント(drum-articulation.ts)はベースベロシティへの乗算で反映する。
       velocity: Math.max(1, Math.min(127, Math.round(mapped.velocity * (drum.velocity ?? 1)))),
-      startSec: drum.beat * spb,
+      startSec: toSec(drum.beat),
       // オープンは鳴り残す(次のハットのexclusiveClassチョーク(sf2.ts)が裁ち落とす)。
       durSec: open ? 0.7 : 0.2,
       gain: PART_GAINS.drums,
@@ -175,23 +177,24 @@ export function arrangeSf2Notes(piece: Piece, overrides: PcmVoiceOverride = {}):
 }
 
 /** セクション計画のsection.echoから、サンプル単位のゲート(0/1、10msスムージング)を作る。 */
-function echoGateFor(piece: Piece, length: number, sampleRate: number, spb: number): Float32Array {
-  // セクションは拍単位でしか変わらないので、拍ごとに1回だけ引いてキャッシュする。
-  const beatCount = Math.ceil(length / sampleRate / spb) + 1;
-  const echoAtBeat = new Uint8Array(beatCount);
-  for (let beat = 0; beat < beatCount; beat++) {
-    const at = Math.min(beat + 0.01, Math.max(0, piece.beats - 0.001));
-    echoAtBeat[beat] = arrangementSectionFor(piece, at).echo ? 1 : 0;
-  }
+function echoGateFor(piece: Piece, length: number, sampleRate: number): Float32Array {
+  // セクションは拍単位でしか変わらないので、拍ごとに1回だけ引き、拍境界はテンポ写像で秒へ写す。
+  const tempo = tempoMapOf(piece);
+  const beatCount = Math.max(1, Math.ceil(secondsToBeat(tempo, length / sampleRate))) + 1;
   const gate = new Float32Array(length);
-  const samplesPerBeat = sampleRate * spb;
   const ramp = Math.max(1, Math.round(0.01 * sampleRate));
-  let state = echoAtBeat[0]!;
-  for (let i = 0; i < length; i++) {
-    const target = echoAtBeat[Math.min(beatCount - 1, Math.floor(i / samplesPerBeat))]!;
-    state += (target - state) / ramp;
-    gate[i] = state;
+  let state = arrangementSectionFor(piece, 0.01).echo ? 1 : 0;
+  let index = 0;
+  for (let beat = 0; beat < beatCount && index < length; beat++) {
+    const at = Math.min(beat + 0.01, Math.max(0, piece.beats - 0.001));
+    const target = arrangementSectionFor(piece, at).echo ? 1 : 0;
+    const end = Math.min(length, Math.round(beatToSeconds(tempo, beat + 1) * sampleRate));
+    for (; index < end; index++) {
+      state += (target - state) / ramp;
+      gate[index] = state;
+    }
   }
+  for (; index < length; index++) gate[index] = state;
   return gate;
 }
 
@@ -207,10 +210,14 @@ export async function renderSf2Bgm(
   overrides: PcmVoiceOverride = {},
   onProgress?: (ratio: number) => void,
 ): Promise<PcmBgmDef> {
+  // 名目 bpm の拍長は単一の遅延線(オーディオ段ディレイ・ドラムバス)だけに使う。発音位置は写像で写す。
   const spb = 60 / piece.bpm;
+  const tempo = tempoMapOf(piece);
+  const toSec = (beat: number): number => beatToSeconds(tempo, beat);
+  const toBeat = (sec: number): number => secondsToBeat(tempo, sec);
   const room = roomFor(piece.styleId);
-  const loopEndSec = piece.beats * spb;
-  const loopStartSec = piece.loopStartBeat * spb;
+  const loopEndSec = toSec(piece.beats);
+  const loopStartSec = toSec(piece.loopStartBeat);
   const tailSec = Math.min(3, room.rt60Sec + AUDIO_STAGE_DELAY_BEATS * spb * 2);
   const totalSec = loopEndSec + tailSec;
   const length = Math.ceil(totalSec * SF2_SAMPLE_RATE);
@@ -223,13 +230,13 @@ export async function renderSf2Bgm(
   const reverbBus = new Float32Array(length);
   const chorusBus = new Float32Array(length);
   const delayBus = new Float32Array(length);
-  const echoGate = echoGateFor(piece, length, SF2_SAMPLE_RATE, spb);
+  const echoGate = echoGateFor(piece, length, SF2_SAMPLE_RATE);
 
   const parts = arrangeSf2Parts(piece, overrides);
   // タップ幅はその音の小節の格子から(区間ごとに割り方が違う曲型)。
   const echoSpecAt = (note: Sf2Note) => noteStageEchoFor(
     piece.grooveFeel,
-    gridAtBeat(piece.songPlan.form, piece.loopStartBeat, note.startSec / spb),
+    gridAtBeat(piece.songPlan.form, piece.loopStartBeat, toBeat(note.startSec)),
   );
   const partEntries = (Object.entries(parts) as [PcmPart, Sf2Note[]][])
     .filter(([, baseNotes]) => baseNotes.length > 0);
@@ -239,11 +246,11 @@ export async function renderSf2Bgm(
     // MIDI段エコー: セクション計画が有効にした区間のリードだけ。タップはループへ巻き戻す。
     const notes = part === 'lead'
       ? [
-        ...baseNotes.filter((note) => !arrangementSectionFor(piece, note.startSec / spb).echo),
+        ...baseNotes.filter((note) => !arrangementSectionFor(piece, toBeat(note.startSec)).echo),
         ...withEchoTracks(
-          baseNotes.filter((note) => arrangementSectionFor(piece, note.startSec / spb).echo),
+          baseNotes.filter((note) => arrangementSectionFor(piece, toBeat(note.startSec)).echo),
           echoSpecAt,
-          spb,
+          { toSec, toBeat },
           { startSec: loopStartSec, endSec: loopEndSec },
         ),
       ]
@@ -253,7 +260,7 @@ export async function renderSf2Bgm(
     const stems = renderSf2Stems(
       font, notes, SF2_SAMPLE_RATE, totalSec,
       baseSend > 0
-        ? (note) => baseSend * Math.max(0.25, Math.min(1, note.durSec / spb))
+        ? (note) => baseSend * Math.max(0.25, Math.min(1, note.durSec * bpmAt(tempo, toBeat(note.startSec)) / 60))
         : undefined,
     );
     // ドラムバスFX(スタイル宣言があるときだけ)。直接音のみ処理し、リバーブ送りは

@@ -13,6 +13,7 @@ import type {
   CompositionStrategy,
 } from './composition-strategy.js';
 import type { GrooveFeel } from './groove.js';
+import type { TempoMap } from './tempo.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 
 // ---------------------------------------------------------------------------
@@ -548,8 +549,11 @@ export type SectionBars = 4 | 8;
  */
 export type BarGrouping = '4x2' | '4x3' | '3x4';
 export type SectionEnergy = 1 | 2 | 3 | 4 | 5;
-/** loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。 */
-export type SongEnding = 'loop' | 'final';
+/**
+ * loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。
+ * ritardando=final に加え、最終 2 小節を減速し終止和音を延ばす(tempo.ts)。
+ */
+export type SongEnding = 'loop' | 'final' | 'ritardando';
 
 /** 他区間のフレーズを部分引用する宣言(loop16 の「ループ直前にフックを予告」など)。 */
 export interface SectionQuote {
@@ -585,6 +589,8 @@ export interface SectionSpec {
   tonality?: Tonality;
   /** 省略=4x2(4/4)。主題・引用の元区間とは同じ割り方であること(validateForm)。 */
   grouping?: BarGrouping;
+  /** 省略=曲の bpm。区間頭でテンポを切り替える(tempo.ts の写像の点になる)。 */
+  tempo?: number;
 }
 
 export interface SongFormSpec {
@@ -743,7 +749,10 @@ export interface SongPlan {
 // ---------------------------------------------------------------------------
 
 export interface Piece {
+  /** 名目テンポ。実効テンポは tempoMap(省略=一定)で、レンダラは tempo.ts の写像で秒へ写す。 */
   bpm: number;
+  /** 区間テンポ・リタルダンドの写像(絶対拍)。省略時は bpm 一定。 */
+  tempoMap?: TempoMap;
   styleId: string;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;

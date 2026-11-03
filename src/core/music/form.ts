@@ -20,6 +20,7 @@ import type {
   SectionBars,
   SectionRole,
   SectionSpec,
+  SongEnding,
   SongFormRef,
   SongFormSpec,
   Tonality,
@@ -48,6 +49,19 @@ export const SECTION_ROLE_LABELS: Record<SectionRole, string> = {
 };
 
 export const SECTION_BARS_CHOICES: readonly SectionBars[] = [4, 8];
+
+export const SONG_ENDINGS: readonly SongEnding[] = ['loop', 'final', 'ritardando'];
+
+export const SONG_ENDING_LABELS: Record<SongEnding, string> = {
+  loop: 'ループ（最終小節で頭へ渡す）',
+  final: '終止（V→I で閉じる）',
+  ritardando: '終止＋リタルダンド（最終 2 小節を減速して閉じる）',
+};
+
+/** 終止で閉じる終わり方(final / ritardando)。ループでないことの判定はこれを使う。 */
+export function closesWithCadence(ending: SongEnding): boolean {
+  return ending !== 'loop';
+}
 
 export function isFormPresetId(value: unknown): value is FormPresetId {
   return typeof value === 'string' && (FORM_PRESET_IDS as readonly string[]).includes(value);
@@ -255,7 +269,7 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     error(null, '区間が1つもない');
     return issues;
   }
-  if (form.ending !== 'loop' && form.ending !== 'final') error(null, `終わり方が不正: ${String(form.ending)}`);
+  if (!(SONG_ENDINGS as readonly string[]).includes(form.ending)) error(null, `終わり方が不正: ${String(form.ending)}`);
   const seen = new Map<string, SectionSpec>();
   const themes: string[] = [];
   form.sections.forEach((spec, index) => {
@@ -279,6 +293,9 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     }
     if (spec.grouping !== undefined && !isBarGrouping(spec.grouping)) {
       error(id, `拍の割り方が不正: ${String(spec.grouping)}`);
+    }
+    if (spec.tempo !== undefined && !(Number.isFinite(spec.tempo) && spec.tempo >= 30 && spec.tempo <= 400)) {
+      error(id, `テンポは 30〜400(${String(spec.tempo)})`);
     }
     const grouping = isBarGrouping(spec.grouping) ? spec.grouping : DEFAULT_GROUPING;
     const groupingOf = (candidate: SectionSpec): string => candidate.grouping ?? DEFAULT_GROUPING;

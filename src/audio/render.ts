@@ -1,4 +1,5 @@
 import type { ComposeOptions, Piece } from '../core/music/types.js';
+import { beatToSeconds, tempoMapOf } from '../core/music/tempo.js';
 import { renderNesPiece, renderNesPieceAsync, NES_SAMPLE_RATE } from './nes-apu.js';
 import type { PcmBgmDef } from './pcm-types.js';
 import { arrangePiece } from './opll-arrange.js';
@@ -30,13 +31,13 @@ export interface BgmPcmRenderer {
  */
 export function arrangeComposedBgm(piece: Piece, options: ComposeOptions): ComposedBgmDef {
   if (options.soundChip === 'nes2a03') {
-    const spb = 60 / piece.bpm;
+    const tempo = tempoMapOf(piece);
     return {
       kind: 'pcm',
       wave: renderNesPiece(piece, options.nes),
       sampleRate: NES_SAMPLE_RATE,
-      loopStart: piece.loopStartBeat * spb,
-      loopEnd: piece.beats * spb,
+      loopStart: beatToSeconds(tempo, piece.loopStartBeat),
+      loopEnd: beatToSeconds(tempo, piece.beats),
     };
   }
   return arrangePiece(piece, options.styleId, options.voices, options.opllUserPatch);
@@ -80,13 +81,13 @@ export async function renderComposedBgm(
   // 2A03はサンプル合成が重い(曲丸ごと同期でレンダリングするとメインスレッドが
   // 数百ms〜秒単位止まる)ため、非同期経路ではチャンク合成を使う。
   if (options.soundChip === 'nes2a03') {
-    const spb = 60 / piece.bpm;
+    const tempo = tempoMapOf(piece);
     return {
       kind: 'pcm',
       wave: await renderNesPieceAsync(piece, options.nes, onProgress),
       sampleRate: NES_SAMPLE_RATE,
-      loopStart: piece.loopStartBeat * spb,
-      loopEnd: piece.beats * spb,
+      loopStart: beatToSeconds(tempo, piece.loopStartBeat),
+      loopEnd: beatToSeconds(tempo, piece.beats),
     };
   }
   return arrangeComposedBgm(piece, options);

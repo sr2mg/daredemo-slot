@@ -3,6 +3,7 @@ import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
 import { gridAtBeat } from '../core/music/form.js';
 import { nearBeat, strongBeatOffsets } from '../core/music/grid.js';
+import { beatToSeconds, tempoMapOf } from '../core/music/tempo.js';
 
 /** 日本版ファミコン（NTSC）の Ricoh 2A03 CPU クロック。 */
 export const NES_CPU_CLOCK = 1_789_773;
@@ -69,16 +70,16 @@ interface TriangleState {
 
 const toSample = (seconds: number): number => Math.max(0, Math.round(seconds * NES_SAMPLE_RATE));
 
-function addNoteEvents(events: GateEvent[], beat: number, dur: number, bpm: number, midi: number, volume = 15): void {
-  const spb = 60 / bpm;
-  events.push({ sample: toSample(beat * spb), on: true, timer: pulseTimerForMidi(midi), volume });
-  events.push({ sample: toSample((beat + dur) * spb), on: false });
+type ToSeconds = (beat: number) => number;
+
+function addNoteEvents(events: GateEvent[], beat: number, dur: number, toSec: ToSeconds, midi: number, volume = 15): void {
+  events.push({ sample: toSample(toSec(beat)), on: true, timer: pulseTimerForMidi(midi), volume });
+  events.push({ sample: toSample(toSec(beat + dur)), on: false });
 }
 
-function addTriangleEvents(events: GateEvent[], beat: number, dur: number, bpm: number, midi: number): void {
-  const spb = 60 / bpm;
-  events.push({ sample: toSample(beat * spb), on: true, timer: triangleTimerForMidi(midi) });
-  events.push({ sample: toSample((beat + dur) * spb), on: false });
+function addTriangleEvents(events: GateEvent[], beat: number, dur: number, toSec: ToSeconds, midi: number): void {
+  events.push({ sample: toSample(toSec(beat)), on: true, timer: triangleTimerForMidi(midi) });
+  events.push({ sample: toSample(toSec(beat + dur)), on: false });
 }
 
 function sortGateEvents(events: GateEvent[]): void {
@@ -87,9 +88,8 @@ function sortGateEvents(events: GateEvent[]): void {
 }
 
 /** 2A03パルスのタイマーだけを細かく揺らし、再発音せず「揺り」を近似する。 */
-function addShakeEvents(events: GateEvent[], note: NoteEvent, bpm: number): void {
+function addShakeEvents(events: GateEvent[], note: NoteEvent, toSec: ToSeconds): void {
   if (note.ornament !== 'shake') return;
-  const spb = 60 / bpm;
   const baseTimer = pulseTimerForMidi(note.midi);
   let direction = 1;
   for (let offset = 0.08; offset < note.dur; offset += 0.08) {
@@ -99,7 +99,7 @@ function addShakeEvents(events: GateEvent[], note: NoteEvent, bpm: number): void
       Math.round((baseTimer + 1) * 2 ** (-cents / 1200) - 1),
     ));
     events.push({
-      sample: toSample((note.beat + offset) * spb), on: true, timer, retrigger: false,
+      sample: toSample(toSec(note.beat + offset)), on: true, timer, retrigger: false,
     });
     direction *= -1;
   }
@@ -183,7 +183,9 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
   out: Float32Array;
   renderRange: (start: number, end: number) => void;
 } {
-  const duration = piece.beats * 60 / piece.bpm;
+  const tempo = tempoMapOf(piece);
+  const toSec: ToSeconds = (beat) => beatToSeconds(tempo, beat);
+  const duration = toSec(piece.beats);
   const length = Math.max(1, toSample(duration));
   const pulse1Events: GateEvent[] = [];
   const pulse2Events: GateEvent[] = [];
@@ -194,10 +196,10 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
     const strong = strongBeatOffsets(gridAtBeat(piece.songPlan.form, piece.loopStartBeat, n.beat))
       .some((offset) => nearBeat(((n.beat % 4) + 4) % 4, offset));
     addNoteEvents(
-      pulse1Events, n.beat, n.dur, piece.bpm, n.midi,
+      pulse1Events, n.beat, n.dur, toSec, n.midi,
       nesVolumeFor(n, strong ? 15 : 11),
     );
-    addShakeEvents(pulse1Events, n, piece.bpm);
+    addShakeEvents(pulse1Events, n, toSec);
   }
   const chordBacking: (NoteEvent & { volume: number })[] = [];
   for (const chord of piece.chords) {
@@ -214,19 +216,18 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
   }
   const counter = piece.counterMelody ?? [];
   for (const n of chordBacking.filter((note) => !counter.some((response) => notesOverlap(note, response)))) {
-    addNoteEvents(pulse2Events, n.beat, n.dur, piece.bpm, n.midi, n.volume);
+    addNoteEvents(pulse2Events, n.beat, n.dur, toSec, n.midi, n.volume);
   }
   for (const n of counter) {
-    addNoteEvents(pulse2Events, n.beat, n.dur, piece.bpm, n.midi, nesVolumeFor(n, 11));
+    addNoteEvents(pulse2Events, n.beat, n.dur, toSec, n.midi, nesVolumeFor(n, 11));
   }
-  for (const n of piece.bass) addTriangleEvents(triangleEvents, n.beat, n.dur, piece.bpm, n.midi);
+  for (const n of piece.bass) addTriangleEvents(triangleEvents, n.beat, n.dur, toSec, n.midi);
   sortGateEvents(pulse1Events);
   sortGateEvents(pulse2Events);
   sortGateEvents(triangleEvents);
 
-  const spb = 60 / piece.bpm;
   for (const d of piece.drums) {
-    const sample = toSample(d.beat * spb);
+    const sample = toSample(toSec(d.beat));
     if (d.inst === 'kick') noiseHits.push({ sample, period: 14, mode: 1, volume: 15, decayFrames: 3 });
     else if (d.inst === 'snare') noiseHits.push({ sample, period: 8, mode: 0, volume: 13, decayFrames: 2 });
     else if (d.inst === 'tom') noiseHits.push({ sample, period: 11, mode: 1, volume: 12, decayFrames: 3 });

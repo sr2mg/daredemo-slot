@@ -628,6 +628,8 @@ export function App() {
             void sfx.playComposedBgm(bgmCacheKey(song.options), def, delay, {
               startAtSec: def.loopStart,
               keyRoot: song.options.keyRoot,
+              // 終止で閉じる曲を割り当てたときは巻き戻さない。
+              loop: piece.ending === 'loop',
             });
           } catch {
             // 保存データ破損等。音は演出なので無音で続行する

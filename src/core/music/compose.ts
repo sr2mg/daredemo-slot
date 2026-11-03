@@ -88,6 +88,7 @@ import type {
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
 import { makePhraseGesture, makePhrasePlan, sanitizeMotif } from './phrase-plan.js';
 import { voiceChord } from './voicing.js';
+import { overlayTempoMap, ritardandoTempoMap, sectionTempoMap } from './tempo.js';
 import { realizeIntro } from './intro.js';
 import type { ComposeContext } from './compose-context.js';
 import { generateMelody } from './melody-voice.js';
@@ -404,8 +405,19 @@ export function compose(opts: ComposeInput): Piece {
   // --- スライド(ポルタメント)指示 --- 付与規則と時間定数の共有規則はglide.ts。
   if (glidePolicy === 'on') applyGlideMarks(finalMelody, loopStartBeat, (bar) => strongBeatOffsets(gridAt(bar)));
 
+  // テンポ写像: 区間テンポがあれば区間頭で切り替え、リタルダンドなら最終 2 小節の減速を重ねる。
+  const endBeat = loopStartBeat + bars * 4;
+  const sectionMap = sectionTempoMap(
+    opts.bpm, loopStartBeat,
+    songPlan.form.sections.map((section) => ({ startBar: section.startBar, tempo: form.sections[section.index]?.tempo })),
+  );
+  const tempoMap = form.ending === 'ritardando'
+    ? overlayTempoMap(sectionMap ?? [{ beat: 0, bpm: opts.bpm }], ritardandoTempoMap(opts.bpm, endBeat))
+    : sectionMap;
+
   return {
     bpm: opts.bpm,
+    ...(tempoMap ? { tempoMap } : {}),
     styleId: style.id,
     tonality,
     melodicLanguage,

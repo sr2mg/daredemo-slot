@@ -16,6 +16,7 @@ import type { StageRole } from './stage.js';
 import { timbreFor } from './style-timbre.js';
 import type { StyleVoices } from './style-timbre.js';
 import { noteStageEchoFor } from './time-layer.js';
+import { beatToSeconds, bpmAt, tempoMapOf } from '../core/music/tempo.js';
 
 /**
  * OPLLの旋律パート語彙 = ミックスの役割語彙(stage.ts)からドラム(リズムモード担当)を
@@ -275,9 +276,10 @@ export function arrangePiece(
   userPatchId: OpllUserPatchId = 'brightLead',
 ): ArrangedBgm {
   const voices = { ...timbreFor(styleId).opll, ...pickVoices(override) };
-  const spb = 60 / piece.bpm;
-  const duration = piece.beats * spb;
-  const loopStart = piece.loopStartBeat * spb;
+  const tempo = tempoMapOf(piece);
+  const toSec = (beat: number): number => beatToSeconds(tempo, beat);
+  const duration = toSec(piece.beats);
+  const loopStart = toSec(piece.loopStartBeat);
   const b = new SeqBuilder();
   const selectedPatch = OPLL_USER_PATCHES.find((patch) => patch.id === userPatchId) ?? OPLL_USER_PATCHES[0]!;
   selectedPatch.regs.forEach((value, reg) => b.raw(reg, value, 0));
@@ -331,7 +333,7 @@ export function arrangePiece(
     const kicks = piece.drums.filter((drum) => drum.inst === 'kick').sort((a, b) => a.beat - b.beat);
     kicks.forEach((kick, index) => {
       const next = kicks[index + 1]?.beat ?? piece.beats;
-      const dur = Math.min(SUB_KICK_BODY_SEC / spb, next - kick.beat - LEGATO_GAP_BEATS);
+      const dur = Math.min(SUB_KICK_BODY_SEC * bpmAt(tempo, kick.beat) / 60, next - kick.beat - LEGATO_GAP_BEATS);
       if (dur < 0.05) return;
       const midi = kickMidiAt(piece, kick.beat);
       candidates.push({
@@ -408,8 +410,8 @@ export function arrangePiece(
   allocation.notes.sort((a, b) => a.beat - b.beat || b.priority - a.priority);
   for (const note of allocation.notes) {
     if (note.endBeat - note.beat < 0.02) continue;
-    const start = note.beat * spb;
-    const end = note.endBeat * spb;
+    const start = toSec(note.beat);
+    const end = toSec(note.endBeat);
     const freq = midiFreq(note.midi);
     // ポルタメント近似: 前音の音高でキーオンし、共有規則(glide.ts)の時間で
     // 10ms刻みのピッチイベントで目標へ等比スライドする。
@@ -450,7 +452,7 @@ export function arrangePiece(
   }
   const hits = new Map<number, { bits: number; levels: Partial<Record<DrumEvent['inst'], number>>; kickMidi?: number }>();
   for (const drum of piece.drums) {
-    const at = drum.beat * spb;
+    const at = toSec(drum.beat);
     const hit = hits.get(at) ?? { bits: 0, levels: {} };
     hit.bits |= DRUM_BITS[drum.inst];
     if (mix) {

@@ -440,8 +440,9 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
       if (!player.enabled) return;
       const def = await renderBgmDef(p, opts);
       setProgress(0);
+      // 終止で閉じる曲は巻き戻さない(ループ指定があっても終止のあと止まる)。
       const result = await player.playComposedBgm(bgmCacheKey(opts), def, 0, {
-        loop,
+        loop: loop && p.ending === 'loop',
         onProgress: setProgress,
       });
       setProgress(null);
@@ -475,7 +476,8 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
           loopStartSec: def.loopStart,
           loopEndSec: def.loopEnd,
         },
-        { loopCount: exportLoops, fade: exportFade },
+        // 終止で閉じる曲はループ本体を展開せず 1 周で書き出す(フェードも不要)。
+        p.ending === 'loop' ? { loopCount: exportLoops, fade: exportFade } : { loopCount: 1, fade: false },
         (r) => setExporting(0.4 + r * 0.6),
       );
       const url = URL.createObjectURL(blob);

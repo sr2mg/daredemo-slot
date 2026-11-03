@@ -108,6 +108,7 @@ export function canonicalForm(
     ...(section.keyRoot !== undefined && section.keyRoot !== defaults.keyRoot ? { keyRoot: section.keyRoot } : {}),
     ...(section.tonality !== undefined && section.tonality !== defaults.tonality ? { tonality: section.tonality } : {}),
     ...(section.grouping !== undefined && section.grouping !== DEFAULT_GROUPING ? { grouping: section.grouping } : {}),
+    ...(section.tempo !== undefined ? { tempo: section.tempo } : {}),
   }));
   return { sections, ending: (form as SongFormSpec).ending };
 }

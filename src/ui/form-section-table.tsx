@@ -1,4 +1,6 @@
-import { SECTION_BARS_CHOICES, SECTION_ROLES, SECTION_ROLE_LABELS } from '../core/music/form.js';
+import {
+  SECTION_BARS_CHOICES, SECTION_ROLES, SECTION_ROLE_LABELS, SONG_ENDINGS, SONG_ENDING_LABELS,
+} from '../core/music/form.js';
 import type { FormIssue } from '../core/music/form.js';
 import { BAR_GROUPINGS, BAR_GROUPING_LABELS, DEFAULT_GROUPING } from '../core/music/grid.js';
 import { KEYS, PROGRESSIONS, progressionForTonality } from '../core/music/theory.js';
@@ -88,6 +90,7 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
             <th>役割</th>
             <th>小節</th>
             <th>拍</th>
+            <th>BPM</th>
             <th>力</th>
             <th>主題</th>
             <th>変形</th>
@@ -146,6 +149,19 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
                       <option key={grouping} value={grouping}>{BAR_GROUPING_LABELS[grouping]}</option>
                     ))}
                   </select>
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    min={30}
+                    max={400}
+                    value={section.tempo ?? ''}
+                    placeholder="曲"
+                    onChange={(e) => update(index, { tempo: e.target.value === '' ? undefined : Number(e.target.value) })}
+                    title="区間頭で切り替えるテンポ(空欄=曲の BPM)"
+                    style={{ width: '4em' }}
+                    data-testid={`st-section-tempo-${index}`}
+                  />
                 </td>
                 <td>
                   <select value={section.energy} onChange={(e) => update(index, { energy: Number(e.target.value) as SectionEnergy })}>
@@ -241,9 +257,12 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
         <button type="button" onClick={add} data-testid="st-section-add">＋ 区間を足す</button>
         <label>
           終わり方
-          <select value={form.ending} onChange={(e) => onChange({ ...form, ending: e.target.value as SongEnding })}>
-            <option value="loop">ループ（最終小節で頭へ渡す）</option>
-            <option value="final">終止（V→I で閉じる）</option>
+          <select
+            value={form.ending}
+            onChange={(e) => onChange({ ...form, ending: e.target.value as SongEnding })}
+            data-testid="st-form-ending"
+          >
+            {SONG_ENDINGS.map((ending) => <option key={ending} value={ending}>{SONG_ENDING_LABELS[ending]}</option>)}
           </select>
         </label>
         <span className="form-cell-note">

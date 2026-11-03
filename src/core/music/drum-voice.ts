@@ -4,7 +4,7 @@
  * オープンハット・拍節アクセントの導出は後段の drum-articulation.ts。
  */
 
-import { barInSection, sectionIndexAt } from './form.js';
+import { barInSection, closesWithCadence, sectionIndexAt } from './form.js';
 import { drumPatternFor, effectiveGroove } from './grid.js';
 import type { GridDef } from './grid.js';
 import { grooveBeat, grooveFor, tripletHatOffsets } from './groove.js';
@@ -81,7 +81,7 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
       // 最終小節の最後の 1 拍を空け、B の勢いを整理してループ先の A を迎える。
       if (barPlan.cadence === 'turnaround' && s >= fillStart) continue;
       // 終止曲型の最終小節: 終止和音(アンカー)で打ち切り、シンバルで閉じる。
-      if (form.ending === 'final' && bar === bars - 1) {
+      if (closesWithCadence(form.ending) && bar === bars - 1) {
         if (s === 0) drums.push({ beat, inst: 'kick' }, { beat, inst: 'cymbal' });
         if (s === anchorFine) drums.push({ beat, inst: 'kick' }, { beat, inst: 'cymbal' });
         continue;
@@ -101,7 +101,7 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
     if (hatOverlay === 'triplet') {
       // 三連を常時ロールとして足さず、元のスタイル譜(この小節の16ステップ窓)を三連位置へ写す。
       // A→Bフィルとループ直前は最終拍のハットを休ませ、スネアと余白を立てる。
-      const quarters = form.ending === 'final' && bar === bars - 1
+      const quarters = closesWithCadence(form.ending) && bar === bars - 1
         ? 0
         : barPlan.cadence === 'turnaround' || hasFill
           ? 3
