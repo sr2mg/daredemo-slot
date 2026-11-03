@@ -18,4 +18,6 @@ export const PROGRESSION_USAGE: Record<string, string> = {
   'relative-orbit': '夜フィールド・ゲームBGM向き',
   'minor-drive': 'BIG・ゲームBGM向き',
   'drifting-orbit': '待機画面・環境BGM向き（主音に着地しない）',
+  'aeolian-ladder': '歌もの短調Aメロ向き（8小節・導音で戻る）',
+  'mixture-rise': 'ブリッジ・決め台詞向き（♭VI→♭VII→I）',
 };

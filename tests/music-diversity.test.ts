@@ -60,7 +60,9 @@ describe('作曲結果の収束防止', () => {
       expect(summary.unique, prog.id).toBeGreaterThanOrEqual(80);
       expect(summary.maxShare, prog.id).toBeLessThan(0.03);
     }
-  });
+    // 4096 シード × 全進行を 1 スレッドで回す。進行が増えるたびに伸び、並列実行の負荷では
+    // 既定の 5 秒を越える(単独 2.5 秒)。
+  }, 20_000);
 
   it('16小節コード展開はAごとに決まったB一つへ収束しない', () => {
     for (const prog of PROGRESSIONS) {

@@ -56,6 +56,11 @@ describe('コードスケール導出（chordScalePcs）', () => {
       .toEqual([0, 2, 4, 5, 7, 9, 10]);
   });
 
+  it('短調のvii°は根音が音階外で、下主音を導音へ置き換える（主音は消さない）', () => {
+    expect(chordScalePcs(NATURAL_MINOR_SCALE, CHORDS['viiDim']!.tones, 11))
+      .toEqual([0, 2, 3, 5, 7, 8, 11]);
+  });
+
   it('ダイアトニックなコードでは音階をそのまま返す', () => {
     expect(chordScalePcs(MAJOR_SCALE, CHORDS['IV']!.tones, 5)).toEqual([...MAJOR_SCALE]);
     expect(chordScalePcs(NATURAL_MINOR_SCALE, CHORDS['iv7']!.tones, 5))
