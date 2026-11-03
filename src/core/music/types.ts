@@ -494,9 +494,12 @@ export interface ArrangementSectionPlan {
   backingDensity: 'sparse' | 'full';
   /**
    * 伴奏の刻み方。normal=様式どおり(パッド/裏打ち)。sustain=同じボイシングが続く間は再打鍵しない。
-   * stab=格子の各ステップで短く刻む(パワーコードの連打)。区間テクスチャから導く。
+   * beat=各拍頭でブロックコードを打つ(伴奏型 chords)。stab=格子の各ステップで短く刻む
+   * (パワーコードの連打)。区間テクスチャと伴奏型から導く。
    */
-  backingRhythm: 'normal' | 'sustain' | 'stab';
+  backingRhythm: 'normal' | 'sustain' | 'beat' | 'stab';
+  /** 区間の伴奏型(SectionSpec.accompaniment の実効値。省略時は様式の候補から力で選ぶ)。 */
+  accompaniment: AccompanimentFigure;
   echo: boolean;
   drum: 'base' | 'sectionB' | 'breakdown';
   /** セクション頭の合図。エネルギー上昇時も毎回同じシンバルにはしない。 */
@@ -606,9 +609,25 @@ export interface SectionSpec {
    * 先頭区間と、主題・引用の元になる区間は normal であること(validateForm)。
    */
   texture?: SectionTexture;
+  /**
+   * 省略=様式の伴奏候補(StyleDef.texture.accompaniment)から区間の力で選ぶ。明示すると
+   * その型で固定する。テクスチャ区間(sustain/pulse)は伴奏をテクスチャが決めるので指定できない
+   * (validateForm)。
+   */
+  accompaniment?: AccompanimentFigure;
 }
 
 export type SectionTexture = 'normal' | 'sustain' | 'pulse';
+
+/**
+ * 和声層が拍を刻む型(区間の伴奏型)。
+ * - pad: 和音の変化点でだけ再打鍵する保続(装置型の様式の既定)。
+ * - chords: 各拍頭でブロックコードを打つ。
+ * - arpeggio8: 格子のステップ(4/4 の 8 分)で分散和音を回す。
+ * - arpeggio16: 加速帯で細かい格子(4/4 の 16 分)へ加速する分散和音。
+ * 分散和音は独立アルペジオの予算があるバックエンドでだけ鳴り、無ければ chords へ落ちる。
+ */
+export type AccompanimentFigure = 'pad' | 'chords' | 'arpeggio8' | 'arpeggio16';
 
 export interface SongFormSpec {
   sections: readonly SectionSpec[];
@@ -679,6 +698,8 @@ export interface SongSectionPlan {
   grouping: BarGrouping;
   /** 区間のテクスチャ(SectionSpec.texture の実効値)。 */
   texture: SectionTexture;
+  /** 区間の伴奏型の指定(SectionSpec.accompaniment)。auto は編成計画が様式の候補から力で選ぶ。 */
+  accompaniment: AccompanimentFigure | 'auto';
   /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
   rhythmVariant: RhythmVariant;
   /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */

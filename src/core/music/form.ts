@@ -14,10 +14,12 @@ import { BAR_GROUPING_LABELS, DEFAULT_GROUPING, gridFor, isBarGrouping } from '.
 import type { GridDef } from './grid.js';
 import { PROGRESSIONS, progressionForTonality } from './theory.js';
 import type {
+  AccompanimentFigure,
   BarGrouping,
   FormPresetId,
   PhraseFunction,
   SectionBars,
+  SectionEnergy,
   SectionRole,
   SectionSpec,
   SectionTexture,
@@ -51,6 +53,11 @@ export const SECTION_ROLE_LABELS: Record<SectionRole, string> = {
 
 export const SECTION_BARS_CHOICES: readonly SectionBars[] = [4, 8];
 
+/** 区間の力(SectionEnergy)の値域。編成計画はこの範囲を候補列へ写す。 */
+export const SECTION_ENERGY_MIN = 1;
+export const SECTION_ENERGY_MAX = 5;
+export const SECTION_ENERGY_CHOICES: readonly SectionEnergy[] = [1, 2, 3, 4, 5];
+
 export const SONG_ENDINGS: readonly SongEnding[] = ['loop', 'final', 'ritardando'];
 
 export const SONG_ENDING_LABELS: Record<SongEnding, string> = {
@@ -66,6 +73,20 @@ export const SECTION_TEXTURE_LABELS: Record<SectionTexture, string> = {
   sustain: 'ロングトーン',
   pulse: 'パワーコード連打',
 };
+
+/** 伴奏型(力の弱い順。様式の候補列もこの順で宣言する)。 */
+export const ACCOMPANIMENT_FIGURES: readonly AccompanimentFigure[] = ['pad', 'chords', 'arpeggio8', 'arpeggio16'];
+
+export const ACCOMPANIMENT_FIGURE_LABELS: Record<AccompanimentFigure, string> = {
+  pad: '保続',
+  chords: '和音の拍打ち',
+  arpeggio8: '分散和音(8分)',
+  arpeggio16: '分散和音(16分)',
+};
+
+export function isAccompanimentFigure(value: unknown): value is AccompanimentFigure {
+  return typeof value === 'string' && (ACCOMPANIMENT_FIGURES as readonly string[]).includes(value);
+}
 
 /** 終止で閉じる終わり方(final / ritardando)。ループでないことの判定はこれを使う。 */
 export function closesWithCadence(ending: SongEnding): boolean {
@@ -289,8 +310,8 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     if (!(SECTION_BARS_CHOICES as readonly number[]).includes(spec.bars)) {
       error(id, `小節数は 4 か 8(${String(spec.bars)})`);
     }
-    if (!Number.isInteger(spec.energy) || spec.energy < 1 || spec.energy > 5) {
-      error(id, `エネルギーは 1〜5(${String(spec.energy)})`);
+    if (!Number.isInteger(spec.energy) || spec.energy < SECTION_ENERGY_MIN || spec.energy > SECTION_ENERGY_MAX) {
+      error(id, `エネルギーは ${SECTION_ENERGY_MIN}〜${SECTION_ENERGY_MAX}(${String(spec.energy)})`);
     }
     if (!(SECTION_ROLES as readonly string[]).includes(spec.role)) error(id, `役割が不正: ${String(spec.role)}`);
     if (typeof spec.theme !== 'string' || spec.theme === '') error(id, '主題 id がない');
@@ -310,6 +331,12 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
       error(id, `テクスチャが不正: ${String(spec.texture)}`);
     }
     const textureOf = (candidate: SectionSpec): SectionTexture => candidate.texture ?? 'normal';
+    if (spec.accompaniment !== undefined && !isAccompanimentFigure(spec.accompaniment)) {
+      error(id, `伴奏型が不正: ${String(spec.accompaniment)}`);
+    } else if (spec.accompaniment !== undefined && textureOf(spec) !== 'normal') {
+      // テクスチャ区間は伴奏の刻み方をテクスチャが決める(sustain=再打鍵なし、pulse=格子で連打)。
+      error(id, `${SECTION_TEXTURE_LABELS[textureOf(spec)]}の区間に伴奏型は指定できない`);
+    }
     // 先頭区間はイントロが主題を借りる(intro.ts)ので旋律が要る。
     if (index === 0 && textureOf(spec) !== 'normal') error(id, '先頭区間のテクスチャは通常であること(イントロが主題を借りる)');
     const grouping = isBarGrouping(spec.grouping) ? spec.grouping : DEFAULT_GROUPING;

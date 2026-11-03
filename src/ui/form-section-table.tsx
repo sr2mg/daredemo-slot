@@ -1,13 +1,13 @@
 import {
-  SECTION_BARS_CHOICES, SECTION_ROLES, SECTION_ROLE_LABELS, SECTION_TEXTURES, SECTION_TEXTURE_LABELS,
-  SONG_ENDINGS, SONG_ENDING_LABELS,
+  ACCOMPANIMENT_FIGURES, ACCOMPANIMENT_FIGURE_LABELS, SECTION_BARS_CHOICES, SECTION_ENERGY_CHOICES, SECTION_ROLES,
+  SECTION_ROLE_LABELS, SECTION_TEXTURES, SECTION_TEXTURE_LABELS, SONG_ENDINGS, SONG_ENDING_LABELS,
 } from '../core/music/form.js';
 import type { FormIssue } from '../core/music/form.js';
 import { BAR_GROUPINGS, BAR_GROUPING_LABELS, DEFAULT_GROUPING } from '../core/music/grid.js';
 import { KEYS, PROGRESSIONS, progressionForTonality } from '../core/music/theory.js';
 import type {
-  BarGrouping, MotifTransform, SectionBars, SectionEnergy, SectionRole, SectionSpec, SectionTexture, SongEnding,
-  SongFormSpec, Tonality,
+  AccompanimentFigure, BarGrouping, MotifTransform, SectionBars, SectionEnergy, SectionRole, SectionSpec, SectionTexture,
+  SongEnding, SongFormSpec, Tonality,
 } from '../core/music/types.js';
 
 /**
@@ -25,8 +25,6 @@ const TRANSFORM_LABELS: Record<MotifTransform, string> = {
 
 /** 再登場時に選べる変形(original は初出の意味なので選択肢に出さない)。 */
 const TRANSFORM_CHOICES: readonly MotifTransform[] = ['literal', 'transpose', 'invert', 'contrast'];
-
-const ENERGY_CHOICES: readonly SectionEnergy[] = [1, 2, 3, 4, 5];
 
 export interface FormDefaults {
   progressionId: string;
@@ -93,6 +91,7 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
             <th>拍</th>
             <th>BPM</th>
             <th>質感</th>
+            <th>伴奏</th>
             <th>力</th>
             <th>主題</th>
             <th>変形</th>
@@ -170,6 +169,8 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
                     value={section.texture ?? 'normal'}
                     onChange={(e) => update(index, {
                       texture: e.target.value === 'normal' ? undefined : e.target.value as SectionTexture,
+                      // テクスチャ区間は伴奏の刻み方をテクスチャが決める(validateForm)。
+                      ...(e.target.value === 'normal' ? {} : { accompaniment: undefined }),
                     })}
                     title="ロングトーン=区間頭の1音を保続し伴奏は再打鍵しない・ドラム無し。パワーコード連打=旋律を休ませ開放五度を刻む"
                     data-testid={`st-section-texture-${index}`}
@@ -180,8 +181,24 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
                   </select>
                 </td>
                 <td>
+                  <select
+                    value={section.accompaniment ?? 'auto'}
+                    onChange={(e) => update(index, {
+                      accompaniment: e.target.value === 'auto' ? undefined : e.target.value as AccompanimentFigure,
+                    })}
+                    title="和声層が拍を刻む型。自動=様式の候補から区間の力で選ぶ(アコースティック: 力1〜2=和音の拍打ち、3〜4=分散和音8分、5=分散和音16分。他の様式=保続)。分散和音は PCM 音源でだけ鳴り、他では和音の拍打ちになる"
+                    disabled={(section.texture ?? 'normal') !== 'normal'}
+                    data-testid={`st-section-accompaniment-${index}`}
+                  >
+                    <option value="auto">自動</option>
+                    {ACCOMPANIMENT_FIGURES.map((figure) => (
+                      <option key={figure} value={figure}>{ACCOMPANIMENT_FIGURE_LABELS[figure]}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
                   <select value={section.energy} onChange={(e) => update(index, { energy: Number(e.target.value) as SectionEnergy })}>
-                    {ENERGY_CHOICES.map((energy) => <option key={energy} value={energy}>{energy}</option>)}
+                    {SECTION_ENERGY_CHOICES.map((energy) => <option key={energy} value={energy}>{energy}</option>)}
                   </select>
                 </td>
                 <td>

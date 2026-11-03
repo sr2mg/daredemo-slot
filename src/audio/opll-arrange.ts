@@ -5,7 +5,7 @@ import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
 import { gridAtBeat } from '../core/music/form.js';
-import { nearBeat, pulseBeats, strongBeatOffsets } from '../core/music/grid.js';
+import { BAR_BEATS, nearBeat, pulseBeats, strongBeatOffsets } from '../core/music/grid.js';
 import {
   freqToFnum, initRhythmMode, RHYTHM_DEFAULT_LEVELS, RHYTHM_LEVEL_SLOT, rhythmLevelRegs, SeqBuilder,
 } from './opll-core.js';
@@ -364,11 +364,15 @@ export function arrangePiece(
     const thin = chord.beat < piece.loopStartBeat || backingSection.backingDensity === 'sparse';
     const texturedBacking = chord.beat >= piece.loopStartBeat && backingSection.backingRhythm !== 'normal';
     if (texturedBacking) {
-      // sustain: 同じ下声部が続く間は再打鍵せず前の音を延ばす。stab: 格子の各ステップで短く刻む。
+      // sustain: 同じ下声部が続く間は再打鍵せず前の音を延ばす。beat: 各拍頭で次の拍頭まで。
+      // stab: 格子の各ステップで短く刻む。
       const riff = offbeatBackingRiff(piece, chord, 'chordStart');
+      const texturedGrid = gridAt(chord.beat);
       const stepDur = backingSection.backingRhythm === 'stab'
-        ? gridAt(chord.beat).stepBeats * 0.6
-        : chord.dur * 0.98;
+        ? texturedGrid.stepBeats * 0.6
+        : backingSection.backingRhythm === 'beat'
+          ? (BAR_BEATS / texturedGrid.pulses) * 0.9
+          : chord.dur * 0.98;
       for (const step of riff) {
         let previous: Candidate | undefined;
         if (backingSection.backingRhythm === 'sustain') {

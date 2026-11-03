@@ -14,7 +14,7 @@ import type { ComposeOptions } from '../src/core/music/types.js';
 
 /**
  * アコースティック(弾き語り)様式と、それを支える3つの語彙の検証:
- * - 打楽器なし + 分散和音の常設伴奏 + 持続低音(StyleDef の宣言フィールドで分岐する)
+ * - 打楽器なし + 伴奏型の候補(拍打ち→分散和音)を力で選ぶ + 持続低音(StyleDef の宣言フィールドで分岐する)
  * - 主音に着地しない進行(drifting-orbit)と3度を薄めた属和音・掛留のトークン
  * - 五度圏6連続から導く六音語法(hexatonic)
  */
@@ -96,9 +96,9 @@ describe('六音語法は全進行・全スタイル・両調性で生成検証�
 describe('アコースティック様式', () => {
   const style = STYLES.find((s) => s.id === 'acoustic')!;
 
-  it('宣言フィールド: 打楽器なし・分散和音は伴奏役・低音は持続', () => {
+  it('宣言フィールド: 打楽器なし・伴奏型の候補は拍打ち→分散和音 8 分→16 分・低音は持続', () => {
     expect(style.percussion.kind).toBe('none');
-    expect(style.texture.ostinato).toBe('accompaniment');
+    expect(style.texture.accompaniment).toEqual(['chords', 'arpeggio8', 'arpeggio16']);
     expect(style.bass.pattern).toBe('sustain');
     expect(style.defaults.bpm).toBe(112);
   });
@@ -113,26 +113,35 @@ describe('アコースティック様式', () => {
     }
   });
 
-  it('分散和音は全区間で有効になり、本編の全小節で鳴る', () => {
+  it('伴奏型は区間の力で候補列から選ばれ、分散和音の区間は全小節で鳴り、拍打ちの区間は鳴らない', () => {
     for (const bars of [8, 16, 40] as const) {
       const piece = compose({ ...base, form: presetForBars(bars), seed: 7 });
-      for (const section of piece.arrangementPlan.sections) {
-        expect(section.ostinatoDensity, `bars=${bars}`).toBeGreaterThan(0);
-      }
-      for (let bar = 0; bar < bars; bar++) {
-        const start = piece.loopStartBeat + bar * 4;
-        const inBar = piece.ostinato.filter((note) => note.beat >= start && note.beat < start + 4);
-        expect(inBar.length, `bars=${bars}/bar=${bar + 1}`).toBeGreaterThanOrEqual(4);
-      }
+      piece.arrangementPlan.sections.forEach((section, index) => {
+        const energy = piece.songPlan.form.sections[index]!.energy;
+        const expected = energy <= 2 ? 'chords' : energy <= 4 ? 'arpeggio8' : 'arpeggio16';
+        expect(section.accompaniment, `bars=${bars}/section=${index}`).toBe(expected);
+        expect(section.backingRhythm).toBe(expected === 'chords' ? 'beat' : 'normal');
+        expect(section.ostinatoDensity).toBe(expected === 'arpeggio16' ? 2 : expected === 'arpeggio8' ? 1 : 0);
+        const plan = piece.songPlan.form.sections[index]!;
+        for (let bar = plan.startBar; bar < plan.startBar + plan.bars; bar++) {
+          const start = piece.loopStartBeat + bar * 4;
+          const inBar = piece.ostinato.filter((note) => note.beat >= start && note.beat < start + 4);
+          if (expected === 'chords') expect(inBar, `bars=${bars}/bar=${bar + 1}`).toEqual([]);
+          else expect(inBar.length, `bars=${bars}/bar=${bar + 1}`).toBeGreaterThanOrEqual(4);
+        }
+      });
+      // 様式の候補はどれも全区間へ貼り付かない(力が揃うプリセットでは同じ型が並ぶことはある)。
+      expect(validatePiece(piece), `bars=${bars}`).toEqual([]);
     }
   });
 
-  it('独立アルペジオの予算が無いバックエンド(2A03)では常設化を強要しない', () => {
-    // 未解決: compact 戦略(texture.compactStrategy='bassDrive')へ落ちると、様式の核である
-    // 常設分散和音が 2A03 では失われる。ここは現状の挙動(床を敷かない)を固定するだけで、
-    // 是認ではない。pulse2 を伴奏から分散和音へ振る編曲が入ったら期待値を変える。
+  it('独立アルペジオの予算が無いバックエンド(2A03)では分散和音の候補が拍打ちへ落ちる', () => {
     const piece = compose({ ...base, soundChip: 'nes2a03', form: 'loop16' as const });
     expect(piece.ostinato).toEqual([]);
+    for (const section of piece.arrangementPlan.sections) {
+      expect(section.accompaniment).toBe('chords');
+      expect(section.backingRhythm).toBe('beat');
+    }
     expect(validatePiece(piece)).toEqual([]);
   });
 

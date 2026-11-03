@@ -230,3 +230,15 @@ export function snapDurationsToPulses(grid: GridDef, durations: readonly number[
 export function effectiveGroove(feel: GrooveFeel, grouping: BarGrouping): GrooveFeel {
   return grouping === '4x2' ? feel : 'straight';
 }
+
+/** 分散和音の加速の上限(4 分音符あたりの打数)。4/4 の 16 分がこれに当たる。 */
+export const ARPEGGIO_MAX_NOTES_PER_QUARTER = 4;
+
+/**
+ * 分散和音の加速帯(密度 2)の格子。細かい格子(ステップの 2 分割)が 4 分音符あたり
+ * ARPEGGIO_MAX_NOTES_PER_QUARTER 打を超える ×3 の格子(6 打/拍)では、格子のステップ
+ * (3 打/拍)に留める(12/8 の分散和音は 8 分で回り、それ以上は細かすぎて聴き取れない)。
+ */
+export function arpeggioAccelerationSteps(grid: GridDef): number {
+  return grid.sixteenthSteps / BAR_BEATS > ARPEGGIO_MAX_NOTES_PER_QUARTER ? grid.steps : grid.sixteenthSteps;
+}

@@ -538,6 +538,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       progressionBars: sectionProgression.slots.length,
       grouping: spec.grouping ?? DEFAULT_GROUPING,
       texture: spec.texture ?? 'normal',
+      accompaniment: spec.accompaniment ?? 'auto',
       ...motifPlans[index]!,
     };
   });
