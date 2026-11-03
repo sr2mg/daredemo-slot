@@ -438,9 +438,15 @@ export function compose(opts: ComposeInput): Piece {
     introChordNames,
     barChordNames: barTokens.map((tokens, bar) => {
       const equalDuration = 4 / tokens.length;
+      // 3 分の長さ(3x4 の拍頭)は「8/3拍」と分数で綴る。
+      const formatBeats = (value: number): string => {
+        if (Math.abs(value - Math.round(value)) < 1e-6) return String(Math.round(value));
+        if (Math.abs(value * 3 - Math.round(value * 3)) < 1e-6) return `${Math.round(value * 3)}/3`;
+        return value.toFixed(2);
+      };
       return tokens.map((token, index) => {
         const duration = barChordDurations[bar]![index]!;
-        const durationLabel = Math.abs(duration - equalDuration) > 0.001 ? `(${duration}拍)` : '';
+        const durationLabel = Math.abs(duration - equalDuration) > 0.001 ? `(${formatBeats(duration)}拍)` : '';
         return `${chordName(token, songPlan.harmony[bar]!.keyRoot)}${durationLabel}`;
       }).join(' ');
     }),

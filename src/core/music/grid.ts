@@ -194,6 +194,35 @@ export function drumPatternFor(grid: GridDef, pattern16: readonly number[]): rea
 }
 
 /**
+ * 小節内の和音の長さ列(合計 4 拍)を格子の拍頭へ吸着する。3x4 の拍頭は 0, 4/3, 8/3 なので、
+ * 4/4 の整数拍で置いた [2,2] / [1,3] / [3,1] をそのまま使うと伴奏の再打鍵・ベースの刻み・
+ * 裏打ちが拍から外れる。各境界を最寄りの拍頭へ(同距離なら後ろ=前の和音を長く)。
+ * 境界が衝突する場合は等分へ戻す。拍頭が整数拍の格子(4x2 / 4x3)では恒等。
+ */
+export function snapDurationsToPulses(grid: GridDef, durations: readonly number[]): number[] {
+  if (durations.length <= 1) return [...durations];
+  const pulses = pulseBeats(grid).filter((pulse) => pulse > EPSILON);
+  const boundaries: number[] = [];
+  let cumulative = 0;
+  for (let index = 0; index + 1 < durations.length; index++) {
+    cumulative += durations[index]!;
+    const target = cumulative;
+    const snapped = pulses.reduce((best, pulse) => {
+      const distance = Math.abs(pulse - target);
+      const bestDistance = Math.abs(best - target);
+      return distance < bestDistance - EPSILON || (Math.abs(distance - bestDistance) < EPSILON && pulse > best)
+        ? pulse
+        : best;
+    });
+    boundaries.push(snapped);
+  }
+  const unique = new Set(boundaries.map((boundary) => Math.round(boundary * 1e6)));
+  if (unique.size !== boundaries.length) return durations.map(() => BAR_BEATS / durations.length);
+  const edges = [0, ...boundaries, BAR_BEATS];
+  return edges.slice(1).map((edge, index) => edge - edges[index]!);
+}
+
+/**
  * 格子と併用できるグルーヴ。4x3 / 3x4 は 3 連の格子そのものなので、裏拍の変位(swing)も
  * 三連オーバーレイも意味を持たない(4x3 は「bounce + 三連オーバーレイを焼き込んだもの」)。
  * 4x2 ではそのまま。

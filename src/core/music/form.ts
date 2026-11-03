@@ -25,7 +25,7 @@ import type {
   Tonality,
 } from './types.js';
 
-export const FORM_PRESET_IDS: readonly FormPresetId[] = ['loop4', 'loop8', 'loop16', 'arc40', 'song'];
+export const FORM_PRESET_IDS: readonly FormPresetId[] = ['loop4', 'loop8', 'loop16', 'arc40', 'song', 'songHemiola'];
 
 /** UI 表示用のプリセット名。用途ラベル(RB/BB/BIG)はクライアント文脈だが、保存曲一覧の既存表記を継ぐ。 */
 export const FORM_PRESET_LABELS: Record<FormPresetId, string> = {
@@ -34,6 +34,7 @@ export const FORM_PRESET_LABELS: Record<FormPresetId, string> = {
   loop16: 'ゲームBGM風16小節',
   arc40: 'OPLL BIG風40小節',
   song: '歌もの96小節',
+  songHemiola: '歌もの96小節(12/8↔6/4)',
 };
 
 export const SECTION_ROLES: readonly SectionRole[] = ['hook', 'development', 'relief', 'return', 'finale'];
@@ -58,7 +59,7 @@ const section = (
   bars: SectionBars,
   energy: SectionSpec['energy'],
   theme: string,
-  rest: Partial<Pick<SectionSpec, 'transform' | 'quote'>> = {},
+  rest: Partial<Pick<SectionSpec, 'transform' | 'quote' | 'grouping'>> = {},
 ): SectionSpec => ({ id, role, bars, energy, theme, ...rest });
 
 /**
@@ -67,6 +68,8 @@ const section = (
  * - loop16: Bの結論フレーズでAのフックを予告してループへ戻す(quote)。
  * - arc40: 実質2主題(AとC)。B/D/EはAの変形で、Dがリテラル帰還(現行の5区間弧をそのまま宣言)。
  * - song: 歌もの。A(提示)×2 → B → C(谷) → S(サビ) → A''(帰還) → B' → D(谷) → C' → S'(帰還) → S''(終幕) → A'''(終幕)。
+ * - songHemiola: song と同じ区間列で、主題ごとに拍の割り方を揃える(A・S 系=12/8、B 系=6/4 のヘミオラ、
+ *   C・D=4/4)。小節長は不変なので割り方が変わっても小節数・区間の時間は同じ。
  */
 function presetSpec(id: FormPresetId): SongFormSpec {
   switch (id) {
@@ -94,24 +97,34 @@ function presetSpec(id: FormPresetId): SongFormSpec {
         ending: 'loop',
       };
     case 'song':
-      return {
-        sections: [
-          section('A', 'hook', 8, 3, 'A'),
-          section("A'", 'hook', 8, 3, 'A', { transform: 'literal' }),
-          section('B', 'development', 8, 4, 'B'),
-          section('C', 'relief', 8, 2, 'C'),
-          section('S', 'hook', 8, 5, 'S'),
-          section("A''", 'return', 8, 3, 'A', { transform: 'transpose' }),
-          section("B'", 'development', 8, 4, 'B', { transform: 'transpose' }),
-          section('D', 'relief', 8, 2, 'D'),
-          section("C'", 'relief', 8, 1, 'C', { transform: 'literal' }),
-          section("S'", 'return', 8, 5, 'S', { transform: 'literal' }),
-          section("S''", 'finale', 8, 5, 'S', { transform: 'transpose' }),
-          section("A'''", 'finale', 8, 2, 'A', { transform: 'literal' }),
-        ],
-        ending: 'final',
-      };
+      return songSpec({});
+    case 'songHemiola':
+      return songSpec({ A: '4x3', S: '4x3', B: '3x4' });
   }
+}
+
+/** 歌ものの区間列。主題ごとの拍の割り方(省略=4x2)を受ける。 */
+function songSpec(groupingByTheme: Partial<Record<'A' | 'B' | 'C' | 'D' | 'S', BarGrouping>>): SongFormSpec {
+  const g = (theme: 'A' | 'B' | 'C' | 'D' | 'S'): Partial<Pick<SectionSpec, 'grouping'>> => (
+    groupingByTheme[theme] ? { grouping: groupingByTheme[theme] } : {}
+  );
+  return {
+    sections: [
+      section('A', 'hook', 8, 3, 'A', g('A')),
+      section("A'", 'hook', 8, 3, 'A', { transform: 'literal', ...g('A') }),
+      section('B', 'development', 8, 4, 'B', g('B')),
+      section('C', 'relief', 8, 2, 'C', g('C')),
+      section('S', 'hook', 8, 5, 'S', g('S')),
+      section("A''", 'return', 8, 3, 'A', { transform: 'transpose', ...g('A') }),
+      section("B'", 'development', 8, 4, 'B', { transform: 'transpose', ...g('B') }),
+      section('D', 'relief', 8, 2, 'D', g('D')),
+      section("C'", 'relief', 8, 1, 'C', { transform: 'literal', ...g('C') }),
+      section("S'", 'return', 8, 5, 'S', { transform: 'literal', ...g('S') }),
+      section("S''", 'finale', 8, 5, 'S', { transform: 'transpose', ...g('S') }),
+      section("A'''", 'finale', 8, 2, 'A', { transform: 'literal', ...g('A') }),
+    ],
+    ending: 'final',
+  };
 }
 
 const presetCache = new Map<FormPresetId, SongFormSpec>();

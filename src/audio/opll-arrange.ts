@@ -5,7 +5,7 @@ import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
 import { arrangementSectionFor } from '../core/music/arrangement.js';
 import { gridAtBeat } from '../core/music/form.js';
-import { nearBeat, strongBeatOffsets } from '../core/music/grid.js';
+import { nearBeat, pulseBeats, strongBeatOffsets } from '../core/music/grid.js';
 import {
   freqToFnum, initRhythmMode, RHYTHM_DEFAULT_LEVELS, RHYTHM_LEVEL_SLOT, rhythmLevelRegs, SeqBuilder,
 } from './opll-core.js';
@@ -375,15 +375,25 @@ export function arrangePiece(
         });
       }
     } else {
-      for (let beat = 0; beat < chord.dur; beat += 2) {
-        if (thin && beat > 0) continue;
+      // パッドは和音内の拍頭を 1 つおき(4x2 では 2 拍ごと)に再打鍵する。拍頭は小節の格子のもの。
+      const padGrid = gridAt(chord.beat);
+      const padBarStart = Math.floor(chord.beat / 4) * 4;
+      const chordOffset = chord.beat - padBarStart;
+      const chordEnd = chordOffset + chord.dur;
+      const padPulses = pulseBeats(padGrid)
+        .filter((pulse) => pulse >= chordOffset - 1e-6 && pulse < chordEnd - 1e-6)
+        .filter((_, index) => index % 2 === 0);
+      for (const [index, pulse] of padPulses.entries()) {
+        const beat = pulse - chordOffset;
+        if (thin && index > 0) continue;
+        const span = (padPulses[index + 1] ?? chordEnd) - pulse;
         candidates.push({
           part: 'backing',
           beat: chord.beat + beat,
           // パッドは頭でコードトーンを確立し、後半だけカラートーンへ差し替える
           // （掛留の作法。カラー無しの曲では従来と同一の音）。
-          midi: beat > 0 && colorVoice !== undefined ? colorVoice : lowerVoice,
-          dur: Math.min(2, chord.dur - beat) * 0.75,
+          midi: index > 0 && colorVoice !== undefined ? colorVoice : lowerVoice,
+          dur: span * 0.75,
           voice: voices.backing,
           volume: thin ? 9 : 7,
           vibrato: false,

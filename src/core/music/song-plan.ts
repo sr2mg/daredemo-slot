@@ -10,7 +10,7 @@ import {
   RHYTHM_FAMILY_COUNT, barInSection, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
   sectionRng, sectionStartBars, sectionTonality, totalBars,
 } from './form.js';
-import { DEFAULT_GROUPING } from './grid.js';
+import { DEFAULT_GROUPING, gridFor, snapDurationsToPulses } from './grid.js';
 import { hasGrooveDevice } from './groove.js';
 import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
@@ -590,7 +590,11 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
       harmonicGoal,
       tokens,
       // 終止曲型の V→I は半小節ずつ(属和音を1拍に押し込まず、終止として聴かせる)。
-      durations: finalCadence ? [2, 2] : durationsFor(tokens, harmonicGoal, compositionPolicy),
+      // 長さ列は区間の格子の拍頭へ吸着する(3x4 では [2,2]→[8/3,4/3] など。4x2/4x3 では恒等)。
+      durations: snapDurationsToPulses(
+        gridFor(section.grouping),
+        finalCadence ? [2, 2] : durationsFor(tokens, harmonicGoal, compositionPolicy),
+      ),
       strategyRole,
       entryFunction,
       exitFunction,

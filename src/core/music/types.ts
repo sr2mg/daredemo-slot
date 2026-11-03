@@ -592,7 +592,7 @@ export interface SongFormSpec {
   ending: SongEnding;
 }
 
-export type FormPresetId = 'loop4' | 'loop8' | 'loop16' | 'arc40' | 'song';
+export type FormPresetId = 'loop4' | 'loop8' | 'loop16' | 'arc40' | 'song' | 'songHemiola';
 /** 保存される曲型: プリセットidか明示の区間列。 */
 export type SongFormRef = FormPresetId | SongFormSpec;
 export type IntroLeadGesture =

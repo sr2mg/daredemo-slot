@@ -1,12 +1,14 @@
 import { SECTION_BARS_CHOICES, SECTION_ROLES, SECTION_ROLE_LABELS } from '../core/music/form.js';
 import type { FormIssue } from '../core/music/form.js';
+import { BAR_GROUPINGS, BAR_GROUPING_LABELS, DEFAULT_GROUPING } from '../core/music/grid.js';
 import { KEYS, PROGRESSIONS, progressionForTonality } from '../core/music/theory.js';
 import type {
-  MotifTransform, SectionBars, SectionEnergy, SectionRole, SectionSpec, SongEnding, SongFormSpec, Tonality,
+  BarGrouping, MotifTransform, SectionBars, SectionEnergy, SectionRole, SectionSpec, SongEnding, SongFormSpec,
+  Tonality,
 } from '../core/music/types.js';
 
 /**
- * 曲型(区間列)の編集表。1行=1区間で、役割・小節数・エネルギー・主題・変形・引用・進行・調を
+ * 曲型(区間列)の編集表。1行=1区間で、役割・小節数・拍の割り方・エネルギー・主題・変形・引用・進行・調を
  * 宣言する。音の規則はここに持たず、検証(validateForm)の結果を行ごとに添えるだけ。
  */
 
@@ -66,7 +68,10 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
     let id = last ? `${last.id}'` : 'A';
     while (usedIds.has(id)) id = `${id}'`;
     const section: SectionSpec = last
-      ? { id, role: last.role, bars: last.bars, energy: last.energy, theme: last.theme, transform: 'literal' }
+      ? {
+        id, role: last.role, bars: last.bars, energy: last.energy, theme: last.theme, transform: 'literal',
+        ...(last.grouping ? { grouping: last.grouping } : {}),
+      }
       : { id, role: 'hook', bars: 8, energy: 3, theme: 'A' };
     onChange({ ...form, sections: [...form.sections, section] });
   };
@@ -82,6 +87,7 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
             <th>区間</th>
             <th>役割</th>
             <th>小節</th>
+            <th>拍</th>
             <th>力</th>
             <th>主題</th>
             <th>変形</th>
@@ -125,6 +131,20 @@ export function FormSectionTable({ form, defaults, issues, onChange }: {
                     data-testid={`st-section-bars-${index}`}
                   >
                     {SECTION_BARS_CHOICES.map((bars) => <option key={bars} value={bars}>{bars}</option>)}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={section.grouping ?? DEFAULT_GROUPING}
+                    onChange={(e) => update(index, {
+                      grouping: e.target.value === DEFAULT_GROUPING ? undefined : e.target.value as BarGrouping,
+                    })}
+                    title="小節長はそのまま、拍の割り方だけ変える(12/8=付点4分×3連、6/4=ヘミオラ)。主題の元区間と揃えること"
+                    data-testid={`st-section-grouping-${index}`}
+                  >
+                    {BAR_GROUPINGS.map((grouping) => (
+                      <option key={grouping} value={grouping}>{BAR_GROUPING_LABELS[grouping]}</option>
+                    ))}
                   </select>
                 </td>
                 <td>
