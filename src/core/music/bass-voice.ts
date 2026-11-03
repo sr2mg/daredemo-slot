@@ -5,33 +5,39 @@
  */
 
 import { sectionIndexAt } from './form.js';
+import { beatStep, drumPatternFor, effectiveGroove, isPulseStep, pulseBeats, stepBeat } from './grid.js';
 import { grooveBeat } from './groove.js';
 import { nearestWithPc } from './pitch.js';
-import { drumPatternStep } from './theory.js';
 import type { ComposeContext } from './compose-context.js';
 import type { NoteEvent } from './types.js';
 
 export function generateBass(ctx: ComposeContext): NoteEvent[] {
   const {
-    form, bars, style, idiom, grooveFeel, bassLinePolicy, keyRootAt,
+    form, bars, style, idiom, grooveFeel, bassLinePolicy, keyRootAt, gridAt,
     songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
   } = ctx;
+  const feelAt = (bar: number) => effectiveGroove(grooveFeel, gridAt(bar).grouping);
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
   const bass: NoteEvent[] = [];
   // kickSync用: その小節で実際に鳴るキック骨格の強度。ドラム生成と同じ節解決
   // (sectionB/breakdown)を通すことで、ベースが譜面上のAパターンでなく
   // 「聴こえているキック」に同置される。
+  // step は小節の細かい格子(sixteenthSteps、4x2 では 16 分)の添字。譜は格子へ導出したもの。
   const kickStepLevel = (bar: number, step: number): number => {
     // 打楽器のない様式にはキック骨格が無い(kickSync はキット前提の刻み)。
     if (style.percussion.kind !== 'kit') return 0;
+    const grid = gridAt(bar);
     const sectionPlan = arrangementPlan.sections[sectionIndexAt(form, bar)] ?? arrangementPlan.sections[0]!;
-    if (sectionPlan.drum === 'breakdown') return step === 0 || step === 8 ? 1 : 0;
-    const pattern = sectionPlan.drum === 'sectionB' ? style.percussion.sectionB.kick : style.percussion.kick;
-    return drumPatternStep(pattern, bar, step);
+    if (sectionPlan.drum === 'breakdown') return step === 0 || step === grid.anchorStep * 2 ? 1 : 0;
+    const pattern = drumPatternFor(grid, sectionPlan.drum === 'sectionB' ? style.percussion.sectionB.kick : style.percussion.kick);
+    return pattern[(bar * grid.sixteenthSteps + step) % pattern.length] ?? 0;
   };
   const bassPattern = style.bass.pattern;
   let previousAnchor: number | null = null;
   for (const c of chords) {
+    const chordBar = Math.floor(c.beat / 4);
+    const grid = gridAt(chordBar);
+    const feel = feelAt(chordBar);
     // ペダル低音は進行名だけで常設せず、曲全体で低音主導を選んだ場合にだけ使う。
     // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
     // ペダルは区間の主音(区間ごとの転調に追従)。
@@ -47,9 +53,12 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
         .find((pc) => c.pcs.includes(pc));
       // 5度を省いた和音(M13 等)では機械的な完全5度を和声外へ落とさず、オクターブで交替する。
       const fifthOffset = fifthPc === undefined ? 12 : (fifthPc - anchorPc + 12) % 12;
-      for (let b = 0; b < c.dur; b++) {
-        bass.push({ beat: c.beat + b, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
-      }
+      // 拍頭で根音と5度を交替する(拍頭は格子のもの。3x4 では 0, 4/3, 8/3)。
+      const chordOffset = c.beat - chordBar * 4;
+      const pulses = pulseBeats(grid).filter((pulse) => pulse >= chordOffset - 1e-6 && pulse < chordOffset + c.dur - 1e-6);
+      pulses.forEach((pulse, b) => {
+        bass.push({ beat: chordBar * 4 + pulse, dur: 0.9, midi: b % 2 === 0 ? root : root + fifthOffset });
+      });
     } else if (bassPattern === 'sustain') {
       // 持続サブ: コードイベントごとに1音を長く保つ。倍速ドラムに対する低音の
       // 持続(速度対比)が様式の核なので、刻まずイベント長のほぼ全部を鳴らす。
@@ -58,26 +67,30 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
       // キック同期シンコペ: 実際に鳴るキックに同置し、各キックの2×16分後
       // (同一コードイベント内のみ)で応答する。応答位置もキック由来なので、
       // 16分押し込み(s7)への応答はシャッフル格子ごと跳ねる。
-      const startStep = Math.round(c.beat * 4);
-      const endStep = Math.round((c.beat + c.dur) * 4);
+      // 細かい格子(4x2 では 16 分)の添字で走査する。コードは小節を跨がない。
+      const fine = grid.sixteenthSteps;
+      const unit = 4 / fine;
+      const startStep = Math.round((c.beat - chordBar * 4) / unit);
+      const endStep = Math.round((c.beat + c.dur - chordBar * 4) / unit);
       let pushed = 0;
       for (let s = startStep; s < endStep; s++) {
-        const onKick = kickStepLevel(Math.floor(s / 16), s % 16) > 0;
-        const answers = !onKick && s - 2 >= startStep
-          && kickStepLevel(Math.floor((s - 2) / 16), (s - 2) % 16) > 0;
+        const onKick = kickStepLevel(chordBar, s) > 0;
+        const answers = !onKick && s - 2 >= startStep && kickStepLevel(chordBar, s - 2) > 0;
         if (!onKick && !answers) continue;
-        const beat = grooveBeat(s * 0.25, grooveFeel);
-        const nextBeat = grooveBeat(s * 0.25 + 0.5, grooveFeel);
+        const beat = grooveBeat(chordBar * 4 + s * unit, feel);
+        const nextBeat = grooveBeat(chordBar * 4 + (s + 2) * unit, feel);
         bass.push({ beat, dur: Math.min(0.4, Math.max(0.18, (nextBeat - beat) * 0.8)), midi: root });
         pushed++;
       }
       // コード変更は低音でも聴かせる: イベント内にキックが無ければ頭で1音だけ打つ。
-      if (pushed === 0) bass.push({ beat: grooveBeat(c.beat, grooveFeel), dur: 0.4, midi: root });
+      if (pushed === 0) bass.push({ beat: grooveBeat(c.beat, feel), dur: 0.4, midi: root });
     } else {
-      for (let e = 0; e < c.dur * 2; e++) {
+      // 格子のステップ(4x2 では 8 分)で刻む。
+      const count = Math.round(c.dur / grid.stepBeats);
+      for (let e = 0; e < count; e++) {
         const midi = bassPattern === 'octave8' && e % 2 === 1 ? root + 12 : root;
-        const beat = grooveBeat(c.beat + e * 0.5, grooveFeel);
-        const nextBeat = grooveBeat(c.beat + (e + 1) * 0.5, grooveFeel);
+        const beat = grooveBeat(c.beat + e * grid.stepBeats, feel);
+        const nextBeat = grooveBeat(c.beat + (e + 1) * grid.stepBeats, feel);
         bass.push({ beat, dur: Math.min(0.4, Math.max(0.18, (nextBeat - beat) * 0.8)), midi });
       }
     }
@@ -85,6 +98,10 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
 
   for (const barPlan of phrasePlan.bars) {
     const bar = barPlan.bar;
+    const grid = gridAt(bar);
+    const feel = feelAt(bar);
+    // ピックアップ(接近音)は小節の最終ステップ(4x2 では 8 分裏の 3.5 拍)。
+    const pickupOffset = stepBeat(grid, grid.steps - 1);
     const phraseGesture = phraseGestures[sectionIndexAt(form, bar)]!;
     const inBar = bass.filter((note) => note.beat >= bar * 4 && note.beat < (bar + 1) * 4);
     const last = inBar[inBar.length - 1];
@@ -100,7 +117,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     // 持続サブの終止音: 長音そのものを再ピッチすると小節全体の低音が動いてしまうため、
     // 長音は保ったまま最後の8分だけを終止音・接近音へ割く。
     const placeSustainedCadenceNote = (midi: number): void => {
-      const pickupBeat = grooveBeat(bar * 4 + 3.5, grooveFeel);
+      const pickupBeat = grooveBeat(bar * 4 + pickupOffset, feel);
       if (bassPattern === 'sustain' && last.beat < pickupBeat - 0.001) {
         last.dur = Math.min(last.dur, pickupBeat - last.beat - 0.05);
         bass.push({
@@ -129,14 +146,14 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     } else if (barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') {
       // 様式の終止作法(半音接近・和声音接近)は語法が許すときだけ。和風は全音階の経過音へ。
       if (idiom.allowsStyledBassCadence && style.bass.cadence === 'chromatic') {
-        const approachPc = (nextAnchorPc + (phraseGesture[15]!.direction === 1 ? 11 : 1)) % 12;
+        const approachPc = (nextAnchorPc + (phraseGesture.at(-1)!.direction === 1 ? 11 : 1)) % 12;
         last.midi = nearestWithPc(last.midi, [approachPc], 36, 64);
       } else if (idiom.allowsStyledBassCadence && style.bass.cadence === 'chordTone') {
         const nextAnchorMidi = nearestWithPc(last.midi, [nextAnchorPc], 36, 64);
         const approachMidi = nearestWithPc(nextAnchorMidi, endChord.pcs, 36, 64);
         placeSustainedCadenceNote(approachMidi);
       } else {
-        const dir = phraseGesture[15]!.direction;
+        const dir = phraseGesture.at(-1)!.direction;
         let distance = 1;
         let approachPc = nextAnchorPc;
         while (distance < 12 && approachPc === nextAnchorPc) {
@@ -145,7 +162,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
           distance++;
         }
         const pickup: NoteEvent = {
-          beat: grooveBeat(bar * 4 + 3.5, grooveFeel),
+          beat: grooveBeat(bar * 4 + pickupOffset, feel),
           dur: 0.35,
           midi: nearestWithPc(last.midi, [approachPc], 36, 64),
           velocity: Math.max(0.4, barPlan.dynamic - 0.1),
@@ -172,7 +189,7 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
         }
         if (approachPc !== nextAnchorPc) {
           const pickup: NoteEvent = {
-            beat: grooveBeat(bar * 4 + 3.5, grooveFeel),
+            beat: grooveBeat(bar * 4 + pickupOffset, feel),
             dur: 0.35,
             midi: nearestWithPc(nextMidi - dir, [approachPc], 36, 64),
             velocity: Math.max(0.4, barPlan.dynamic - 0.1),
@@ -187,8 +204,13 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     }
   }
   for (const note of bass) {
-    const barPlan = phrasePlan.bars[Math.min(bars - 1, Math.floor(note.beat / 4))]!;
-    note.velocity = Math.min(1, barPlan.dynamic + (note.beat % 1 === 0 ? 0.06 : -0.05));
+    const noteBar = Math.min(bars - 1, Math.floor(note.beat / 4));
+    const barPlan = phrasePlan.bars[noteBar]!;
+    // 拍頭(格子のもの)は強く、裏は弱く。グルーヴで動いた裏拍は格子上に無いので裏扱い。
+    const grid = gridAt(noteBar);
+    const step = beatStep(grid, note.beat - noteBar * 4);
+    const onPulse = step !== null && isPulseStep(grid, step);
+    note.velocity = Math.min(1, barPlan.dynamic + (onPulse ? 0.06 : -0.05));
     // 持続サブの長音はテヌート(終止の接近音など短音はスタッカートのまま)。
     note.articulation = bassPattern === 'sustain' && note.dur >= 0.5
       ? 'tenuto'

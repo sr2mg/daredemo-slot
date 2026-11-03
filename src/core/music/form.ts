@@ -10,7 +10,8 @@
  */
 
 import { Xoshiro128 } from '../rng.js';
-import { BAR_GROUPING_LABELS, DEFAULT_GROUPING, isBarGrouping } from './grid.js';
+import { BAR_GROUPING_LABELS, DEFAULT_GROUPING, gridFor, isBarGrouping } from './grid.js';
+import type { GridDef } from './grid.js';
 import { PROGRESSIONS, progressionForTonality } from './theory.js';
 import type {
   BarGrouping,
@@ -321,8 +322,17 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
 }
 
 /** 本編内の小節が属する区間の拍の割り方(省略=4x2)。格子の実体は grid.ts の gridFor。 */
-export function groupingAt(form: SongFormSpec, bar: number): BarGrouping {
+/** 区間列の拍の割り方だけを見る構造型(SongFormSpec と SongFormPlan の両方が満たす)。 */
+export type SectionGroupings = { sections: readonly { bars: number; grouping?: BarGrouping }[] };
+
+export function groupingAt(form: SectionGroupings, bar: number): BarGrouping {
   return form.sections[sectionIndexAt(form, bar)]?.grouping ?? DEFAULT_GROUPING;
+}
+
+/** 絶対拍(イントロ込み)の拍格子。イントロ(loopStartBeat より前)は常に 4x2。診断・レンダラが使う。 */
+export function gridAtBeat(form: SectionGroupings, loopStartBeat: number, beat: number): GridDef {
+  if (beat < loopStartBeat) return gridFor(DEFAULT_GROUPING);
+  return gridFor(groupingAt(form, Math.floor((beat - loopStartBeat) / 4)));
 }
 
 /** 検証エラーを1つの例外文へまとめる(compose が使う)。 */

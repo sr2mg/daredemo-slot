@@ -17,8 +17,15 @@ export function glideDurationSec(noteDurSec: number): number {
   return Math.min(0.09, noteDurSec * 0.5);
 }
 
-/** 主旋律の該当音へglideFrom指示を付ける(破壊的更新)。 */
-export function applyGlideMarks(melody: readonly NoteEvent[], loopStartBeat: number): void {
+/**
+ * 主旋律の該当音へglideFrom指示を付ける(破壊的更新)。
+ * strongBeatsAt は本編の小節番号→強拍の小節内オフセット(省略=4x2 の [0, 2])。
+ */
+export function applyGlideMarks(
+  melody: readonly NoteEvent[],
+  loopStartBeat: number,
+  strongBeatsAt: (bar: number) => readonly number[] = () => [0, 2],
+): void {
   const line = melody
     .filter((note) => note.beat >= loopStartBeat)
     .sort((a, b) => a.beat - b.beat);
@@ -27,7 +34,9 @@ export function applyGlideMarks(melody: readonly NoteEvent[], loopStartBeat: num
     const note = line[i]!;
     const restGap = note.beat - (prev.beat + prev.dur);
     const interval = Math.abs(note.midi - prev.midi);
-    const strongBeat = ((note.beat - loopStartBeat) % 2) === 0;
+    const relative = note.beat - loopStartBeat;
+    const bar = Math.floor(relative / 4);
+    const strongBeat = strongBeatsAt(bar).some((offset) => Math.abs(relative - bar * 4 - offset) < 1e-6);
     if (restGap <= 0.3 && interval >= 3 && interval <= 9 && !strongBeat) {
       note.glideFrom = prev.midi;
     }

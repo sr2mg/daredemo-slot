@@ -5,6 +5,7 @@
  */
 
 import { sectionIndexAt } from './form.js';
+import { effectiveGroove } from './grid.js';
 import { grooveBeat } from './groove.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
 import { nearestWithPc } from './pitch.js';
@@ -12,7 +13,7 @@ import type { ComposeContext } from './compose-context.js';
 import type { NoteEvent, PhraseFunction } from './types.js';
 
 export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
-  const { opts, form, style, grooveFeel, arrangementPlan, phrasePlan, chordAt } = ctx;
+  const { opts, form, style, grooveFeel, arrangementPlan, phrasePlan, chordAt, gridAt } = ctx;
   // --- 分散和音（コード伴奏とは別の、選ばれた区間だけを推進する声部） ---
   // 曲全体のTextureStrategyで有効になった区間だけに置き、常設レイヤーにはしない。
   // chordAtを各打点で引くため、2拍目など小節途中のコード変化にもその場で追従する。
@@ -103,18 +104,21 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
       }
       continue;
     }
-    const subdivision = density === 2 ? 0.25 : 0.5;
-    const fullStepCount = density === 2 ? 16 : 8;
+    // 格子のステップ(密度 1)か細かい格子(密度 2)。終止小節は最終拍ぶん(1 拍=ステップ数/拍数)を休ませる。
+    const grid = gridAt(barPlan.bar);
+    const feel = effectiveGroove(grooveFeel, grid.grouping);
+    const fullStepCount = density === 2 ? grid.sixteenthSteps : grid.steps;
+    const subdivision = 4 / fullStepCount;
     const stepCount = barPlan.cadence === 'half' || barPlan.cadence === 'turnaround'
-      ? fullStepCount - (density === 2 ? 4 : 2)
+      ? fullStepCount - fullStepCount / grid.pulses
       : fullStepCount;
     for (let step = 0; step < stepCount; step++) {
       const logicalBeat = barPlan.bar * 4 + step * subdivision;
       const midi = pitchAt(logicalBeat, step);
       // 16分アルペジオは均等に保ち、bounceの8分スウィングで打点順が詰まるのを避ける。
-      const beat = density === 2 ? logicalBeat : grooveBeat(logicalBeat, grooveFeel);
+      const beat = density === 2 ? logicalBeat : grooveBeat(logicalBeat, feel);
       const nextLogicalBeat = logicalBeat + subdivision;
-      const nextBeat = density === 2 ? nextLogicalBeat : grooveBeat(nextLogicalBeat, grooveFeel);
+      const nextBeat = density === 2 ? nextLogicalBeat : grooveBeat(nextLogicalBeat, feel);
       ostinato.push({
         beat,
         dur: Math.max(0.1, (nextBeat - beat) * (density === 2 ? 0.66 : 0.58)),

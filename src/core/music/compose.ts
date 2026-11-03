@@ -24,10 +24,10 @@ import type { StyleDef } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
 import {
-  formErrorMessage, formPresetIdOf, groupingAt, introDefaultFor, resolveForm, sectionIndexAt, sectionRng, totalBars,
-  validateForm,
+  formErrorMessage, formPresetIdOf, gridAtBeat, groupingAt, introDefaultFor, resolveForm, sectionIndexAt, sectionRng,
+  totalBars, validateForm,
 } from './form.js';
-import { gridFor, stepBeat } from './grid.js';
+import { effectiveGroove, gridFor, stepBeat, strongBeatOffsets } from './grid.js';
 import type { GridDef } from './grid.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import {
@@ -366,7 +366,12 @@ export function compose(opts: ComposeInput): Piece {
       (bound) => diminutionRng.nextInt(bound),
       {
         // 走句(4分対の16分埋め)はストレートな16分格子が有効なグルーヴのみ。他は従来の8分対まで。
-        maxGapBeats: hasStraightSixteenths(grooveFeel) ? 1.0 : 0.75,
+        // ×3 の格子は 16 分(1/4 拍)が格子に無いので走句を置かず、対の始点の小節で判定する。
+        maxGapBeats: (beat) => {
+          const bar = Math.floor((beat - loopStartBeat) / 4);
+          const grouping = groupingAt(form, Math.max(0, bar));
+          return grouping === '4x2' && hasStraightSixteenths(effectiveGroove(grooveFeel, grouping)) ? 1.0 : 0.75;
+        },
         // 走句は8分格子位置にも乗るため、副旋律が予約した発音位置を避ける。
         blockedBeats: [
           ...counterMelody.map((note) => note.beat),
@@ -397,7 +402,7 @@ export function compose(opts: ComposeInput): Piece {
     : [];
 
   // --- スライド(ポルタメント)指示 --- 付与規則と時間定数の共有規則はglide.ts。
-  if (glidePolicy === 'on') applyGlideMarks(finalMelody, loopStartBeat);
+  if (glidePolicy === 'on') applyGlideMarks(finalMelody, loopStartBeat, (bar) => strongBeatOffsets(gridAt(bar)));
 
   return {
     bpm: opts.bpm,
@@ -425,6 +430,7 @@ export function compose(opts: ComposeInput): Piece {
       [...introDrums, ...drums],
       loopStartBeat,
       loopStartBeat + bars * 4,
+      (beat) => gridAtBeat(form, loopStartBeat, beat),
     ),
     phrasePlan,
     songPlan,

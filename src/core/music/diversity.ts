@@ -22,7 +22,8 @@ interface MelodicWindowProfile {
   contour: number[];
 }
 
-const roundGrid = (value: number): number => Math.round(value * 4) / 4;
+// 1/12 拍の格子(16 分と 3 連の両方が乗る)で丸める。1/4 の倍数は不変。
+const roundGrid = (value: number): number => Math.round(value * 12) / 12;
 
 function notesInBodyWindow(piece: Piece, startBar: number, bars: number): NoteEvent[] {
   const start = piece.loopStartBeat + startBar * 4;

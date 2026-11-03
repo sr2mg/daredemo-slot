@@ -3,8 +3,11 @@ import {
   COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO, styleForId,
 } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
+import type { GrooveFeel } from './groove.js';
+import { beatStep, effectiveGroove, nearBeat, offPulseSteps, stepBeat, strongBeatOffsets } from './grid.js';
+import type { GridDef } from './grid.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
-import { sectionIndexAt, sectionStartBars } from './form.js';
+import { gridAtBeat, sectionIndexAt, sectionStartBars } from './form.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
@@ -68,6 +71,28 @@ function scalePcsAtBeat(piece: Piece, beat: number): readonly number[] {
 function keyRootAtBeat(piece: Piece, beat: number): number {
   const bodyBar = Math.max(0, Math.floor((beat - piece.loopStartBeat) / 4));
   return piece.songPlan.form.sections[sectionIndexAt(piece.songPlan.form, bodyBar)]?.keyRoot ?? piece.keyRoot;
+}
+
+/** 絶対拍の拍格子(区間の割り方。イントロは 4x2)。 */
+function gridAt(piece: Piece, beat: number): GridDef {
+  return gridAtBeat(piece.songPlan.form, piece.loopStartBeat, beat);
+}
+
+/** その小節で実際に効くグルーヴ(×3 の格子ではスウィング・三連オーバーレイが無効)。 */
+function grooveAt(piece: Piece, beat: number): GrooveFeel {
+  return effectiveGroove(piece.grooveFeel, gridAt(piece, beat).grouping);
+}
+
+/** 強拍(小節頭とアンカー)か。小節内オフセットは 1/3 拍を含むので近似で比べる。 */
+function isStrongBeat(piece: Piece, beat: number): boolean {
+  const inBar = ((beat % 4) + 4) % 4;
+  return strongBeatOffsets(gridAt(piece, beat)).some((offset) => nearBeat(inBar, offset));
+}
+
+/** アンカー(4x2 の 3 拍目)か。 */
+function isAnchorBeat(piece: Piece, beat: number): boolean {
+  const grid = gridAt(piece, beat);
+  return nearBeat(((beat % 4) + 4) % 4, stepBeat(grid, grid.anchorStep));
 }
 
 /** 五音系の音組織では3～4半音も音階上の隣になり得るため、半音数だけで判定しない。 */
@@ -146,9 +171,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (note.beat < 0 || note.dur <= 0 || note.beat + note.dur > piece.beats + 0.001) {
       add('rhythm', 'error', note.beat, note.midi, '主旋律の音価が曲の範囲外');
     }
-    const inBar = note.beat % 4;
     // 装飾（前打音・回し）は強拍に食い込んでも直後の到達音へ解決するため、強拍和声の対象にしない。
-    if ((inBar === 0 || inBar === 2) && note.role !== 'ornament') {
+    if (isStrongBeat(piece, note.beat) && note.role !== 'ornament') {
       const chord = chordAt(note.beat);
       if (!chord.pcs.includes(note.midi % 12)) {
         // 倚音: 強拍の非和声音でも、1拍以内の次の構造音へ順次進行で解決し、
@@ -160,7 +184,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
           if (candidate.role === 'ornament' || candidate.beat <= note.beat + 0.001) continue;
           if (!resolution || candidate.beat < resolution.beat) resolution = candidate;
         }
-        const resolves = inBar === 2
+        const resolves = isAnchorBeat(piece, note.beat)
           && resolution !== undefined
           && resolution.beat - note.beat <= 1.001
           && isMelodicStep(piece, note.beat, note.midi, resolution.midi)
@@ -679,16 +703,20 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     add('form', 'error', bodyStart, -1, 'PhrasePlanと曲の小節数が一致しない');
   }
   for (const barPlan of piece.phrasePlan.bars) {
+    const barStart = bodyStart + barPlan.bar * 4;
+    const grid = gridAt(piece, barStart);
+    const feel = grooveAt(piece, barStart);
     const expectedSteps = barPlan.rhythm
       .map((on, step) => on ? step : -1)
       .filter((step) => step >= 0);
+    // 発音位置をその小節の格子のステップへ(グルーヴで動いた裏拍は最寄りのステップへ丸める)。
     const actualSteps = piece.melody
       .filter((note) => (
         note.role !== 'ornament'
-        && note.beat >= bodyStart + barPlan.bar * 4
-        && note.beat < bodyStart + (barPlan.bar + 1) * 4
+        && note.beat >= barStart
+        && note.beat < barStart + 4
       ))
-      .map((note) => Math.round((note.beat - bodyStart - barPlan.bar * 4) * 2));
+      .map((note) => Math.round(((note.beat - barStart) * grid.steps) / 4));
     if (expectedSteps.join(',') !== actualSteps.join(',')) {
       add('rhythm', 'error', bodyStart + barPlan.bar * 4, -1, `${barPlan.bar + 1}小節目がPhrasePlanのリズムと不一致`);
     }
@@ -702,10 +730,10 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         add('rhythm', 'error', barStartBeat, -1, `${barPlan.bar + 1}小節目の強拍に主旋律がない`);
       }
     }
-    if (!actualSteps.includes(4)) {
-      // 半小節タイ(anchorTie)の小節は、直前の発音が3拍目を跨いで保続していれば頭打ち不要。
-      // ただし保続音は先取音の定義どおり、跨いだ先(3拍目時点)の和音の構成音であること。
-      const anchorBeat = bodyStart + barPlan.bar * 4 + 2;
+    if (!actualSteps.includes(grid.anchorStep)) {
+      // 半小節タイ(anchorTie)の小節は、直前の発音がアンカー(4x2 の 3 拍目)を跨いで保続していれば頭打ち不要。
+      // ただし保続音は先取音の定義どおり、跨いだ先(アンカー時点)の和音の構成音であること。
+      const anchorBeat = barStart + stepBeat(grid, grid.anchorStep);
       const tieNote = barPlan.anchorTie
         ? piece.melody.find((note) => (
           note.role !== 'ornament'
@@ -721,8 +749,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
     if (barPlan.targetStep === null || barPlan.targetPc === null) continue;
     const targetBeat = bodyStart + grooveBeat(
-      barPlan.bar * 4 + barPlan.targetStep * 0.5,
-      piece.grooveFeel,
+      barPlan.bar * 4 + stepBeat(grid, barPlan.targetStep),
+      feel,
     );
     const target = piece.melody.find((note) => Math.abs(note.beat - targetBeat) < 0.001);
     if (!target || target.midi % 12 !== barPlan.targetPc) {
@@ -748,15 +776,18 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (pedalPcs.includes(note.midi % 12)) continue;
     // 分数コード(bassDegrees→bassPc)のベースは意図した転回・半音経過であり、経過音違反ではない。
     if (chord.bassPc !== undefined && note.midi % 12 === chord.bassPc) continue;
-    const inBar = note.beat % 1;
     const next = piece.bass[index + 1] ?? piece.bass.find((candidate) => candidate.beat >= bodyStart);
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : bodyStart;
     const nextChord = chordAt(nextChordBeat);
     // 解決先は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
     const nextAnchorPc = nextChord.bassPc ?? nextChord.rootPc;
-    // ピックアップの正位置は「8分裏をグルーヴ格子へ写した位置」(スウィング軸に追随)。
-    const pickupPosition = grooveBeat(0.5, piece.grooveFeel);
-    if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextAnchorPc) {
+    // ピックアップの正位置は「拍外のステップ(4x2 では 8 分裏)をグルーヴ格子へ写した位置」(スウィング軸に追随)。
+    const noteGrid = gridAt(piece, note.beat);
+    const noteFeel = grooveAt(piece, note.beat);
+    const inBar = ((note.beat - bodyStart) % 4 + 4) % 4;
+    const onPickup = offPulseSteps(noteGrid)
+      .some((step) => nearBeat(inBar, grooveBeat(stepBeat(noteGrid, step), noteFeel)));
+    if (!onPickup || !next || next.midi % 12 !== nextAnchorPc) {
       add('harmony', 'warning', note.beat, note.midi, 'ベースの経過音が弱拍から次コードの根音へ解決していない');
     }
   }
@@ -814,9 +845,10 @@ function protectedMelodyNote(piece: Piece, note: NoteEvent): boolean {
   if (bar === piece.phrasePlan.climaxBar && Math.abs(relative - bar * 4) < 0.001) return true;
   const plan = piece.phrasePlan.bars[bar]!;
   if (plan.targetStep === null) return false;
-  const targetBeat = piece.loopStartBeat + grooveBeat(
-    bar * 4 + plan.targetStep * 0.5,
-    piece.grooveFeel,
+  const barStart = piece.loopStartBeat + bar * 4;
+  const targetBeat = barStart + grooveBeat(
+    stepBeat(gridAt(piece, barStart), plan.targetStep),
+    grooveAt(piece, barStart),
   );
   return Math.abs(note.beat - targetBeat) < 0.001;
 }
@@ -878,9 +910,7 @@ export function suggestCompositionRepair(
   }
 
   if (issue.code === 'melody-large-leap' && before && !protectedMelodyNote(piece, target)) {
-    const relative = target.beat - piece.loopStartBeat;
-    const inBar = ((relative % 4) + 4) % 4;
-    const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
+    const strong = isStrongBeat(piece, target.beat);
     const chord = chordAtInPiece(piece, target.beat);
     const collection = scalePcsAtBeat(piece, target.beat);
     const allowedPcs = strong ? chord.pcs : collection;

@@ -4,6 +4,7 @@
  */
 
 import { sectionIndexAt } from './form.js';
+import { effectiveGroove, stepBeat } from './grid.js';
 import { grooveBeat } from './groove.js';
 import { nearestWithPc, stepOnScale } from './pitch.js';
 import { COUNTER_HI, COUNTER_LO, MELODY_LO } from './theory.js';
@@ -14,6 +15,7 @@ import type { NoteEvent } from './types.js';
 export function generateCounterMelody(ctx: ComposeContext, melody: readonly NoteEvent[]): NoteEvent[] {
   const {
     opts, form, bars, style, grooveFeel, arrangementPlan, phrasePlan, chords, chordAt, scaleAt, melodyPcsForChord,
+    gridAt,
   } = ctx;
   // --- 副旋律（主旋律と同時に予約した空間へ、反行を優先して返答） ---
   const counterMelody: NoteEvent[] = [];
@@ -21,13 +23,15 @@ export function generateCounterMelody(ctx: ComposeContext, melody: readonly Note
   for (const barPlan of phrasePlan.bars) {
     if (barPlan.counterSteps.length === 0) continue;
     const barStart = barPlan.bar * 4;
+    const grid = gridAt(barPlan.bar);
+    const feel = effectiveGroove(grooveFeel, grid.grouping);
     const barNotes = melody.filter((note) => note.beat >= barStart && note.beat < barStart + 4);
     let phraseAnchor: number | null = null;
     let pendingResolution: number | null = null;
     for (let index = 0; index < barPlan.counterSteps.length; index++) {
       const step = barPlan.counterSteps[index]!;
-      const logicalBeat = barStart + step * 0.5;
-      const beat = grooveBeat(logicalBeat, grooveFeel);
+      const logicalBeat = barStart + stepBeat(grid, step);
+      const beat = grooveBeat(logicalBeat, feel);
       const chord = chordAt(logicalBeat);
       const leadBefore = [...barNotes].reverse().find((note) => note.beat < beat);
       const leadBeforeBefore = leadBefore
@@ -66,7 +70,7 @@ export function generateCounterMelody(ctx: ComposeContext, melody: readonly Note
         midi = nearestWithPc(pendingResolution, melodyPcsForChord(chord), COUNTER_LO, COUNTER_HI);
       }
       const nextCounterBeat = barPlan.counterSteps[index + 1] !== undefined
-        ? grooveBeat(barStart + barPlan.counterSteps[index + 1]! * 0.5, grooveFeel)
+        ? grooveBeat(barStart + stepBeat(grid, barPlan.counterSteps[index + 1]!), feel)
         : barStart + 4;
       const boundary = Math.min(leadAfter?.beat ?? barStart + 4, nextCounterBeat);
       const shortCounterPhrase = barPlan.counterSteps.length >= 3;
