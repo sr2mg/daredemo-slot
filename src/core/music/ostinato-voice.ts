@@ -4,15 +4,15 @@
  * （grouping dissonance）のときは基準面と摩擦する均等分割で鳴らす。
  */
 
+import { sectionIndexAt } from './form.js';
 import { grooveBeat } from './groove.js';
 import { groupingDissonanceFor } from './metric-modulation.js';
 import { nearestWithPc } from './pitch.js';
-import { CHORDS } from './theory.js';
 import type { ComposeContext } from './compose-context.js';
 import type { NoteEvent, PhraseFunction } from './types.js';
 
 export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
-  const { opts, style, keyRoot, grooveFeel, arrangementPlan, phrasePlan, chordAt } = ctx;
+  const { opts, form, style, grooveFeel, arrangementPlan, phrasePlan, chordAt } = ctx;
   // --- 分散和音（コード伴奏とは別の、選ばれた区間だけを推進する声部） ---
   // 曲全体のTextureStrategyで有効になった区間だけに置き、常設レイヤーにはしない。
   // chordAtを各打点で引くため、2拍目など小節途中のコード変化にもその場で追従する。
@@ -34,9 +34,8 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
         .sort((a, b) => a - b);
       return [bass, ...upper];
     });
-    const rootPc = (CHORDS[chord.token]!.root + keyRoot) % 12;
     const cost = (candidate: number[]): number => previous === null
-      ? candidate[0]! % 12 === rootPc ? 0 : 1
+      ? candidate[0]! % 12 === chord.rootPc ? 0 : 1
       : candidate.reduce(
         (sum, midi, i) => sum + Math.abs(midi - previous[Math.min(i, previous.length - 1)]!),
         0,
@@ -48,9 +47,7 @@ export function generateOstinato(ctx: ComposeContext): NoteEvent[] {
     return ostinatoWindow;
   };
   for (const barPlan of phrasePlan.bars) {
-    const sectionIndex = opts.bars === 40
-      ? Math.floor(barPlan.bar / 8)
-      : opts.bars === 16 && barPlan.bar >= 8 ? 1 : 0;
+    const sectionIndex = sectionIndexAt(form, barPlan.bar);
     const plannedDensity = arrangementPlan.sections[sectionIndex]?.ostinatoDensity ?? 0;
     if (plannedDensity === 0) continue;
     const sectionPlan = arrangementPlan.sections[sectionIndex]!;

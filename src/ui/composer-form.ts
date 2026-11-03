@@ -4,6 +4,10 @@
  * ここは純関数とデータだけを置く。
  */
 
+import {
+  FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, presetForBars, resolveForm, totalBars,
+  validateForm,
+} from '../core/music/form.js';
 import { defaultChoiceFor } from '../core/music/harmony-plan.js';
 import {
   DEFAULT_GROOVE_FEEL, GROOVE_FEEL_LABELS, isGrooveFeel,
@@ -19,19 +23,19 @@ import { resolveMelodicLanguage, resolveTonality } from '../core/music/song-plan
 import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
 import { KEYS, PROGRESSIONS, progressionsForTonality, STYLES } from '../core/music/theory.js';
 import {
-  engineRevOf,
   JAPANESE_SCALE_LABELS,
   TUPLET_OVERLAY_LABELS,
 } from '../core/music/types.js';
 import type {
   BassLinePolicy,
-  ComposeBars,
   ComposeOptions,
   DiminutionPolicy,
   JapaneseScaleChoice,
   MelodicLanguage,
   NesVoiceOptions,
   OpllUserPatchId,
+  SongFormRef,
+  SongFormSpec,
   TensionPolicy,
   Tonality,
   TupletOverlayChoice,
@@ -80,7 +84,6 @@ export function effectiveDevices(options: ComposeOptions): ResolvedDevices | nul
     melodicLanguage: resolveMelodicLanguage(options),
     grooveFeel: options.grooveFeel ?? DEFAULT_GROOVE_FEEL,
     soundChip: options.soundChip,
-    engineRev: engineRevOf(options),
     tensionPolicy: options.tensionPolicy,
     diminution: options.diminution,
     duet: options.duet,
@@ -89,15 +92,24 @@ export function effectiveDevices(options: ComposeOptions): ResolvedDevices | nul
     tupletOverlay: options.tupletOverlay,
   });
 }
+/** 曲型の表示名。プリセットはラベル表、明示の区間列は小節数と区間数。 */
+export function formSummary(form: SongFormRef): string {
+  const presetId = formPresetIdOf(form);
+  if (presetId) return FORM_PRESET_LABELS[presetId];
+  const spec = resolveForm(form);
+  return `カスタム${totalBars(spec)}小節(${spec.sections.length}区間${spec.ending === 'final' ? '・終止' : ''})`;
+}
+
 /** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
 export function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';
   const chip = capabilitiesFor(options.soundChip).label;
-  const form = options.bars === 40
-    ? 'OPLL BIG風40小節'
-    : options.bars === 16 ? 'ゲームBGM風16小節' : options.bars === 8 ? 'BB風8小節' : 'RB風4小節';
-  const intro = (options.bars === 16 || options.bars === 40) && options.intro === false ? ' / イントロなし' : '';
+  const form = formSummary(options.form);
+  const introDefault = introDefaultFor(options.form);
+  const intro = options.intro === false && introDefault
+    ? ' / イントロなし'
+    : options.intro === true && !introDefault ? ' / イントロあり' : '';
   const tonality = resolveTonality(options);
   const melodicLanguage = resolveMelodicLanguage(options);
   const tonalLabel = tonality === 'minor' ? ' / 短調' : '';
@@ -129,10 +141,11 @@ export function songSummary(options: ComposeOptions): string {
 }
 
 /** 作曲フォームの永続化（曲リストとは別に、作業中の設定そのものを覚える） */
-export const FORM_KEY = 'daredemo.bgmComposer.form.v1';
+export const FORM_KEY = 'daredemo.bgmComposer.form.v2';
 
 export interface ComposerForm {
-  bars: ComposeBars;
+  /** 曲型(プリセットid か区間列)。 */
+  form: SongFormRef;
   progId: string;
   styleId: string;
   tonality: Tonality;
@@ -165,22 +178,34 @@ export function loadComposerForm(): ComposerForm {
     {},
     (v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v),
   );
-  const bars: ComposeBars = raw.bars === 40 ? 40 : raw.bars === 16 ? 16 : raw.bars === 8 ? 8 : 4;
-  const legacyMode = raw.melodyMode === 'japanese'
-    ? 'japanese'
-    : raw.melodyMode === 'minor' ? 'minor' : 'major';
-  const tonality: Tonality = raw.tonality === 'minor'
-    ? 'minor'
-    : raw.tonality === 'major' ? 'major' : legacyMode === 'minor' ? 'minor' : 'major';
+  const tonality: Tonality = raw.tonality === 'minor' ? 'minor' : 'major';
   const melodicLanguage: MelodicLanguage = isMelodicLanguage(raw.melodicLanguage)
     ? raw.melodicLanguage
-    : legacyMode === 'japanese' ? 'japanese' : DEFAULT_MELODIC_LANGUAGE;
-  const availableProgressions = progressionsForTonality(tonality).filter((p) => p.slots.length <= bars);
-  const initialProgression = typeof raw.progId === 'string'
-    ? availableProgressions.find((p) => p.id === raw.progId) ?? availableProgressions[0]!
-    : availableProgressions[0]!;
+    : DEFAULT_MELODIC_LANGUAGE;
+  // 曲型: プリセットid、検証を通る区間列、旧フォームの小節数(bars)の順に読む。
+  const candidateForm: SongFormRef = isFormPresetId(raw.form)
+    ? raw.form
+    : raw.form !== null && typeof raw.form === 'object'
+      ? raw.form as SongFormSpec
+      : presetForBars(typeof raw.bars === 'number' ? raw.bars : 4);
+  const minSectionBars = (ref: SongFormRef): number => Math.min(...resolveForm(ref).sections.map((s) => s.bars));
+  const progressionsFor = (ref: SongFormRef) => progressionsForTonality(tonality)
+    .filter((p) => p.slots.length <= minSectionBars(ref));
+  const pickProgression = (ref: SongFormRef) => {
+    const available = progressionsFor(ref);
+    return typeof raw.progId === 'string'
+      ? available.find((p) => p.id === raw.progId) ?? available[0]!
+      : available[0]!;
+  };
+  let form = candidateForm;
+  let initialProgression = pickProgression(form);
+  if (validateForm(resolveForm(form), { tonality, progressionId: initialProgression.id })
+    .some((issue) => issue.level === 'error')) {
+    form = 'loop4';
+    initialProgression = pickProgression(form);
+  }
+  const bars = totalBars(resolveForm(form));
   const progId = initialProgression.id;
-  const legacyForm = raw.bassLine === undefined;
   const voices: VoiceOverride = {};
   if (raw.voices !== null && typeof raw.voices === 'object') {
     for (const part of ['lead', 'backing', 'bass', 'counter', 'ostinato'] as const) {
@@ -189,7 +214,7 @@ export function loadComposerForm(): ComposerForm {
     }
   }
   return {
-    bars,
+    form,
     progId,
     styleId: typeof raw.styleId === 'string' && STYLES.some((s) => s.id === raw.styleId) ? raw.styleId : 'eurobeat',
     tonality,
@@ -198,16 +223,10 @@ export function loadComposerForm(): ComposerForm {
       ? raw.japaneseScale as JapaneseScaleChoice
       : 'auto',
     grooveFeel: isGrooveFeel(raw.grooveFeel) ? raw.grooveFeel : DEFAULT_GROOVE_FEEL,
-    // 旧フォーム(bassLine 欄を持たない世代)の連符は 'off'=既定・'auto'=区間ごと自動だった。
-    // 現行は 'auto'=様式既定・'off'=明示の上書きなので、旧世代の値だけ読み替える。
-    tupletOverlay: legacyForm
-      ? (raw.tupletOverlay === 'auto'
-        ? 'bySection'
-        : [5, 6, 7].includes(raw.tupletOverlay as number) ? raw.tupletOverlay as TupletOverlayChoice : 'auto')
-      : (raw.tupletOverlay === 'auto' || raw.tupletOverlay === 'off' || raw.tupletOverlay === 'bySection'
-          || [5, 6, 7].includes(raw.tupletOverlay as number)
-        ? raw.tupletOverlay as TupletOverlayChoice
-        : 'auto'),
+    tupletOverlay: raw.tupletOverlay === 'auto' || raw.tupletOverlay === 'off' || raw.tupletOverlay === 'bySection'
+      || [5, 6, 7].includes(raw.tupletOverlay as number)
+      ? raw.tupletOverlay as TupletOverlayChoice
+      : 'auto',
     tensionPolicy: TENSION_CHOICES.includes(raw.tensionPolicy as 'auto' | TensionPolicy)
       ? raw.tensionPolicy as 'auto' | TensionPolicy
       : 'auto',
@@ -243,9 +262,9 @@ export function loadComposerForm(): ComposerForm {
           && c < initialProgression.slots[bar % initialProgression.slots.length]!.length
         ))
         ? (raw.choice as number[])
-        : defaultChoiceFor(initialProgression, bars),
+        : defaultChoiceFor(initialProgression, form),
     autoVary: raw.autoVary !== false,
-    intro: raw.intro !== false,
+    intro: typeof raw.intro === 'boolean' ? raw.intro : introDefaultFor(form),
     seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
     loop: raw.loop !== false,
   };

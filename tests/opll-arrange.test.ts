@@ -11,7 +11,7 @@ const piece = compose({
   styleId: 'eurobeat',
   keyRoot: 0,
   bpm: 170,
-  bars: 4,
+  form: 'loop4' as const,
   seed: 42,
 });
 const def = arrangePiece(piece, 'eurobeat');
@@ -78,8 +78,6 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
       ...piece,
       arrangementPlan: {
         ...piece.arrangementPlan,
-        sectionA: { ...piece.arrangementPlan.sectionA, echo: false },
-        sectionB: { ...piece.arrangementPlan.sectionB, echo: false },
         sections: piece.arrangementPlan.sections.map((section) => ({ ...section, echo: false })),
       },
     };
@@ -96,7 +94,7 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
 
     const shakePiece = compose({
       progressionId: 'tanaka-manabe', styleId: 'eurobeat', keyRoot: 0,
-      bpm: 170, bars: 4, seed: 1, melodyMode: 'japanese', japaneseScale: 'ritsu',
+      bpm: 170, form: 'loop4' as const, seed: 1, melodicLanguage: 'japanese', japaneseScale: 'ritsu',
     });
     const shake = shakePiece.melody.find((note) => note.ornament === 'shake')!;
     const shakeDef = arrangePiece(shakePiece, 'eurobeat', { lead: 1 });
@@ -119,10 +117,10 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
       styleId: 'eurobeat',
       keyRoot: 0,
       bpm: 150,
-      bars: 40,
+      form: 'arc40' as const,
       seed: 6,
-      melodyMode: 'minor',
-      choice: variedChoiceFor(prog, 40, 6),
+      tonality: 'minor',
+      choice: variedChoiceFor(prog, 'arc40', 6),
     });
     const arranged = arrangePiece(bigPiece, 'eurobeat');
     expect(arranged.voiceStats.parts.counter.assigned).toBeGreaterThan(0);
@@ -130,9 +128,9 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
     expect(arranged.voiceStats.parts.backing.assigned).toBeGreaterThan(0);
     expect(arranged.voiceStats.parts.doubling.assigned).toBe(0);
     const echoPiece = compose({
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 4, seed: 256,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop4' as const, seed: 256,
     });
-    expect(echoPiece.arrangementPlan.sectionA.echo).toBe(true);
+    expect(echoPiece.arrangementPlan.sections[0]!.echo).toBe(true);
     expect(arrangePiece(echoPiece, 'eurobeat').voiceStats.parts.doubling.assigned).toBeGreaterThan(0);
     expect(arranged.voiceStats.maxConcurrent).toBeLessThanOrEqual(6);
     expect(arranged.loopStart).toBeCloseTo(bigPiece.loopStartBeat * 60 / bigPiece.bpm, 9);
@@ -143,7 +141,7 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
     const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-drive')!;
     const bigPiece = compose({
       progressionId: prog.id, styleId: 'rock', keyRoot: 0, bpm: 150,
-      bars: 40, seed: 43, melodyMode: 'minor', choice: variedChoiceFor(prog, 40, 43),
+      form: 'arc40' as const, seed: 43, tonality: 'minor', choice: variedChoiceFor(prog, 'arc40', 43),
     });
     const arranged = arrangePiece(bigPiece, 'rock');
     const hits = arranged.events.filter((event) => event.reg === 0x0e && event.val !== 0x20);
@@ -161,7 +159,7 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
     const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
     const bigPiece = compose({
       progressionId: prog.id, styleId: 'eurobeat', keyRoot: 0, bpm: 150,
-      bars: 40, seed: 6, melodyMode: 'minor', choice: variedChoiceFor(prog, 40, 6),
+      form: 'arc40' as const, seed: 6, tonality: 'minor', choice: variedChoiceFor(prog, 'arc40', 6),
     });
     const custom = arrangePiece(bigPiece, 'eurobeat', {
       lead: 1, backing: 3, bass: 13, counter: 6, ostinato: 11,
@@ -187,7 +185,7 @@ describe('arrangePiece（Piece → OPLL 6旋律ch + 5リズム音）', () => {
 
 describe('クラブ系様式のOPLLリズム(レジスタ領域の工夫。コンプ等の後段処理は入れない)', () => {
   const club = compose({
-    progressionId: 'royal-pop', styleId: 'garage2step', keyRoot: 0, bpm: 132, bars: 4, seed: 11,
+    progressionId: 'royal-pop', styleId: 'garage2step', keyRoot: 0, bpm: 132, form: 'loop4' as const, seed: 11,
     grooveFeel: 'shuffle16', engineRev: 4,
   });
   const arranged = arrangePiece(club, 'garage2step');

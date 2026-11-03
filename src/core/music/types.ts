@@ -19,15 +19,12 @@ import type { SoundBackendId } from './sound-capabilities.js';
 // 語彙（ユニオン型）
 // ---------------------------------------------------------------------------
 
-export type ComposeBars = 4 | 8 | 16 | 40;
 export type Tonality = 'major' | 'minor';
 /**
  * 旋律語法。standard=コードスケール追従、japanese=和風3様式(核音・間)、
  * pentatonic=無半音五音(五度圏5連続)、hexatonic=六音(五度圏6連続、長調は第4音抜き)。
  */
 export type MelodicLanguage = 'standard' | 'japanese' | 'pentatonic' | 'hexatonic';
-/** @deprecated v1保存曲の互換入力。新規コードはtonalityとmelodicLanguageを使う。 */
-export type MelodyMode = 'major' | 'minor' | 'japanese';
 export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
 export type JapaneseScaleChoice = 'auto' | JapaneseScale;
 export type OrnamentType = 'grace' | 'turn' | 'shake';
@@ -50,7 +47,8 @@ export type ArrangementArc = 'build' | 'contrast' | 'terrace' | 'compact' | 'hoo
 export type CounterRole = 'response' | 'counterline' | 'guideline';
 export type TextureStrategy = 'classic' | 'arpDrive' | 'counterDrive' | 'bassDrive' | 'hybrid';
 export type BassRole = 'rootMotion' | 'pedal';
-export type PhraseSection = 'A' | 'B' | 'C' | 'D' | 'E';
+/** 区間の識別子(SectionSpec.id)。曲型が可変長になったので固定の英字ではなく任意の一意ラベル。 */
+export type PhraseSection = string;
 export type NoteArticulation = 'normal' | 'staccato' | 'tenuto' | 'accent' | 'ornament';
 export type HarmonicFunction = 'tonic' | 'predominant' | 'dominant' | 'colour';
 
@@ -180,9 +178,12 @@ export interface ComposeInput {
   /** キー主音のピッチクラス（0 = C） */
   keyRoot: number;
   bpm: number;
-  /** 4 = RB / 8 = BB / 16 = ゲーム BGM / 40 = BIG本編（通常は2小節導入込みで42小節）。 */
-  bars: ComposeBars;
-  /** 16/40小節曲の先頭へ、初回だけ鳴る2小節イントロを付ける。省略時は有効。 */
+  /**
+   * 曲型: プリセットid(loop4/loop8/loop16/arc40/song)か明示の区間列(form.ts が解決)。
+   * 旧入力の bars(4/8/16/40)は同名のプリセットへ写した(presetForBars)。
+   */
+  form: SongFormRef;
+  /** 初回だけ鳴る2小節イントロ。省略時は曲型の既定(短いループは無し、他は有り: introDefaultFor)。 */
   intro?: boolean;
   /** 和声と進行カタログの調性。省略時はmajor。 */
   tonality?: Tonality;
@@ -192,8 +193,6 @@ export interface ComposeInput {
    * 装置は通常どおり使える汎用語彙(00年代ネトゲBGM系の「五音旋律×カラートーン和声」)。
    */
   melodicLanguage?: MelodicLanguage;
-  /** @deprecated v1保存曲との互換入力。 */
-  melodyMode?: MelodyMode;
   /** 和風モードの音組織。省略時はシードから3様式を選ぶ。 */
   japaneseScale?: JapaneseScaleChoice;
   /** 和風様式とは独立したゲーム向けのリズム層。 */
@@ -245,11 +244,11 @@ export interface ComposeInput {
   /**
    * この曲を生成したエンジンのリビジョン。音を変える生成器変更はこの値でゲートし、
    * 旧リビジョンの保存曲は旧挙動のまま再現する(一点式バージョニング)。
-   * 省略 = 0(engineRev導入前の全保存曲)。UIは保存時に CURRENT_ENGINE_REV を焼く。
+   * UIは保存時に CURRENT_ENGINE_REV を焼く。rev5 未満の値は再現経路を持たない(リセット)。
    */
   engineRev?: number;
   seed: number;
-  /** 全小節ぶんのスロット選択。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
+  /** 全小節ぶんのスロット選択(曲全体のフラット配列)。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
   choice?: readonly number[];
   /** ブラインド比較用の上位戦略。省略時は既存と同じ current。 */
   compositionStrategy?: CompositionStrategy;
@@ -304,17 +303,20 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  * - rev4: 連符レイヤーを他の装置と同じ解決規則(様式既定→明示→語法抑制→能力)へ統合。
  *   旧語彙では tupletOverlay 省略=off、'auto'=区間ごと自動だったので、rev<4 の保存曲は
  *   その読みを保つ(devices.ts)。rev4 から 省略/'auto'=様式既定(DeviceDefaults.tuplet)。
+ * - rev5: 曲型を区間リスト(SongFormSpec)へ。保存入力は bars(4/8/16/40)から form(プリセットid
+ *   か区間列)へ、主題計画は区間の宣言(theme/transform/quote)から、進行レシピは区間単位に、
+ *   終止曲型(ending final)と小節ごとの調(HarmonyBarPlan.keyRoot)を導入。rev1〜4 の分岐は
+ *   削除し、rev<5 の保存曲は再現しない(ユーザー不在のうちのリセット)。engineRev の値は
+ *   読まれず、常に現行として生成する(仕組みは rev6 以降のために残す)。
  */
-export const CURRENT_ENGINE_REV = 4;
+export const CURRENT_ENGINE_REV = 5;
 
 /**
- * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。
- * 未来のリビジョン(新しいビルドで保存された曲)は再現不能なので現行へクランプして
- * ベストエフォートで鳴らす。非整数は壊れたデータとして 0 扱い。
+ * この生成で実際に適用するリビジョン。rev5 でリセットしたので、どの値も現行として扱う
+ * (未来のリビジョンは再現不能なので現行へクランプしてベストエフォートで鳴らす)。
  */
-export function engineRevOf(opts: Pick<ComposeOptions, 'engineRev'>): number {
-  const raw = opts.engineRev ?? 0;
-  return Number.isInteger(raw) ? Math.max(0, Math.min(CURRENT_ENGINE_REV, raw)) : 0;
+export function engineRevOf(_opts: Pick<ComposeOptions, 'engineRev'>): number {
+  return CURRENT_ENGINE_REV;
 }
 
 export interface NesVoiceOptions {
@@ -388,6 +390,8 @@ export interface ChordEvent {
   function: HarmonicFunction;
   /** 絶対ピッチクラス集合（検証用） */
   pcs: number[];
+  /** 根音の絶対pc。生成器が CHORDS[token].root + keyRoot を再計算しない(区間ごとの調に追従)。 */
+  rootPc: number;
   /** 直前のコードから最短距離で接続した、低音から高音順の伴奏ボイシング。 */
   midis: number[];
   /** テンション方針で声部へ足したカラートーン(絶対pc)。機能はpcsのまま。 */
@@ -503,9 +507,7 @@ export interface ArrangementPlan {
   textureStrategy: TextureStrategy;
   /** ペダル低音も常設せず、低音主導の戦略でだけ選べる道具として扱う。 */
   bassRole: BassRole;
-  sectionA: ArrangementSectionPlan;
-  sectionB: ArrangementSectionPlan;
-  /** 4/8小節=1区間、16小節=2区間、40小節=5区間。 */
+  /** 曲型の区間と同じ順・同じ数。小節→区間の対応は form.ts の sectionIndexAt。 */
   sections: readonly ArrangementSectionPlan[];
 }
 
@@ -521,6 +523,64 @@ export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale
  */
 export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast' | 'literal';
 export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
+
+// ---------------------------------------------------------------------------
+// 曲型（SongFormSpec）: 区間の列。保存される作曲入力の一部。
+//
+// 曲型は「小節数」ではなく「区間の列」で表す。各区間が役割・長さ・エネルギー・主題・
+// 進行・調を宣言し、生成器はこの列だけを見て計画する(区間数の上限を持たない)。
+// プリセット(FormPresetId)は form.ts が同じ SongFormSpec へ展開する。
+// 拍の割り方(12/8↔6/4↔4/4)とテンポの区間属性は次の拡張で、ここへ足す。
+// ---------------------------------------------------------------------------
+
+/** 区間の長さ。4=1小節ずつSRDC、8=2小節ずつSRDC(phraseFunctionFor)。 */
+export type SectionBars = 4 | 8;
+export type SectionEnergy = 1 | 2 | 3 | 4 | 5;
+/** loop=最終小節をターンアラウンドで頭へ渡す(BGM)。final=導出した終止で閉じる(曲)。 */
+export type SongEnding = 'loop' | 'final';
+
+/** 他区間のフレーズを部分引用する宣言(loop16 の「ループ直前にフックを予告」など)。 */
+export interface SectionQuote {
+  /** 引用元の区間id(自分より前の区間)。 */
+  from: string;
+  /** 借りるフレーズ番号。4小節区間は 0|2 のみ(1小節=1フレーズ機能のため)。 */
+  phrases: readonly (0 | 1 | 2 | 3)[];
+  /** 省略=literal。 */
+  transform?: MotifTransform;
+}
+
+export interface SectionSpec {
+  /** 一意ラベル。'intro'・空文字・重複は不可(piece-diff の 'intro' と衝突する)。 */
+  id: string;
+  /** 編成・音色・エネルギー順位の機能。 */
+  role: SectionRole;
+  bars: SectionBars;
+  energy: SectionEnergy;
+  /**
+   * 主題ID。初出の区間が主題を提示し(original)、再登場の区間は「同じ theme の直前の区間」を
+   * 元に transform で区間全体を作り直す(externalMotifPhrases=[0] 型: 区間全体がその主題)。
+   */
+  theme: string;
+  /** 再登場時の変形。省略=literal。初出では無視。 */
+  transform?: MotifTransform;
+  /** 部分引用(主題は自分のまま、指定フレーズだけ他区間から)。theme の再登場とは併用不可。 */
+  quote?: SectionQuote;
+  /** 省略=曲既定(ComposeInput.progressionId)。 */
+  progressionId?: string;
+  /** 省略=曲既定。区間ごとの転調。 */
+  keyRoot?: number;
+  /** 省略=曲既定。平行長調のサビなど。 */
+  tonality?: Tonality;
+}
+
+export interface SongFormSpec {
+  sections: readonly SectionSpec[];
+  ending: SongEnding;
+}
+
+export type FormPresetId = 'loop4' | 'loop8' | 'loop16' | 'arc40' | 'song';
+/** 保存される曲型: プリセットidか明示の区間列。 */
+export type SongFormRef = FormPresetId | SongFormSpec;
 export type IntroLeadGesture =
   | 'motifFragment'
   | 'motifAnswer'
@@ -566,6 +626,18 @@ export interface SongSectionPlan {
   role: SectionRole;
   /** 1..5。編成密度ではなく、曲として目指す相対エネルギー。 */
   energy: number;
+  /** 主題ID(SectionSpec.theme)。同じ主題の区間はモチーフを共有する。 */
+  theme: string;
+  /** 区間の調(曲既定を区間指定で上書きした実効値)。 */
+  keyRoot: number;
+  tonality: Tonality;
+  /** 区間の旋律語彙(絶対pc)。語法の音組織を区間の調へ写したもの。 */
+  scalePcs: readonly number[];
+  /** 和風語法の核音計画(区間の調ごと)。他の語法は null。 */
+  japanesePlan: JapanesePlan | null;
+  /** 区間の進行(曲既定を区間指定で上書き)と、そのカタログ長。 */
+  progressionId: string;
+  progressionBars: number;
   /** 0..4。同じリズム型を全セクションへ貼らないためのモチーフ変奏族。 */
   rhythmVariant: RhythmVariant;
   /** 提示・変奏反復・展開・結論ごとのリズム族。区間内も同じ2小節を貼り続けない。 */
@@ -592,6 +664,9 @@ export interface SongSectionPlan {
 export interface HarmonyBarPlan {
   bar: number;
   section: PhraseSection;
+  /** この小節の調。ローマ数字トークンを絶対 pc へ展開する基準(区間ごとの転調に追従)。 */
+  keyRoot: number;
+  tonality: Tonality;
   phraseFunction: PhraseFunction;
   harmonicGoal: HarmonicGoal;
   /** ユーザーが選んだ進行レシピを、フォーム上の役割と一緒に確定したもの。 */
@@ -613,9 +688,14 @@ export interface HarmonyBarPlan {
 }
 
 export interface SongFormPlan {
+  /** 解決済みの曲型(プリセットは展開済み)。 */
+  spec: SongFormSpec;
+  /** プリセット参照で作った曲ならその id。上位戦略(arc40 限定)が読む。 */
+  presetId: FormPresetId | null;
   sections: readonly SongSectionPlan[];
   climaxBar: number;
-  loopCadence: 'turnaround';
+  /** loop=最終小節ターンアラウンド、final=導出した終止で閉じる。 */
+  ending: SongEnding;
 }
 
 /** 各声部を生成する前に確定する、曲全体の単一の設計図。 */
@@ -630,9 +710,8 @@ export interface SongPlan {
   melodicLanguage: MelodicLanguage;
   grooveFeel: GrooveFeel;
   styleId: string;
+  /** 曲既定の進行。区間ごとの実効値は form.sections[].progressionId / progressionBars。 */
   progressionId: string;
-  /** 進行カタログ自体の長さ。4小節進行を長尺化した際の反復診断に使う。 */
-  progressionBars: number;
   soundChip: SoundBackendId;
   intro: SongIntroPlan;
   form: SongFormPlan;
@@ -652,8 +731,6 @@ export interface Piece {
   styleId: string;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
-  /** @deprecated 表示・保存互換用。 */
-  melodyMode: MelodyMode;
   japanesePlan: JapanesePlan | null;
   /**
    * 旋律語彙の絶対ピッチクラス(標準=ダイアトニック、和風=五音3様式、五音=無半音五音)。
@@ -668,6 +745,8 @@ export interface Piece {
   grooveFeel: GrooveFeel;
   /** ループ本体の小節数。introBars は含めない。 */
   bars: number;
+  /** loop=最終小節で頭へ渡す(BGM)、final=終止で閉じる(曲)。 */
+  ending: SongEnding;
   /** 初回だけ鳴るイントロの小節数。16/40小節フォーム以外は0。 */
   introBars: number;
   /** イントロが担う役割。イントロなしの場合は null。 */

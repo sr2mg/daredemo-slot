@@ -4,13 +4,14 @@
  * オープンハット・拍節アクセントの導出は後段の drum-articulation.ts。
  */
 
+import { barInSection, sectionIndexAt } from './form.js';
 import { grooveBeat, grooveFor, tripletHatOffsets } from './groove.js';
 import { drumPatternStep } from './theory.js';
 import type { ComposeContext } from './compose-context.js';
 import type { DrumEvent } from './types.js';
 
 export function generateDrums(ctx: ComposeContext): DrumEvent[] {
-  const { opts, style, grooveFeel, arrangementPlan, phrasePlan } = ctx;
+  const { form, bars, style, grooveFeel, arrangementPlan, phrasePlan } = ctx;
   // --- ドラム（16 分グリッドを小節数ぶん敷く） ---
   const drums: DrumEvent[] = [];
   // 打楽器のない編成(弾き語り)では、フィル・シンバル・ブレイクダウンも含めて何も敷かない。
@@ -23,15 +24,18 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
     if (level <= 0) return;
     drums.push(level < 1 ? { beat, inst, velocity: level } : { beat, inst });
   };
-  for (let bar = 0; bar < opts.bars; bar++) {
+  for (let bar = 0; bar < bars; bar++) {
     const barPlan = phrasePlan.bars[bar]!;
-    const sectionIndex = opts.bars === 40 ? Math.floor(bar / 8) : opts.bars === 16 && bar >= 8 ? 1 : 0;
-    const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sectionA;
+    const sectionIndex = sectionIndexAt(form, bar);
+    const offsetInSection = barInSection(form, bar);
+    const sectionPlan = arrangementPlan.sections[sectionIndex] ?? arrangementPlan.sections[0]!;
     const pattern = sectionPlan.drum === 'sectionB' ? kit.sectionB : kit;
-    if (bar % 8 === 0 && sectionPlan.entrance === 'cymbal') {
+    if (offsetInSection === 0 && sectionPlan.entrance === 'cymbal') {
       drums.push({ beat: bar * 4, inst: 'cymbal' });
     }
-    const sectionTransition = opts.bars >= 16 && bar % 8 === 7 && bar !== opts.bars - 1;
+    const sectionTransition = form.sections.length > 1
+      && offsetInSection === form.sections[sectionIndex]!.bars - 1
+      && bar !== bars - 1;
     const hasFill = sectionTransition && sectionPlan.exitFill !== 'none';
     for (let s = 0; s < 16; s++) {
       const beat = grooveBeat(bar * 4 + s * 0.25, grooveFeel);
@@ -51,6 +55,12 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
       }
       // 最終小節の最後の 1 拍を空け、B の勢いを整理してループ先の A を迎える。
       if (barPlan.cadence === 'turnaround' && s >= 12) continue;
+      // 終止曲型の最終小節: 終止和音(3拍目)で打ち切り、シンバルで閉じる。
+      if (form.ending === 'final' && bar === bars - 1) {
+        if (s === 0) drums.push({ beat, inst: 'kick' }, { beat, inst: 'cymbal' });
+        if (s === 8) drums.push({ beat, inst: 'kick' }, { beat, inst: 'cymbal' });
+        continue;
+      }
       if (sectionPlan.drum === 'breakdown') {
         if (s === 0 || s === 8) drums.push({ beat, inst: 'kick' });
         if (s === 4 || s === 12) drums.push({ beat, inst: 'snare' });
@@ -66,10 +76,11 @@ export function generateDrums(ctx: ComposeContext): DrumEvent[] {
     if (hatOverlay === 'triplet') {
       // 三連を常時ロールとして足さず、元のスタイル譜(この小節の16ステップ窓)を三連位置へ写す。
       // A→Bフィルとループ直前は最終拍のハットを休ませ、スネアと余白を立てる。
-      const quarters = barPlan.cadence === 'turnaround'
-        || hasFill
-        ? 3
-        : 4;
+      const quarters = form.ending === 'final' && bar === bars - 1
+        ? 0
+        : barPlan.cadence === 'turnaround' || hasFill
+          ? 3
+          : 4;
       const hatWindowStart = (bar * 16) % pattern.hat.length;
       const hatWindow = pattern.hat.slice(hatWindowStart, hatWindowStart + 16);
       for (let quarter = 0; quarter < quarters; quarter++) {

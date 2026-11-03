@@ -68,6 +68,7 @@ export function realizeIntro(
         name: chordName(token, keyRoot),
         function: harmonicFunctionForToken(token),
         pcs,
+        rootPc: (def.root + keyRoot) % 12,
         midis: [],
       });
       offset += dur;
@@ -97,7 +98,7 @@ export function realizeIntro(
     if (!idiom.followsChordScale) return scalePcs;
     let cached = introChordScaleCache.get(chord.token);
     if (!cached) {
-      cached = chordScalePcs(scalePcs, chord.pcs, (CHORDS[chord.token]!.root + keyRoot) % 12);
+      cached = chordScalePcs(scalePcs, chord.pcs, chord.rootPc);
       introChordScaleCache.set(chord.token, cached);
     }
     return cached;

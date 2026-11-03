@@ -19,10 +19,13 @@ import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
 import type { SoundBackendId } from './sound-capabilities.js';
 import { STYLES } from './theory.js';
 import { CURRENT_ENGINE_REV } from './types.js';
+import { formPresetIdOf, introDefaultFor } from './form.js';
 import type {
   BassLinePolicy,
-  ComposeBars,
   ComposeOptions,
+  SectionSpec,
+  SongFormRef,
+  SongFormSpec,
   DiminutionPolicy,
   DuetPolicy,
   GlidePolicy,
@@ -46,7 +49,8 @@ export interface ComposeDraft {
   styleId: string;
   keyRoot: number;
   bpm: number;
-  bars: ComposeBars;
+  /** 曲型(プリセットid か区間列)。 */
+  form: SongFormRef;
   seed: number;
   choice: readonly number[];
   soundChip: SoundBackendId;
@@ -70,6 +74,43 @@ export interface ComposeDraft {
 }
 
 /**
+ * 曲型の正準形。プリセットidはそのまま。明示の区間列はフィールド順を固定し、
+ * undefined と「曲既定と等しい指定」(進行・調・literal 変形)を省いて、同じ曲が同じ JSON になるようにする。
+ */
+export function canonicalForm(
+  form: SongFormRef,
+  defaults: { progressionId: string; keyRoot: number; tonality: Tonality },
+): SongFormRef {
+  const presetId = formPresetIdOf(form);
+  if (presetId !== null) return presetId;
+  const sections: SectionSpec[] = (form as SongFormSpec).sections.map((section) => ({
+    id: section.id,
+    role: section.role,
+    bars: section.bars,
+    energy: section.energy,
+    theme: section.theme,
+    ...(section.transform !== undefined && section.transform !== 'literal' ? { transform: section.transform } : {}),
+    ...(section.quote
+      ? {
+        quote: {
+          from: section.quote.from,
+          phrases: [...section.quote.phrases],
+          ...(section.quote.transform !== undefined && section.quote.transform !== 'literal'
+            ? { transform: section.quote.transform }
+            : {}),
+        },
+      }
+      : {}),
+    ...(section.progressionId !== undefined && section.progressionId !== defaults.progressionId
+      ? { progressionId: section.progressionId }
+      : {}),
+    ...(section.keyRoot !== undefined && section.keyRoot !== defaults.keyRoot ? { keyRoot: section.keyRoot } : {}),
+    ...(section.tonality !== undefined && section.tonality !== defaults.tonality ? { tonality: section.tonality } : {}),
+  }));
+  return { sections, ending: (form as SongFormSpec).ending };
+}
+
+/**
  * フォームの生値から正準の ComposeOptions を組む。
  * - 既定値('auto'・straight グルーヴ・イントロ有効など)は JSON へ入れない
  *   (旧保存曲と同一キーを保つ)
@@ -88,7 +129,6 @@ export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
     melodicLanguage: draft.melodicLanguage,
     grooveFeel: draft.grooveFeel,
     soundChip: draft.soundChip,
-    engineRev: CURRENT_ENGINE_REV,
   });
   // voices は上書きがあるときだけ入れる（既定のままなら旧保存曲と同一 JSON = キャッシュも共有）
   const picked = Object.fromEntries(
@@ -100,15 +140,15 @@ export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
     styleId: draft.styleId,
     keyRoot: draft.keyRoot,
     bpm: draft.bpm,
-    bars: draft.bars,
+    form: canonicalForm(draft.form, { progressionId: draft.progressionId, keyRoot: draft.keyRoot, tonality: draft.tonality }),
     seed: draft.seed,
     choice: [...draft.choice],
-    // rev0 の間は入れない(欠落=0 なのでキャッシュキー同一性を保つ)。最初の
-    // rev ゲート分岐が入って CURRENT が上がった時点から焼き始める。旧曲を編集して
-    // 再保存すると現行へ引き上がるが、試聴も同じ options なので聴いた音=保存される音。
-    ...(CURRENT_ENGINE_REV > 0 ? { engineRev: CURRENT_ENGINE_REV } : {}),
+    // 生成したエンジンのリビジョンを焼く。旧曲を編集して再保存すると現行へ引き上がるが、
+    // 試聴も同じ options なので聴いた音=保存される音。
+    engineRev: CURRENT_ENGINE_REV,
     soundChip: draft.soundChip,
-    ...(draft.intro ? {} : { intro: false }),
+    // イントロは曲型の既定と違うときだけ焼く(既定どおりなら省く)。
+    ...(draft.intro === introDefaultFor(draft.form) ? {} : { intro: draft.intro }),
     ...(draft.tonality === 'minor' ? { tonality: draft.tonality } : {}),
     // 標準語法は省く(旧保存曲と同一キー)。音組織の選択肢を持つ語法は auto 以外の選択も焼く。
     ...(draft.melodicLanguage !== DEFAULT_MELODIC_LANGUAGE ? { melodicLanguage: draft.melodicLanguage } : {}),

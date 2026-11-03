@@ -23,50 +23,49 @@ const jttou = PROGRESSIONS.find((prog) => prog.id === 'jttou')!;
 const CASES: readonly { name: string; options: ComposeOptions }[] = [
   {
     name: 'RB風4小節 / royal-pop / eurobeat',
-    options: { progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 4, seed: 42 },
+    options: { progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop4' as const, seed: 42 },
   },
   {
     name: 'BB風8小節 / 短調 / rock',
     options: {
-      progressionId: 'minor-pedal', styleId: 'rock', keyRoot: 9, bpm: 150, bars: 8,
-      tonality: 'minor', seed: 7, choice: variedChoiceFor(minorPedal, 8, 7),
+      progressionId: 'minor-pedal', styleId: 'rock', keyRoot: 9, bpm: 150, form: 'loop8' as const,
+      tonality: 'minor', seed: 7, choice: variedChoiceFor(minorPedal, 'loop8', 7),
     },
   },
   {
     name: 'ゲームBGM風16小節 / 和風五音 / バウンス',
     options: {
-      progressionId: 'jttou', styleId: 'eurobeat', keyRoot: 5, bpm: 160, bars: 16,
+      progressionId: 'jttou', styleId: 'eurobeat', keyRoot: 5, bpm: 160, form: 'loop16' as const,
       melodicLanguage: 'japanese', grooveFeel: 'bounce', seed: 3,
-      choice: variedChoiceFor(jttou, 16, 3),
+      choice: variedChoiceFor(jttou, 'loop16', 3),
     },
   },
   {
-    // rev<4 の旧語彙: 'auto'=区間ごと自動。旧保存曲の読み替え経路を固定する。
+    // 'auto'=様式既定(eurobeat は連符なし)。明示なしと同じ音になる経路を固定する。
     name: 'ゲームBGM風16小節 / 連符レイヤーauto',
     options: {
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const,
       seed: 11, tupletOverlay: 'auto',
     },
   },
   {
-    // rev4 の現行語彙: 'bySection'=区間ごと自動(旧 'auto' と同じ音になる)。
+    // 'bySection'=区間ごと自動。
     name: 'ゲームBGM風16小節 / 連符レイヤーbySection / engineRev現行',
     options: {
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const,
       seed: 11, engineRev: CURRENT_ENGINE_REV, tupletOverlay: 'bySection',
     },
   },
   {
     name: '韓国MMO風16小節 / vi軌道 / lush+rich',
     options: {
-      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
     },
   },
   {
-    // rev1: ベースアンカーの最短連結(rev0ケースとの差はベース声部だけ)。
     name: 'ゲームBGM風16小節 / engineRev現行',
     options: {
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const,
       seed: 11, engineRev: CURRENT_ENGINE_REV,
     },
   },
@@ -74,7 +73,7 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
     // ベースライン装置(bassDegrees→bassPc→転回・半音経過ベース)。
     name: 'ゲームBGM風16小節 / ベースライン装置on',
     options: {
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const,
       seed: 11, engineRev: CURRENT_ENGINE_REV, bassLine: 'on',
     },
   },
@@ -82,7 +81,7 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
     // ブレイクビーツ基盤その1: シャッフル16分+ゴースト+2小節キック変化。
     name: '2ステップ16小節 / シャッフル16分',
     options: {
-      progressionId: 'royal-pop', styleId: 'garage2step', keyRoot: 7, bpm: 132, bars: 16,
+      progressionId: 'royal-pop', styleId: 'garage2step', keyRoot: 7, bpm: 132, form: 'loop16' as const,
       grooveFeel: 'shuffle16', seed: 21,
     },
   },
@@ -90,16 +89,16 @@ const CASES: readonly { name: string; options: ComposeOptions }[] = [
     // ブレイクビーツ基盤その2: 32ステップのゴースト交替+疾走テンポ。
     name: 'ドラムンベース16小節 / 2小節ブレイク骨格',
     options: {
-      progressionId: 'minor-pedal', styleId: 'dnb', keyRoot: 9, bpm: 174, bars: 16,
-      tonality: 'minor', seed: 5, choice: variedChoiceFor(minorPedal, 16, 5),
+      progressionId: 'minor-pedal', styleId: 'dnb', keyRoot: 9, bpm: 174, form: 'loop16' as const,
+      tonality: 'minor', seed: 5, choice: variedChoiceFor(minorPedal, 'loop16', 5),
     },
   },
   ...(['current', 'memoryArc', 'premiseArc'] as const).map((strategy) => ({
     name: `BIG風40小節 / ${strategy}`,
     options: {
       progressionId: 'minor-pedal', styleId: 'eurobeat', keyRoot: 0, bpm: 150,
-      bars: 40 as const, tonality: 'minor' as const, seed: 42,
-      choice: variedChoiceFor(minorPedal, 40, 42), compositionStrategy: strategy,
+      form: 'arc40' as const, tonality: 'minor' as const, seed: 42,
+      choice: variedChoiceFor(minorPedal, 'arc40', 42), compositionStrategy: strategy,
     },
   })),
 ];
@@ -120,7 +119,7 @@ describe('作曲エンジンの音イベントは意図なく変わらない', (
   // (現状の全ケースはrev0経路しか踏まない)。
   it('Piece層はopllとpcmで同一(能力差は編曲層に住む)', () => {
     const base = {
-      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
     } as const;
     expect(digestPiece(compose({ ...base, soundChip: 'pcm' })))
       .toEqual(digestPiece(compose({ ...base })));

@@ -20,10 +20,10 @@ const base: ComposeOptions = {
   styleId: 'eurobeat',
   keyRoot: 0,
   bpm: 150,
-  bars: 40,
+  form: 'arc40' as const,
   tonality: 'minor',
   seed: 42,
-  choice: variedChoiceFor(prog, 40, 42),
+  choice: variedChoiceFor(prog, 'arc40', 42),
 };
 
 describe('作曲戦略ブラインド比較', () => {
@@ -102,7 +102,7 @@ describe('作曲戦略ブラインド比較', () => {
   });
 
   it('40小節以外では上位戦略を半端に発火させない', () => {
-    const short = { ...base, bars: 16 as const, choice: base.choice!.slice(0, 16) };
+    const short = { ...base, form: 'loop16' as const, choice: base.choice!.slice(0, 16) };
     const current = compose({ ...short, compositionStrategy: 'current' });
     const premise = compose({ ...short, compositionStrategy: 'premiseArc' });
     expect(premise.songPlan.compositionPolicy.active).toBe(false);
@@ -128,11 +128,11 @@ describe('作曲戦略ブラインド比較', () => {
               styleId: style.id,
               keyRoot: configuration.keyRoot,
               bpm: 150,
-              bars: 40,
+              form: 'arc40' as const,
               tonality: configuration.tonality,
               soundChip,
               seed,
-              choice: variedChoiceFor(progression, 40, seed),
+              choice: variedChoiceFor(progression, 'arc40', seed),
               compositionStrategy: 'premiseArc',
             });
             const sections = Object.fromEntries(piece.songPlan.form.sections.map((section) => [section.id, section]));

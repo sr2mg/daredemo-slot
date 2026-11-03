@@ -12,7 +12,7 @@ import { diagnosePiece } from '../src/core/music/diagnostics.js';
  */
 
 const pieceFor = (seed: number): Piece => compose({
-  progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16, seed,
+  progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const, seed,
 });
 
 const piecesWithTie = (): { piece: Piece; seeds: number[] } => {

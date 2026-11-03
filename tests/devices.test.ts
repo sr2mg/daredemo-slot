@@ -19,7 +19,6 @@ const ctx = (over: Partial<Parameters<typeof resolveDevices>[0]> = {}) => resolv
   melodicLanguage: 'standard',
   grooveFeel: 'straight',
   soundChip: 'opll',
-  engineRev: CURRENT_ENGINE_REV,
   ...over,
 });
 
@@ -63,18 +62,11 @@ describe('装置の解決規則', () => {
     expect(ctx({ style: declared, tupletOverlay: 'off' }).tupletOverlay)
       .toMatchObject({ value: 'off', source: 'explicit' });
   });
-
-  it('旧語彙(rev<4)の連符指定は 省略=off、auto=bySection と読む', () => {
-    const declared: StyleDef = { ...styleOf('eurobeat'), devices: { tuplet: 5 } };
-    expect(ctx({ style: declared, engineRev: 3 }).tupletOverlay.value).toBe('off');
-    expect(ctx({ style: declared, engineRev: 3, tupletOverlay: 'auto' }).tupletOverlay.value).toBe('bySection');
-    expect(ctx({ style: declared, engineRev: 4, tupletOverlay: 'auto' }).tupletOverlay.value).toBe(5);
-  });
 });
 
 describe('保存JSONの正規化は装置の可用性を同じ規則で判定する', () => {
   const draft: ComposeDraft = {
-    progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16, seed: 11,
+    progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const, seed: 11,
     choice: [0, 0, 0, 0], soundChip: 'opll', intro: true, tonality: 'major',
     melodicLanguage: 'standard', japaneseScale: 'auto', grooveFeel: 'straight', tupletOverlay: 'auto',
     tensionPolicy: 'auto', diminution: 'auto', duet: 'auto', glide: 'auto', bassLine: 'auto',

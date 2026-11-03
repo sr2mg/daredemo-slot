@@ -1,9 +1,10 @@
 import { capabilitiesFor } from './sound-capabilities.js';
 import {
-  CHORDS, COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO, styleForId,
+  COUNTER_HI, COUNTER_LO, LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO, styleForId,
 } from './theory.js';
 import { allowsTupletOverlay, grooveBeat } from './groove.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
+import { sectionIndexAt, sectionStartBars } from './form.js';
 import type { ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
@@ -57,13 +58,25 @@ function melodicDirection(from: number, to: number): -1 | 0 | 1 {
   return to === from ? 0 : to > from ? 1 : -1;
 }
 
+/** 絶対拍(イントロ込み)が属する区間の旋律語彙(区間ごとの調)。イントロは先頭区間。 */
+function scalePcsAtBeat(piece: Piece, beat: number): readonly number[] {
+  const bodyBar = Math.max(0, Math.floor((beat - piece.loopStartBeat) / 4));
+  return piece.songPlan.form.sections[sectionIndexAt(piece.songPlan.form, bodyBar)]?.scalePcs
+    ?? piece.melodicScalePcs;
+}
+
+function keyRootAtBeat(piece: Piece, beat: number): number {
+  const bodyBar = Math.max(0, Math.floor((beat - piece.loopStartBeat) / 4));
+  return piece.songPlan.form.sections[sectionIndexAt(piece.songPlan.form, bodyBar)]?.keyRoot ?? piece.keyRoot;
+}
+
 /** 五音系の音組織では3～4半音も音階上の隣になり得るため、半音数だけで判定しない。 */
-function isMelodicStep(piece: Piece, from: number, to: number): boolean {
+function isMelodicStep(piece: Piece, beat: number, from: number, to: number): boolean {
   if (from === to) return false;
   if (Math.abs(to - from) <= 2) return true;
-  // 旋律語彙はPieceが一元管理する(標準=ダイアトニック、和風/五音=各音組織)。
+  // 旋律語彙は区間の調ごと(標準=ダイアトニック、和風/五音=各音組織)。
   // ダイアトニックでは隣接音級が常に2半音以下なので、この経路は五音系だけで効く。
-  const collection = piece.melodicScalePcs;
+  const collection = scalePcsAtBeat(piece, beat);
   if (!collection?.includes(((from % 12) + 12) % 12)) return false;
   const direction = melodicDirection(from, to);
   let cursor = from + direction;
@@ -83,8 +96,8 @@ function embellishmentAt(
 ): string | null {
   const incomingDirection = before ? melodicDirection(before.midi, note.midi) : 0;
   const outgoingDirection = melodicDirection(note.midi, after.midi);
-  const incomingStep = before ? isMelodicStep(piece, before.midi, note.midi) : false;
-  const outgoingStep = isMelodicStep(piece, note.midi, after.midi);
+  const incomingStep = before ? isMelodicStep(piece, note.beat, before.midi, note.midi) : false;
+  const outgoingStep = isMelodicStep(piece, note.beat, note.midi, after.midi);
   if (before?.midi === note.midi && outgoingStep) {
     return outgoingDirection < 0 ? '掛留音' : '倚音的な保続';
   }
@@ -150,7 +163,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
         const resolves = inBar === 2
           && resolution !== undefined
           && resolution.beat - note.beat <= 1.001
-          && isMelodicStep(piece, note.midi, resolution.midi)
+          && isMelodicStep(piece, note.beat, note.midi, resolution.midi)
           && chordAt(resolution.beat).pcs.includes(resolution.midi % 12);
         if (resolves) {
           observations.push({
@@ -186,8 +199,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const note = bodyMelody[position]!.note;
     const after = bodyMelody[position + 1]?.note;
     if (!before || !after) return '';
-    const incoming = `${melodicDirection(before.midi, note.midi)}${isMelodicStep(piece, before.midi, note.midi) ? 's' : 'l'}`;
-    const outgoing = `${melodicDirection(note.midi, after.midi)}${isMelodicStep(piece, note.midi, after.midi) ? 's' : 'l'}`;
+    const incoming = `${melodicDirection(before.midi, note.midi)}${isMelodicStep(piece, note.beat, before.midi, note.midi) ? 's' : 'l'}`;
+    const outgoing = `${melodicDirection(note.midi, after.midi)}${isMelodicStep(piece, note.beat, note.midi, after.midi) ? 's' : 'l'}`;
     return `${incoming}:${outgoing}`;
   };
   const motifRelationsAt = (position: number): number[] => {
@@ -201,7 +214,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const sameContext = (motifGroups.get(`${plan.motifSourceBar}:${step}`) ?? [])
       .filter((entry) => entry.position !== position && contextSignature(entry.position) === signature)
       .map((entry) => entry.beat);
-    const pitchLanguage = piece.melodicScalePcs;
+    const pitchLanguage = scalePcsAtBeat(piece, note.beat);
     return step !== 0 && step !== 4 && pitchLanguage.includes(note.midi % 12) ? sameContext : [];
   };
 
@@ -212,7 +225,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (before && Math.abs(note.midi - before.midi) > 9) {
       // 直後に反対方向の順次進行で受け止められた跳躍は、古典的な均衡跳躍として許容する。
       const balanced = after
-        && isMelodicStep(piece, note.midi, after.midi)
+        && isMelodicStep(piece, note.beat, note.midi, after.midi)
         && melodicDirection(before.midi, note.midi) !== 0
         && melodicDirection(note.midi, after.midi) === -melodicDirection(before.midi, note.midi);
       if (balanced) {
@@ -231,7 +244,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const chord = chordAt(note.beat);
     if (!after || chord.pcs.includes(note.midi % 12)) continue;
     const nextChord = chordAt(after.beat);
-    if (isMelodicStep(piece, note.midi, after.midi) || nextChord.pcs.includes(after.midi % 12)) continue;
+    if (isMelodicStep(piece, note.beat, note.midi, after.midi) || nextChord.pcs.includes(after.midi % 12)) continue;
     const embellishment = embellishmentAt(piece, before, note, after, nextChord);
     if (embellishment) {
       observations.push({
@@ -286,7 +299,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
   if (loopChords.length > 1) {
     const firstChord = loopChords[0]!;
     const lastChord = loopChords.at(-1)!;
-    if (firstChord.midis.length === lastChord.midis.length) {
+    if (piece.ending === 'loop' && firstChord.midis.length === lastChord.midis.length) {
       for (const voice of [1, 2]) {
         if (firstChord.midis[voice] === undefined || lastChord.midis[voice] === undefined) continue;
         if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > 7) {
@@ -342,7 +355,9 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
-  const expectedSections = piece.bars === 40 ? 5 : piece.bars === 16 ? 2 : 1;
+  const formSections = piece.songPlan.form.sections;
+  const expectedSections = formSections.length;
+  const formStarts = sectionStartBars(piece.songPlan.form);
   if (piece.songPlan.harmony.length !== piece.bars) {
     add('form', 'error', bodyStart, -1, 'SongPlanの和声設計と曲の小節数が一致しない');
   }
@@ -414,61 +429,43 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('harmony', 'error', start, -1, `${harmonyBar.bar + 1}小節目がSongPlanの和声設計と一致しない`);
     }
   }
-  if (piece.bars === 8 && piece.songPlan.progressionBars === 4) {
-    const first = piece.songPlan.harmony.slice(0, 4).map((bar) => bar.tokens.join('+')).join('|');
-    const second = piece.songPlan.harmony.slice(4, 8).map((bar) => bar.tokens.join('+')).join('|');
-    if (first === second) {
-      add('harmony', 'warning', bodyStart, -1, '8小節の前後半が同じ4小節進行の完全コピーになっている');
+  // 和声の過剰固定は曲型の区間列に沿って測る(区間数・区間長に上限を置かない)。
+  const harmonySignature = (start: number, length: number): string => piece.songPlan.harmony
+    .slice(start, start + length).map((bar) => bar.tokens.join('+')).join('|');
+  const sectionSignatures = formSections.map((section) => harmonySignature(section.startBar, section.bars));
+  for (const section of formSections) {
+    // 4小節進行を2周する8小節区間で、前後半が同じ進行へ固定されていないか。
+    // 上位戦略の不在区間(トニック回避でスロットを決め直す)は同じ型の反復が設計なので除く。
+    const absence = piece.songPlan.harmony[section.startBar]?.strategyRole === 'absence';
+    if (!absence && section.bars === 8 && section.progressionBars === 4
+      && harmonySignature(section.startBar, 4) === harmonySignature(section.startBar + 4, 4)) {
+      add('harmony', 'warning', bodyStart + section.startBar * 4, -1, `${section.id}の前後半が同じ4小節進行の完全コピーになっている`);
     }
   }
-  if (piece.bars === 16) {
-    const sectionSignatures = [0, 8].map((start) => piece.songPlan.harmony
-      .slice(start, start + 8).map((bar) => bar.tokens.join('+')).join('|'));
-    if (sectionSignatures[0] === sectionSignatures[1]) {
-      add('harmony', 'warning', bodyStart, -1, '16小節のA・Bが同じ8小節進行の完全コピーになっている');
-    }
-    if (piece.songPlan.progressionBars === 4) {
-      for (const start of [0, 8]) {
-        const first = piece.songPlan.harmony.slice(start, start + 4).map((bar) => bar.tokens.join('+')).join('|');
-        const second = piece.songPlan.harmony.slice(start + 4, start + 8).map((bar) => bar.tokens.join('+')).join('|');
-        if (first === second) {
-          add('harmony', 'warning', bodyStart + start * 4, -1, '8小節区間の前後半が同じ進行へ固定されている');
-        }
-      }
+  for (let index = 1; index < formSections.length; index++) {
+    const previous = formSections[index - 1]!;
+    const section = formSections[index]!;
+    if (previous.bars === section.bars && sectionSignatures[index - 1] === sectionSignatures[index]) {
+      add('harmony', 'warning', bodyStart + section.startBar * 4, -1, `${previous.id}と${section.id}が同じ進行の完全コピーになっている`);
     }
   }
-  if (piece.bars === 40) {
-    const harmonySections = Array.from({ length: 5 }, (_, sectionIndex) => (
-      piece.songPlan.harmony
-        .slice(sectionIndex * 8, sectionIndex * 8 + 8)
-        .map((bar) => bar.tokens.join('+'))
-        .join('|')
-    ));
-    if (new Set(harmonySections).size < 4) {
-      add('harmony', 'warning', bodyStart, -1, '40小節の和声が複数セクションで完全コピーになっている');
+  if (formSections.length >= 3) {
+    if (new Set(sectionSignatures).size < Math.min(4, formSections.length)) {
+      add('harmony', 'warning', bodyStart, -1, '和声が複数セクションで完全コピーになっている');
     }
-    const firstPhrases = Array.from({ length: 5 }, (_, sectionIndex) => (
-      piece.songPlan.harmony
-        .slice(sectionIndex * 8, sectionIndex * 8 + 4)
-        .map((bar) => bar.tokens.join('+'))
-        .join('|')
-    ));
-    if (piece.songPlan.progressionBars === 4 && new Set(firstPhrases).size < 3) {
+    const fourSlotSections = formSections.filter((section) => section.progressionBars === 4 && section.bars === 8);
+    const openings = fourSlotSections.map((section) => harmonySignature(section.startBar, 4));
+    if (fourSlotSections.length >= 3 && new Set(openings).size < 3) {
       add('harmony', 'warning', bodyStart, -1, '各セクションの冒頭4小節が同じ進行へ固定されている');
     }
-    const rhythmVariants = piece.songPlan.form.sections.map((section) => section.rhythmVariant);
-    if (new Set(rhythmVariants).size < 3) {
-      add('form', 'warning', bodyStart, -1, '40小節の主旋律リズムが少数の型へ固定されている');
+    const rhythmVariants = formSections.map((section) => section.rhythmVariant);
+    if (new Set(rhythmVariants).size < Math.min(3, formSections.length)) {
+      add('form', 'warning', bodyStart, -1, '主旋律リズムが少数の型へ固定されている');
     }
-    const externalMotifSources = piece.songPlan.form.sections
-      .slice(1)
-      .map((section) => section.motifSourceSection)
-      .filter((source) => source !== null);
-    if (externalMotifSources.length >= 3 && new Set(externalMotifSources).size === 1) {
-      add('form', 'warning', bodyStart, -1, '複数の展開区間がすべて同じモチーフ区間だけを参照している');
-    }
-    if (new Set(piece.songPlan.form.sections.map((section) => section.energy)).size < 3) {
-      add('form', 'warning', bodyStart, -1, '40小節のエネルギー設計に十分な起伏がない');
+    // 主題の再登場は初出区間を元にする設計なので、「全区間が同じ元を参照する」ことは欠陥ではない
+    // (主題が1つの曲型では必然)。参照先の集中は検査しない。
+    if (new Set(formSections.map((section) => section.energy)).size < 3) {
+      add('form', 'warning', bodyStart, -1, 'エネルギー設計に十分な起伏がない');
     }
   }
   for (const section of piece.songPlan.form.sections) {
@@ -498,7 +495,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     add(
       'melody',
       'warning',
-      bodyStart + comparison.secondSection * 8 * 4,
+      bodyStart + (formStarts[comparison.secondSection] ?? 0) * 4,
       -1,
       `${first}と${second}の旋律が、完全一致ではないがリズムと輪郭の似たフレーズへ収束している`,
     );
@@ -598,14 +595,11 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const optionalLayers = Number(section.echo)
       + Number(section.counterDensity > 0)
       + Number(!ostinatoIsAccompaniment && section.ostinatoDensity > 0);
+    const sectionStart = bodyStart + (formStarts[sectionIndex] ?? 0) * 4;
+    const sectionEnd = sectionStart + (formSections[sectionIndex]?.bars ?? piece.bars) * 4;
     if (textureSections.length > 1 && optionalLayers > 1) {
-      add(
-        'texture', 'warning', bodyStart + sectionIndex * 8 * 4, -1,
-        'エコー・対旋律・分散和音が同一区間で足し算になっている',
-      );
+      add('texture', 'warning', sectionStart, -1, 'エコー・対旋律・分散和音が同一区間で足し算になっている');
     }
-    const sectionStart = bodyStart + sectionIndex * (piece.bars === 40 ? 8 : piece.bars === 16 ? 8 : piece.bars) * 4;
-    const sectionEnd = sectionStart + (piece.bars === 40 || piece.bars === 16 ? 8 : piece.bars) * 4;
     if (
       section.counterDensity > 0
       && !piece.counterMelody.some((note) => note.beat >= sectionStart && note.beat < sectionEnd)
@@ -660,8 +654,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     add('rhythm', 'error', bodyStart, -1, '三連オーバーレイと連符レイヤーが同一曲へ計画されている');
   }
   textureSections.forEach((section, sectionIndex) => {
-    const sectionStart = bodyStart + sectionIndex * (piece.bars === 40 ? 8 : piece.bars === 16 ? 8 : piece.bars) * 4;
-    const sectionEnd = sectionStart + (piece.bars === 40 || piece.bars === 16 ? 8 : piece.bars) * 4;
+    const sectionStart = bodyStart + (formStarts[sectionIndex] ?? 0) * 4;
+    const sectionEnd = sectionStart + (formSections[sectionIndex]?.bars ?? piece.bars) * 4;
     for (const note of piece.ostinato) {
       if (note.beat < sectionStart || note.beat >= sectionEnd) continue;
       const offsetInBar = (note.beat - bodyStart) % 4;
@@ -743,15 +737,14 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
-  const pedalPcs = piece.arrangementPlan.bassRole === 'pedal'
-    ? [piece.keyRoot % 12, (piece.keyRoot + 7) % 12]
-    : [];
   for (let index = 0; index < piece.bass.length; index++) {
     const note = piece.bass[index]!;
     if (note.beat < bodyStart) continue;
     const chord = chordAt(note.beat);
     if (chord.pcs.includes(note.midi % 12)) continue;
-    // 曲全体で低音主導を選んだ場合のペダル低音（主音とその5度）は、意図した保続音であり経過音ではない。
+    // 曲全体で低音主導を選んだ場合のペダル低音（区間の主音とその5度）は、意図した保続音であり経過音ではない。
+    const pedalRoot = keyRootAtBeat(piece, note.beat);
+    const pedalPcs = piece.arrangementPlan.bassRole === 'pedal' ? [pedalRoot, (pedalRoot + 7) % 12] : [];
     if (pedalPcs.includes(note.midi % 12)) continue;
     // 分数コード(bassDegrees→bassPc)のベースは意図した転回・半音経過であり、経過音違反ではない。
     if (chord.bassPc !== undefined && note.midi % 12 === chord.bassPc) continue;
@@ -760,7 +753,7 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     const nextChordBeat = next === piece.bass[index + 1] ? next?.beat ?? note.beat : bodyStart;
     const nextChord = chordAt(nextChordBeat);
     // 解決先は次コードでベースが実際に弾く音(分数コードならbassPc、通常はルート)。
-    const nextAnchorPc = nextChord.bassPc ?? (CHORDS[nextChord.token]!.root + piece.keyRoot) % 12;
+    const nextAnchorPc = nextChord.bassPc ?? nextChord.rootPc;
     // ピックアップの正位置は「8分裏をグルーヴ格子へ写した位置」(スウィング軸に追随)。
     const pickupPosition = grooveBeat(0.5, piece.grooveFeel);
     if (Math.abs(inBar - pickupPosition) > 0.001 || !next || next.midi % 12 !== nextAnchorPc) {
@@ -768,16 +761,20 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     }
   }
 
-  if (bodyMelody.length > 1) {
-    const first = bodyMelody[0]!.note;
-    const last = bodyMelody.at(-1)!.note;
-    if (Math.abs(first.midi - last.midi) > LOOP_BOUNDARY_MAX_SEMITONES) {
-      add('loop', 'warning', last.beat, last.midi, `主旋律のループ境界が${LOOP_BOUNDARY_MAX_SEMITONES}半音を超える`);
-    }
-  }
   const lastPlan = piece.phrasePlan.bars.at(-1);
-  if (!lastPlan || lastPlan.cadence !== 'turnaround') {
-    add('loop', 'error', piece.beats, -1, 'ループ終端にターンアラウンド設計がない');
+  if (piece.ending === 'loop') {
+    if (bodyMelody.length > 1) {
+      const first = bodyMelody[0]!.note;
+      const last = bodyMelody.at(-1)!.note;
+      if (Math.abs(first.midi - last.midi) > LOOP_BOUNDARY_MAX_SEMITONES) {
+        add('loop', 'warning', last.beat, last.midi, `主旋律のループ境界が${LOOP_BOUNDARY_MAX_SEMITONES}半音を超える`);
+      }
+    }
+    if (!lastPlan || lastPlan.cadence !== 'turnaround') {
+      add('loop', 'error', piece.beats, -1, 'ループ終端にターンアラウンド設計がない');
+    }
+  } else if (!lastPlan || lastPlan.cadence !== 'closed') {
+    add('form', 'error', piece.beats, -1, '終止曲型の最終小節が完全終止で計画されていない');
   }
 
   const scores = Object.fromEntries(categories.map((category) => {
@@ -860,7 +857,7 @@ export function suggestCompositionRepair(
     if (after && !protectedMelodyNote(piece, after.note)) {
       const nextChord = chordAtInPiece(piece, after.note.beat);
       for (const midi of midiCandidates(nextChord.pcs, after.note.midi)) {
-        if (!isMelodicStep(piece, target.midi, midi)) continue;
+        if (!isMelodicStep(piece, target.beat, target.midi, midi)) continue;
         candidates.push({
           edit: { beat: after.note.beat, fromMidi: after.note.midi, toMidi: midi },
           strategy: 'resolve-next',
@@ -885,7 +882,7 @@ export function suggestCompositionRepair(
     const inBar = ((relative % 4) + 4) % 4;
     const strong = Math.abs(inBar) < 0.001 || Math.abs(inBar - 2) < 0.001;
     const chord = chordAtInPiece(piece, target.beat);
-    const collection = piece.melodicScalePcs;
+    const collection = scalePcsAtBeat(piece, target.beat);
     const allowedPcs = strong ? chord.pcs : collection;
     for (const midi of midiCandidates(allowedPcs, target.midi)) {
       if (Math.abs(midi - before.note.midi) > 9) continue;

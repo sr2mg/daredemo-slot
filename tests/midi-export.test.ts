@@ -23,7 +23,7 @@ const asciiSeq = (text: string): number[] => [...text].map((ch) => ch.charCodeAt
 
 describe('MIDI(SMF)書き出し', () => {
   const kmmo = compose({
-    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
   });
 
   it('format 1 / PPQ480のヘッダとトラック数が正しい', () => {
@@ -54,7 +54,7 @@ describe('MIDI(SMF)書き出し', () => {
 
   it('ドラムは10ch固定で、オープンハット(GM46)のノートが出る', () => {
     const eurobeat = compose({
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 4, seed: 42,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop4' as const, seed: 42,
     });
     const smf = pieceToSmf(eurobeat);
     expect(containsSeq(smf, [0x99, 36])).toBe(true); // キック

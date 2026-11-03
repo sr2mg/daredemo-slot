@@ -18,15 +18,21 @@ import type {
   BassLinePolicy,
   ChordEvent,
   ComposeInput,
+  JapanesePlan,
   MelodicLanguage,
   MotifMove,
   PhrasePlan,
+  SongFormSpec,
   SongPlan,
 } from './types.js';
 
 export interface ComposeContext {
   opts: ComposeInput;
   style: StyleDef;
+  /** 解決済みの曲型(区間列)。小節→区間は form.ts のヘルパで引く。 */
+  form: SongFormSpec;
+  /** 本編の総小節数(イントロを含まない)。 */
+  bars: number;
   /** 0..11 に正規化済みのキー主音。 */
   keyRoot: number;
   /** 語法の識別子(Pieceへそのまま書く)。判断は idiom を参照し、ここでは比較しない。 */
@@ -36,7 +42,6 @@ export interface ComposeContext {
   /** 旋律語彙の絶対ピッチクラス。 */
   scalePcs: readonly number[];
   grooveFeel: GrooveFeel;
-  engineRev: number;
   bassLinePolicy: BassLinePolicy;
   songPlan: SongPlan;
   arrangementPlan: ArrangementPlan;
@@ -46,8 +51,12 @@ export interface ComposeContext {
   /** ループ本体の和声（イントロを含まない、シフト前の拍位置）。 */
   chords: readonly ChordEvent[];
   chordAt: (beat: number) => ChordEvent;
-  /** その和音の局所音組織（コードスケール）。 */
+  /** その和音の局所音組織（コードスケール）。区間の調の音組織を変位音で上書きしたもの。 */
   scaleAt: (chord: ChordEvent) => readonly number[];
+  /** 本編内の小節が属する区間の旋律語彙(絶対pc)・主音・核音計画(区間ごとの調)。 */
+  scalePcsAt: (bar: number) => readonly number[];
+  keyRootAt: (bar: number) => number;
+  japanesePlanAt: (bar: number) => JapanesePlan | null;
   /** 旋律の強拍・到達点が使える和声音（和風は共通音優先）。 */
   melodyPcsForChord: (chord: ChordEvent) => readonly number[];
   startMidi: number;

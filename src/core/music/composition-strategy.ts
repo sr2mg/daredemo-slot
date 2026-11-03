@@ -16,7 +16,7 @@ export interface MotifReturnEvent {
 
 export interface CompositionPolicy {
   strategy: CompositionStrategy;
-  /** ブラインド比較の対象である40小節フォームでだけ、上位戦略を作曲へ適用する。 */
+  /** ブラインド比較の対象である40小節の5区間弧(arc40)でだけ、上位戦略を作曲へ適用する。 */
   active: boolean;
   premise: CompositionPremise | null;
   motif: {
@@ -104,10 +104,11 @@ const inactivePolicy = (strategy: CompositionStrategy): CompositionPolicy => ({
  */
 export function resolveCompositionPolicy(
   strategy: CompositionStrategy,
-  bars: number,
+  /** 上位戦略が意味を持つ曲型か(40小節の5区間弧 'arc40' だけ。compose が曲型を見て渡す)。 */
+  applicable: boolean,
   seed: number,
 ): CompositionPolicy {
-  if (bars !== 40 || strategy === 'current') return inactivePolicy(strategy);
+  if (!applicable || strategy === 'current') return inactivePolicy(strategy);
 
   const returnTransform: PolicyMotifTransform = strategy === 'premiseArc'
     ? 'transpose'

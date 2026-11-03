@@ -57,7 +57,7 @@ describe('bassLine装置の配線(compose)', () => {
     styleId: 'kmmo',
     keyRoot: 0,
     bpm: 120,
-    bars: 16,
+    form: 'loop16' as const,
     seed: 3,
     engineRev: CURRENT_ENGINE_REV,
   } as const;
@@ -82,15 +82,19 @@ describe('bassLine装置の配線(compose)', () => {
   });
 
   it('半音経過ベース(コードトーン外のbassPc)も診断を通る', () => {
-    const piece = compose({
-      ...base, seed: 42, tonality: 'minor', bassLine: 'on',
-    });
-    const chromatic = piece.chords.filter(
+    // 半音経過は進行レシピ次第で現れるので、シードを走査して最初に現れた曲で検査する。
+    const chromaticOf = (piece: ReturnType<typeof compose>) => piece.chords.filter(
       (chord) => chord.bassPc !== undefined && !chord.pcs.includes(chord.bassPc),
     );
-    expect(chromatic.length).toBeGreaterThan(0);
-    const report = diagnosePiece(piece);
-    expect(report.issues.filter((issue) => issue.reason.includes('ベースの経過音'))).toEqual([]);
+    const pieces = Array.from({ length: 64 }, (_, seed) => compose({
+      ...base, seed, tonality: 'minor', bassLine: 'on',
+    }));
+    const withChromatic = pieces.filter((piece) => chromaticOf(piece).length > 0);
+    expect(withChromatic.length).toBeGreaterThan(0);
+    for (const piece of withChromatic) {
+      const report = diagnosePiece(piece);
+      expect(report.issues.filter((issue) => issue.reason.includes('ベースの経過音'))).toEqual([]);
+    }
   });
 
   it('装置はベースだけを変え、旋律・和声トークン列には触れない', () => {
@@ -101,28 +105,13 @@ describe('bassLine装置の配線(compose)', () => {
   });
 });
 
-describe('engineRevゲート(rev1: ベースアンカーの最短連結)', () => {
-  const base = {
-    progressionId: 'royal-pop',
-    styleId: 'kmmo',
-    keyRoot: 0,
-    bpm: 120,
-    bars: 16,
-    seed: 11,
-    tonality: 'minor',
-  } as const;
-
-  it('rev0(未指定)とrev1でベースが変わり、旋律は変わらない', () => {
-    const rev0 = compose(base);
-    const rev1 = compose({ ...base, engineRev: 1 });
-    expect(rev1.bass).not.toEqual(rev0.bass);
-    expect(rev1.melody).toEqual(rev0.melody);
-  });
-
-  it('rev1のベースアンカーはD#2..D3窓に収まる', () => {
-    const rev1 = compose({ ...base, engineRev: 1, bassLine: 'on' });
-    // 終止の接近音(36..64)を含む全ベース音でも、逸脱しないことの粗い上限を固定する。
-    for (const note of rev1.bass) {
+describe('ベースアンカーの最短連結', () => {
+  it('ベースアンカーはD#2..D3窓に収まる(終止の接近音を含めても36..64)', () => {
+    const piece = compose({
+      progressionId: 'royal-pop', styleId: 'kmmo', keyRoot: 0, bpm: 120, form: 'loop16', seed: 11,
+      tonality: 'minor', bassLine: 'on',
+    });
+    for (const note of piece.bass) {
       expect(note.midi).toBeGreaterThanOrEqual(36);
       expect(note.midi).toBeLessThanOrEqual(64);
     }

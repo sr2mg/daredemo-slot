@@ -15,7 +15,7 @@ const fortyBarBase: ComposeOptions = {
   styleId: 'rock',
   keyRoot: 5,
   bpm: 170,
-  bars: 40,
+  form: 'arc40' as const,
   intro: false,
   tonality: 'major',
   melodicLanguage: 'standard',
@@ -41,7 +41,7 @@ describe('作曲結果の収束防止', () => {
   it('8小節コード展開も登録済みの一形だけへ集中しない', () => {
     for (const prog of PROGRESSIONS) {
       const signatures = Array.from({ length: 1024 }, (_, seed) => (
-        variedChoiceFor(prog, 8, seed).join(',')
+        variedChoiceFor(prog, 'loop8', seed).join(',')
       ));
       const summary = summarizeDistribution(signatures);
       const minimum = prog.slots.length === 8 ? 3 : 10;
@@ -54,7 +54,7 @@ describe('作曲結果の収束防止', () => {
   it('40小節コード展開は少数の巡回形へ集中しない', () => {
     for (const prog of PROGRESSIONS) {
       const signatures = Array.from({ length: 4096 }, (_, seed) => (
-        variedChoiceFor(prog, 40, seed).join(',')
+        variedChoiceFor(prog, 'arc40', seed).join(',')
       ));
       const summary = summarizeDistribution(signatures);
       expect(summary.unique, prog.id).toBeGreaterThanOrEqual(80);
@@ -65,7 +65,7 @@ describe('作曲結果の収束防止', () => {
   it('16小節コード展開はAごとに決まったB一つへ収束しない', () => {
     for (const prog of PROGRESSIONS) {
       const signatures = Array.from({ length: 2048 }, (_, seed) => (
-        variedChoiceFor(prog, 16, seed).join(',')
+        variedChoiceFor(prog, 'loop16', seed).join(',')
       ));
       const summary = summarizeDistribution(signatures);
       const minimum = prog.slots.length === 8 ? 10 : 120;

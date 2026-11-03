@@ -20,7 +20,7 @@ const base: ComposeOptions = {
   styleId: 'eurobeat',
   keyRoot: 0,
   bpm: 140,
-  bars: 4,
+  form: 'loop4' as const,
   tonality: 'minor',
   seed: 0,
 };
@@ -108,7 +108,7 @@ describe('呪文ループ進行（minor-incantation）', () => {
 
   it('IV7の小節では主旋律に♭6が現れない（コードスケール法則の実効）', () => {
     for (let seed = 0; seed < 16; seed++) {
-      const piece = compose({ ...base, bars: 8, seed });
+      const piece = compose({ ...base, form: 'loop8' as const, seed });
       for (const note of piece.melody.filter((candidate) => candidate.role !== 'ornament')) {
         const chord = chordFor(piece, note.beat);
         if (chord.token !== 'IV7m') continue;
@@ -157,7 +157,7 @@ describe('保続ガイドライン（counterRole: guideline）', () => {
       let fired = 0;
       for (let seed = 0; seed < 64; seed++) {
         const piece = compose({
-          ...base, progressionId: prog.id, tonality: prog.tonality, bars: 8, seed,
+          ...base, progressionId: prog.id, tonality: prog.tonality, form: 'loop8' as const, seed,
         });
         if (piece.arrangementPlan.counterRole === 'guideline') fired++;
       }
@@ -176,7 +176,7 @@ describe('保続ガイドライン（counterRole: guideline）', () => {
   it('2A03では応答の代替として抽選され、伴奏刻みと同じパルス2で保続線に置き換わる', () => {
     let fired = 0;
     for (let seed = 0; seed < 64; seed++) {
-      const piece = compose({ ...base, bars: 8, seed, soundChip: 'nes2a03' });
+      const piece = compose({ ...base, form: 'loop8' as const, seed, soundChip: 'nes2a03' });
       if (piece.arrangementPlan.counterRole !== 'guideline') continue;
       fired++;
       expect(validatePiece(piece), `seed=${seed}`).toEqual([]);

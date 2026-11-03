@@ -11,10 +11,10 @@ const base: ComposeOptions = {
   styleId: 'eurobeat',
   keyRoot: 0,
   bpm: 150,
-  bars: 40,
+  form: 'arc40' as const,
   tonality: 'minor',
   seed: 42,
-  choice: variedChoiceFor(prog, 40, 42),
+  choice: variedChoiceFor(prog, 'arc40', 42),
 };
 
 describe('曲のセクション差分', () => {

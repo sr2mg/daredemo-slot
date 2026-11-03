@@ -266,6 +266,19 @@ export const COMPOSITION_HYPOTHESES: readonly CompositionHypothesis[] = [
     experimentIds: [],
     nextComparison: '終止音度固定(全てルート)と物語あり、弱起の入切を独立に切り替えて比較する。',
   },
+  {
+    id: 'HYP-017',
+    title: '曲型を区間列で宣言する(主題・進行・調の区間属性)',
+    status: 'untested',
+    proposition: '曲型を固定長(4/8/16/40小節)でなく区間の列(役割・長さ・エネルギー・主題・変形・引用・'
+      + '進行・調)として宣言し、主題の再登場を初出区間から導くと、同じ素材で3〜5分の歌もの'
+      + '(96小節・終止)が作れ、区間ごとの平行長調サビや終結の転調が破綻なく成立する。',
+    assessment: '装置は実装済み(form.ts / SongFormSpec、歌ものプリセット、区間ごとの調、終止曲型)。'
+      + '生成検証と診断エラー0は固定したが、長尺での記憶性(主題の帰還が聴こえるか)と転調の自然さは未聴取。',
+    experimentIds: [],
+    nextComparison: '同一素材の歌ものプリセットで「サビを平行長調にする/しない」「終結を属調へ転調する/しない」を'
+      + '切り替え、情感の標的質問付きでブラインド比較する。',
+  },
 ] as const;
 
 export const COMPOSITION_HYPOTHESIS_STATUS_LABELS: Record<CompositionHypothesisStatus, string> = {

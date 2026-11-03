@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/core/music/compose.js';
+import { presetForBars } from '../src/core/music/form.js';
 import { diagnosePiece, validatePiece } from '../src/core/music/diagnostics.js';
 import {
   CHORDS, MAJOR_HEXATONIC_SCALE, MAJOR_PENTATONIC_SCALE, MINOR_HEXATONIC_SCALE, PROGRESSIONS,
@@ -19,7 +20,7 @@ import type { ComposeOptions } from '../src/core/music/types.js';
  */
 
 const base: ComposeOptions = {
-  progressionId: 'drifting-orbit', styleId: 'acoustic', keyRoot: 9, bpm: 112, bars: 16, seed: 42,
+  progressionId: 'drifting-orbit', styleId: 'acoustic', keyRoot: 9, bpm: 112, form: 'loop16' as const, seed: 42,
   melodicLanguage: 'hexatonic', soundChip: 'pcm', engineRev: CURRENT_ENGINE_REV,
 };
 
@@ -81,7 +82,7 @@ describe('六音語法は全進行・全スタイル・両調性で生成検証�
         for (const style of STYLES) {
           for (const seed of [3, 1234]) {
             const piece = compose({
-              ...base, progressionId: prog.id, styleId: style.id, tonality, bars: 8, seed, keyRoot: (seed * 5) % 12,
+              ...base, progressionId: prog.id, styleId: style.id, tonality, form: 'loop8' as const, seed, keyRoot: (seed * 5) % 12,
             });
             expect(validatePiece(piece), `${prog.id}/${tonality}/${style.id}/seed=${seed}`).toEqual([]);
             expect(piece.melodicScalePcs, `${prog.id}/${tonality}`).toHaveLength(6);
@@ -105,7 +106,7 @@ describe('アコースティック様式', () => {
   it('本編にもイントロにもドラムイベントが無い(フィル・シンバル・ブレイクダウン含む)', () => {
     for (const bars of [8, 16, 40] as const) {
       for (const seed of [1, 42, 12345]) {
-        const piece = compose({ ...base, bars, seed });
+        const piece = compose({ ...base, form: presetForBars(bars), seed });
         expect(piece.drums, `bars=${bars}/seed=${seed}`).toEqual([]);
         expect(validatePiece(piece), `bars=${bars}/seed=${seed}`).toEqual([]);
       }
@@ -114,7 +115,7 @@ describe('アコースティック様式', () => {
 
   it('分散和音は全区間で有効になり、本編の全小節で鳴る', () => {
     for (const bars of [8, 16, 40] as const) {
-      const piece = compose({ ...base, bars, seed: 7 });
+      const piece = compose({ ...base, form: presetForBars(bars), seed: 7 });
       for (const section of piece.arrangementPlan.sections) {
         expect(section.ostinatoDensity, `bars=${bars}`).toBeGreaterThan(0);
       }
@@ -130,13 +131,13 @@ describe('アコースティック様式', () => {
     // 未解決: compact 戦略(texture.compactStrategy='bassDrive')へ落ちると、様式の核である
     // 常設分散和音が 2A03 では失われる。ここは現状の挙動(床を敷かない)を固定するだけで、
     // 是認ではない。pulse2 を伴奏から分散和音へ振る編曲が入ったら期待値を変える。
-    const piece = compose({ ...base, soundChip: 'nes2a03', bars: 16 });
+    const piece = compose({ ...base, soundChip: 'nes2a03', form: 'loop16' as const });
     expect(piece.ostinato).toEqual([]);
     expect(validatePiece(piece)).toEqual([]);
   });
 
   it('低音は各コードイベントの頭で持続する(刻まない)', () => {
-    const piece = compose({ ...base, bars: 8, seed: 42 });
+    const piece = compose({ ...base, form: 'loop8' as const, seed: 42 });
     for (const chord of piece.chords) {
       const head = piece.bass.find((note) => Math.abs(note.beat - chord.beat) < 0.001);
       expect(head, `beat=${chord.beat}`).toBeDefined();
@@ -158,7 +159,7 @@ describe('アコースティック様式', () => {
 
   it('保存JSONは六音語法を明示し、標準語法は省く(キャッシュキーの同一性)', () => {
     const draft: ComposeDraft = {
-      progressionId: 'drifting-orbit', styleId: 'acoustic', keyRoot: 9, bpm: 112, bars: 16, seed: 42,
+      progressionId: 'drifting-orbit', styleId: 'acoustic', keyRoot: 9, bpm: 112, form: 'loop16' as const, seed: 42,
       choice: [0, 0, 0, 0], soundChip: 'pcm', intro: true, tonality: 'major',
       melodicLanguage: 'hexatonic', japaneseScale: 'auto', grooveFeel: 'straight', tupletOverlay: 'auto',
       tensionPolicy: 'auto', diminution: 'auto', duet: 'auto', glide: 'auto', bassLine: 'auto',
@@ -174,7 +175,7 @@ describe('5音の開離配置で周回する主音不在ループ', () => {
   const choiceFor = (bars: number) => Array.from({ length: bars }, (_, bar) => dense[bar % 4]!);
 
   it('キーAで参照音源と同じ4和音(F#m7add11 / DM13 / E69 / B9sus4)になり、伴奏は5声の密集配置', () => {
-    const piece = compose({ ...base, bars: 8, seed: 42, choice: choiceFor(8) });
+    const piece = compose({ ...base, form: 'loop8' as const, seed: 42, choice: choiceFor(8) });
     const names = piece.chords.slice(0, 4).map((chord) => chord.name);
     expect(names).toEqual(['F#m7add11', 'DM13', 'E69', 'B9sus4']);
     for (const chord of piece.chords) {
@@ -194,7 +195,7 @@ describe('5音の開離配置で周回する主音不在ループ', () => {
     for (const soundChip of ['pcm', 'opll', 'nes2a03'] as const) {
       for (const tonality of ['major', 'minor'] as const) {
         for (const bars of [8, 16] as const) {
-          const piece = compose({ ...base, soundChip, tonality, bars, seed: 7, choice: choiceFor(bars) });
+          const piece = compose({ ...base, soundChip, tonality, form: presetForBars(bars), seed: 7, choice: choiceFor(bars) });
           expect(validatePiece(piece), `${soundChip}/${tonality}/${bars}`).toEqual([]);
           const errors = diagnosePiece(piece).issues.filter((issue) => issue.severity === 'error');
           expect(errors, `${soundChip}/${tonality}/${bars}`).toEqual([]);
