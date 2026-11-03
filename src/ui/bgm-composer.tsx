@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { compose } from '../core/music/compose.js';
+import { BLIND_STUDY_FORM } from '../core/music/blind-study.js';
+import {
+  FORM_PRESET_IDS, FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, resolveForm,
+  sectionStartBars, totalBars,
+} from '../core/music/form.js';
 import {
   ARRANGEMENT_ARC_LABELS,
   COUNTER_ROLE_LABELS,
-  CURRENT_ENGINE_REV,
   INTRO_ROLE_LABELS,
   JAPANESE_SCALE_LABELS,
   ORNAMENT_LABELS,
@@ -14,8 +18,9 @@ import {
 } from '../core/music/types.js';
 import type {
   BassLinePolicy,
-  ComposeBars,
   ComposeOptions,
+  FormPresetId,
+  SongFormRef,
   DiminutionPolicy,
   JapaneseScaleChoice,
   MelodicLanguage,
@@ -173,7 +178,12 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   pcmVoices?: PcmVoiceOverride;
 }) {
   const [initial] = useState(loadComposerForm);
-  const [bars, setBars] = useState<ComposeBars>(initial.bars);
+  const [form, setForm] = useState<SongFormRef>(initial.form);
+  const formSpec = useMemo(() => resolveForm(form), [form]);
+  const formBars = totalBars(formSpec);
+  const formStarts = sectionStartBars(formSpec);
+  const minSectionBars = Math.min(...formSpec.sections.map((section) => section.bars));
+  const formPresetId = formPresetIdOf(form);
   const [progId, setProgId] = useState(initial.progId);
   const [styleId, setStyleId] = useState(initial.styleId);
   const [tonality, setTonality] = useState<Tonality>(initial.tonality);
@@ -259,42 +269,44 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   // 作業中のフォーム設定を保存（リロードしても続きから作曲できる）
   useEffect(() => {
     saveStored(FORM_KEY, {
-      bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
+      form, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
       tensionPolicy, diminution, duet, glide, bassLine,
       keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
     });
   }, [
-    bars, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
+    form, progId, styleId, tonality, melodicLanguage, japaneseScale, grooveFeel, tupletOverlay,
     tensionPolicy, diminution, duet, glide, bassLine,
     keyRoot, bpm, soundChip, voices, opllUserPatch, nes, choice, autoVary, intro, seed, loop,
   ]);
 
   // 尺と調性に合う進行実体を選ばせる。同じ進行IDに短調版があれば名前を消さず保持する。
   const progs = useMemo(
-    () => progressionsForTonality(tonality).filter((p) => p.slots.length <= bars),
-    [bars, tonality],
+    () => progressionsForTonality(tonality).filter((p) => p.slots.length <= minSectionBars),
+    [minSectionBars, tonality],
   );
   const prog = progs.find((p) => p.id === progId) ?? progs[0]!;
-  const canVaryChords = useMemo(() => hasVariedChoiceFor(prog, bars, choice), [bars, choice, prog]);
+  const canVaryChords = useMemo(() => hasVariedChoiceFor(prog, form, choice), [form, choice, prog]);
 
-  const resetChoice = (nextProgId: string, nextBars: ComposeBars, nextTonality = tonality) => {
+  const resetChoice = (nextProgId: string, nextForm: SongFormRef, nextTonality = tonality) => {
     const source = PROGRESSIONS.find((q) => q.id === nextProgId)!;
     const p = progressionForTonality(source, nextTonality)!;
-    setChoice(defaultChoiceFor(p, nextBars));
+    setChoice(defaultChoiceFor(p, nextForm));
     setAutoVary(true);
   };
 
-  const selectBars = (next: ComposeBars) => {
-    const available = progressionsForTonality(tonality).filter((p) => p.slots.length <= next);
+  const selectForm = (next: SongFormRef) => {
+    const nextMin = Math.min(...resolveForm(next).sections.map((section) => section.bars));
+    const available = progressionsForTonality(tonality).filter((p) => p.slots.length <= nextMin);
     const nextProgId = available.some((p) => p.id === prog.id) ? prog.id : available[0]!.id;
-    setBars(next);
+    setForm(next);
     setProgId(nextProgId);
+    setIntro(introDefaultFor(next));
     resetChoice(nextProgId, next);
   };
 
   const selectProg = (id: string) => {
     setProgId(id);
-    resetChoice(id, bars);
+    resetChoice(id, form);
   };
 
   // 様式の既定(StyleDef.defaults)へ追従する。ジャンルは「パターン×テンポ×グルーヴ×旋律語法×
@@ -318,7 +330,6 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     melodicLanguage,
     grooveFeel,
     soundChip,
-    engineRev: CURRENT_ENGINE_REV,
     tensionPolicy,
     diminution,
     duet,
@@ -355,7 +366,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   // UIはフォームの生値を渡すだけ。
   const optionsFor = (
     nextSeed: number,
-    targetBars: ComposeBars,
+    targetForm: SongFormRef,
     targetChoice: readonly number[],
     compositionStrategy?: CompositionStrategy,
   ): ComposeOptions => normalizeComposeOptions({
@@ -363,7 +374,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     styleId,
     keyRoot,
     bpm,
-    bars: targetBars,
+    form: targetForm,
     seed: nextSeed,
     choice: targetChoice,
     soundChip,
@@ -501,20 +512,20 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
 
   const composeAndPlay = (nextSeed: number, forceChordVariation = false) => {
     const nextChoice = forceChordVariation
-      ? variedChoiceFor(prog, bars, nextSeed, { chancePercent: 100, currentChoice: choice })
+      ? variedChoiceFor(prog, form, nextSeed, { chancePercent: 100, currentChoice: choice })
       : autoVary
-        ? variedChoiceFor(prog, bars, nextSeed)
+        ? variedChoiceFor(prog, form, nextSeed)
         : [...choice];
     if (forceChordVariation || autoVary) setChoice(nextChoice);
-    void playOptions(optionsFor(nextSeed, bars, nextChoice));
+    void playOptions(optionsFor(nextSeed, form, nextChoice));
   };
 
   const startBlindStudy = () => {
     try {
       stop();
       const nextSeed = newSeed();
-      const nextChoice = variedChoiceFor(prog, 40, nextSeed);
-      const baseOptions = optionsFor(nextSeed, 40, nextChoice);
+      const nextChoice = variedChoiceFor(prog, BLIND_STUDY_FORM, nextSeed);
+      const baseOptions = optionsFor(nextSeed, BLIND_STUDY_FORM, nextChoice);
       const trial = createBlindStudyTrial(
         `t${Date.now().toString(36)}${nextSeed.toString(36)}`,
         baseOptions,
@@ -628,11 +639,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
   };
 
   const selectTonality = (nextTonality: Tonality) => {
-    const available = progressionsForTonality(nextTonality).filter((p) => p.slots.length <= bars);
+    const available = progressionsForTonality(nextTonality).filter((p) => p.slots.length <= minSectionBars);
     const nextProg = available.find((p) => p.id === prog.id) ?? available[0]!;
     setTonality(nextTonality);
     setProgId(nextProg.id);
-    resetChoice(nextProg.id, bars, nextTonality);
+    resetChoice(nextProg.id, form, nextTonality);
   };
 
   const applyRepair = (repair: CompositionRepair) => {
@@ -891,16 +902,18 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                 <option value="pcm">PCM（SoundFont・制約最小）</option>
               </select>
             </SettingField>
-            <SettingField label="用途・尺" hint="40小節はOPLL BIG向けのA→B→C→D→Eフォーム">
+            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる">
               <select
-                value={bars}
-                onChange={(e) => selectBars(Number(e.target.value) as ComposeBars)}
-                data-testid="st-bars"
+                value={formPresetId ?? 'custom'}
+                onChange={(e) => {
+                  if (isFormPresetId(e.target.value)) selectForm(e.target.value as FormPresetId);
+                }}
+                data-testid="st-form"
               >
-                <option value={4}>RB 風（4小節ループ）</option>
-                <option value={8}>BB 風（8小節ループ）</option>
-                <option value={16}>ゲームBGM風（16小節 A→B）</option>
-                <option value={40}>OPLL BIG風（40小節 A→B→C→D→E）</option>
+                {FORM_PRESET_IDS.map((id) => (
+                  <option key={id} value={id}>{FORM_PRESET_LABELS[id]}</option>
+                ))}
+                {formPresetId === null && <option value="custom">カスタム（{formBars}小節・{formSpec.sections.length}区間）</option>}
               </select>
             </SettingField>
             <SettingField label="様式" hint="パターン×テンポ×グルーヴ×語法×進行の束。切り替えると2層の既定が入れ替わります">
@@ -969,15 +982,11 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
 
           {/* コード進行のスロット選択: 選択肢が 1 つの小節は固定表示 */}
           <div className="slot-sections" data-testid="st-slots">
-            {(bars === 40
-              ? ['A', 'B', 'C', 'D', 'E'].map((label, index) => ({ label, start: index * 8, end: index * 8 + 8 }))
-              : bars === 16
-              ? [
-                  { label: 'A', start: 0, end: 8 },
-                  { label: 'B', start: 8, end: 16 },
-                ]
-              : [{ label: '', start: 0, end: bars }]
-            ).map((section) => (
+            {formSpec.sections.map((section, index) => ({
+              label: formSpec.sections.length > 1 ? section.id : '',
+              start: formStarts[index]!,
+              end: formStarts[index]! + section.bars,
+            })).map((section) => (
               <div key={section.label || 'all'} className="slot-section">
                 {section.label && <div className="slot-section-title">{section.label} セクション</div>}
                 <div className="slot-row">
@@ -1017,15 +1026,13 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
           <div className="panel-controls">
             <label>
               <input type="checkbox" checked={autoVary} onChange={(e) => setAutoVary(e.target.checked)} />
-              {bars === 40
-                ? '作曲時、各8小節区間へコード変化レシピを展開する'
-                : bars === 16
-                  ? '作曲時、A・Bへ異なるコード変化レシピを展開する'
-                  : bars === 8
-                    ? '作曲時、異なる2つのコード変化レシピを組み合わせる'
-                    : '作曲時、25%の確率でコード変化レシピを選ぶ'}
+              {formSpec.sections.length > 1
+                ? '作曲時、各区間へ異なるコード変化レシピを展開する'
+                : formBars >= 8
+                  ? '作曲時、異なる2つのコード変化レシピを組み合わせる'
+                  : '作曲時、25%の確率でコード変化レシピを選ぶ'}
             </label>
-            {(bars === 16 || bars === 40) && (
+            {(
               <label>
                 <input
                   type="checkbox"
@@ -1508,8 +1515,8 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
         {error && <p className="badge-ng">{error}</p>}
         {piece && (
           <div data-testid="st-result">
-            <div className={`chord-line${piece.bars >= 16 ? ' chord-form' : ''}`}>
-              {piece.bars >= 16 ? (
+            <div className={`chord-line${piece.songPlan.form.sections.length > 1 ? ' chord-form' : ''}`}>
+              {piece.songPlan.form.sections.length > 1 ? (
                 <>
                   {piece.introBars > 0 && (
                     <span>
@@ -1519,9 +1526,9 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                       </b> | {piece.introChordNames.join(' | ')} |
                     </span>
                   )}
-                  {Array.from({ length: piece.bars / 8 }, (_, index) => (
-                    <span key={index}>
-                      <b>{String.fromCharCode(65 + index)}</b> | {piece.barChordNames.slice(index * 8, index * 8 + 8).join(' | ')} |
+                  {piece.songPlan.form.sections.map((section) => (
+                    <span key={section.id}>
+                      <b>{section.id}</b> | {piece.barChordNames.slice(section.startBar, section.startBar + section.bars).join(' | ')} |
                     </span>
                   ))}
                 </>

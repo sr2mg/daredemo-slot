@@ -417,56 +417,43 @@ export function diagnosePiece(piece: Piece): CompositionReport {
       add('harmony', 'error', start, -1, `${harmonyBar.bar + 1}小節目がSongPlanの和声設計と一致しない`);
     }
   }
-  if (piece.bars === 8 && piece.songPlan.progressionBars === 4) {
-    const first = piece.songPlan.harmony.slice(0, 4).map((bar) => bar.tokens.join('+')).join('|');
-    const second = piece.songPlan.harmony.slice(4, 8).map((bar) => bar.tokens.join('+')).join('|');
-    if (first === second) {
-      add('harmony', 'warning', bodyStart, -1, '8小節の前後半が同じ4小節進行の完全コピーになっている');
+  // 和声の過剰固定は曲型の区間列に沿って測る(区間数・区間長に上限を置かない)。
+  const harmonySignature = (start: number, length: number): string => piece.songPlan.harmony
+    .slice(start, start + length).map((bar) => bar.tokens.join('+')).join('|');
+  const sectionSignatures = formSections.map((section) => harmonySignature(section.startBar, section.bars));
+  for (const section of formSections) {
+    // 4小節進行を2周する8小節区間で、前後半が同じ進行へ固定されていないか。
+    // 上位戦略の不在区間(トニック回避でスロットを決め直す)は同じ型の反復が設計なので除く。
+    const absence = piece.songPlan.harmony[section.startBar]?.strategyRole === 'absence';
+    if (!absence && section.bars === 8 && section.progressionBars === 4
+      && harmonySignature(section.startBar, 4) === harmonySignature(section.startBar + 4, 4)) {
+      add('harmony', 'warning', bodyStart + section.startBar * 4, -1, `${section.id}の前後半が同じ4小節進行の完全コピーになっている`);
     }
   }
-  if (piece.bars === 16) {
-    const sectionSignatures = [0, 8].map((start) => piece.songPlan.harmony
-      .slice(start, start + 8).map((bar) => bar.tokens.join('+')).join('|'));
-    if (sectionSignatures[0] === sectionSignatures[1]) {
-      add('harmony', 'warning', bodyStart, -1, '16小節のA・Bが同じ8小節進行の完全コピーになっている');
-    }
-    if (piece.songPlan.progressionBars === 4) {
-      for (const start of [0, 8]) {
-        const first = piece.songPlan.harmony.slice(start, start + 4).map((bar) => bar.tokens.join('+')).join('|');
-        const second = piece.songPlan.harmony.slice(start + 4, start + 8).map((bar) => bar.tokens.join('+')).join('|');
-        if (first === second) {
-          add('harmony', 'warning', bodyStart + start * 4, -1, '8小節区間の前後半が同じ進行へ固定されている');
-        }
-      }
+  for (let index = 1; index < formSections.length; index++) {
+    const previous = formSections[index - 1]!;
+    const section = formSections[index]!;
+    if (previous.bars === section.bars && sectionSignatures[index - 1] === sectionSignatures[index]) {
+      add('harmony', 'warning', bodyStart + section.startBar * 4, -1, `${previous.id}と${section.id}が同じ進行の完全コピーになっている`);
     }
   }
-  if (piece.bars === 40) {
-    const harmonySections = Array.from({ length: 5 }, (_, sectionIndex) => (
-      piece.songPlan.harmony
-        .slice(sectionIndex * 8, sectionIndex * 8 + 8)
-        .map((bar) => bar.tokens.join('+'))
-        .join('|')
-    ));
-    if (new Set(harmonySections).size < 4) {
-      add('harmony', 'warning', bodyStart, -1, '40小節の和声が複数セクションで完全コピーになっている');
+  if (formSections.length >= 3) {
+    if (new Set(sectionSignatures).size < Math.min(4, formSections.length)) {
+      add('harmony', 'warning', bodyStart, -1, '和声が複数セクションで完全コピーになっている');
     }
-    const firstPhrases = Array.from({ length: 5 }, (_, sectionIndex) => (
-      piece.songPlan.harmony
-        .slice(sectionIndex * 8, sectionIndex * 8 + 4)
-        .map((bar) => bar.tokens.join('+'))
-        .join('|')
-    ));
-    if (piece.songPlan.progressionBars === 4 && new Set(firstPhrases).size < 3) {
+    const fourSlotSections = formSections.filter((section) => section.progressionBars === 4 && section.bars === 8);
+    const openings = fourSlotSections.map((section) => harmonySignature(section.startBar, 4));
+    if (fourSlotSections.length >= 3 && new Set(openings).size < 3) {
       add('harmony', 'warning', bodyStart, -1, '各セクションの冒頭4小節が同じ進行へ固定されている');
     }
-    const rhythmVariants = piece.songPlan.form.sections.map((section) => section.rhythmVariant);
-    if (new Set(rhythmVariants).size < 3) {
-      add('form', 'warning', bodyStart, -1, '40小節の主旋律リズムが少数の型へ固定されている');
+    const rhythmVariants = formSections.map((section) => section.rhythmVariant);
+    if (new Set(rhythmVariants).size < Math.min(3, formSections.length)) {
+      add('form', 'warning', bodyStart, -1, '主旋律リズムが少数の型へ固定されている');
     }
     // 主題の再登場は初出区間を元にする設計なので、「全区間が同じ元を参照する」ことは欠陥ではない
     // (主題が1つの曲型では必然)。参照先の集中は検査しない。
-    if (new Set(piece.songPlan.form.sections.map((section) => section.energy)).size < 3) {
-      add('form', 'warning', bodyStart, -1, '40小節のエネルギー設計に十分な起伏がない');
+    if (new Set(formSections.map((section) => section.energy)).size < 3) {
+      add('form', 'warning', bodyStart, -1, 'エネルギー設計に十分な起伏がない');
     }
   }
   for (const section of piece.songPlan.form.sections) {

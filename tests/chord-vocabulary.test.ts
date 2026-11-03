@@ -159,7 +159,7 @@ describe('新トークン(カラーコード・借用)の導出', () => {
 describe('pcmVoicesは編曲層のパラメータでcompose()に影響しない', () => {
   it('同一曲へのpcmVoices指定でPiece層は1音も変わらない', () => {
     const base = {
-      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
       soundChip: 'pcm',
     } as const;
     // 型上も pcmVoices は ComposeInput でなく RenderConfig 側だが、保存データ由来の

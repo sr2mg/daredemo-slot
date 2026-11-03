@@ -23,7 +23,9 @@ import { idiomFor } from './melodic-idiom.js';
 import type { StyleDef } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
-import { introDefaultFor, presetForBars, resolveForm, totalBars } from './form.js';
+import {
+  formErrorMessage, formPresetIdOf, introDefaultFor, resolveForm, sectionRng, totalBars, validateForm,
+} from './form.js';
 import { defaultChoiceFor, variedChoiceFor as chooseVariedHarmony } from './harmony-plan.js';
 import {
   DEFAULT_GROOVE_FEEL, grooveBeat, grooveFor, hasStraightSixteenths, tripletHatOffsets,
@@ -44,11 +46,9 @@ import {
 import type { ThemeSpec } from './melodic-theme.js';
 import {
   createSongPlan,
-  legacyMelodyMode,
   resolveMelodicLanguage,
   resolveTonality,
 } from './song-plan.js';
-import { engineRevOf } from './types.js';
 import type {
   ArrangementPlan,
   BassLinePolicy,
@@ -115,12 +115,13 @@ export function compose(opts: ComposeInput): Piece {
   if (!prog) {
     throw new Error(`${tonality === 'minor' ? '短調' : '長調'}では進行「${progression.name}」を使用できません`);
   }
-  // 曲型: 小節数(ComposeBars)は曲型プリセットへ写し、以降は区間列だけを見る。
-  const presetId = presetForBars(opts.bars);
-  const form = resolveForm(presetId);
+  // 曲型: プリセットidか明示の区間列を解決し、以降は区間列だけを見る。
+  // 検証(id 一意・主題/引用の整合・区間の進行の長さと調性)は form.ts の一本の規則。
+  const presetId = formPresetIdOf(opts.form);
+  const form = resolveForm(opts.form);
+  const formError = formErrorMessage(validateForm(form, { tonality, progressionId: progression.id }));
+  if (formError) throw new Error(`曲型が不正: ${formError}`);
   const bars = totalBars(form);
-  const progBars = prog.slots.length;
-  if (progBars > bars) throw new Error(`進行(${progBars}小節)が尺(${bars}小節)より長い`);
 
   const rng = new Xoshiro128(opts.seed >>> 0);
   const keyRoot = ((opts.keyRoot % 12) + 12) % 12;
@@ -128,7 +129,6 @@ export function compose(opts: ComposeInput): Piece {
   // 語法ごとの判断(音組織・着地規則・装置の抑制・間・弱起…)は melodic-idiom.ts の宣言を
   // 参照する。ここから先で語法名を比較しない。
   const idiom = idiomFor(melodicLanguage);
-  const melodyMode = legacyMelodyMode(tonality, melodicLanguage);
   const japanesePlan = idiom.culturalPlan(keyRoot, opts.japaneseScale, opts.seed);
   const scalePcs = japanesePlan?.scalePcs
     ?? idiom.scaleIntervals(tonality).map((t) => (t + keyRoot) % 12);
@@ -153,7 +153,6 @@ export function compose(opts: ComposeInput): Piece {
     return chordScaleFor(chord.token, chord.pcs, chord.rootPc);
   };
   const grooveFeel = opts.grooveFeel ?? DEFAULT_GROOVE_FEEL;
-  const engineRev = engineRevOf(opts);
   // 装置(テンション・細分・ハモリ・スライド・ベースライン・連符)は devices.ts の一本の
   // 規則で解決する(様式既定→明示→語法の抑制→音源の能力)。ここでは実効値だけを読む。
   const devices = resolveDevices({
@@ -161,7 +160,6 @@ export function compose(opts: ComposeInput): Piece {
     melodicLanguage,
     grooveFeel,
     soundChip: opts.soundChip,
-    engineRev,
     tensionPolicy: opts.tensionPolicy,
     diminution: opts.diminution,
     duet: opts.duet,
@@ -191,7 +189,7 @@ export function compose(opts: ComposeInput): Piece {
     progression: prog,
     style,
     choice,
-    intro: opts.intro !== false && introDefaultFor(presetId),
+    intro: opts.intro ?? introDefaultFor(opts.form),
     bassLine: bassLinePolicy,
     ...(opts.compositionStrategy ? { compositionStrategy: opts.compositionStrategy } : {}),
   });
@@ -274,14 +272,11 @@ export function compose(opts: ComposeInput): Piece {
   const phrasePlan = makePhrasePlan(
     opts, form, style, rng, chordAt, startMidi, idiom, scalePcs, japanesePlan, arrangementPlan, songPlan,
   );
-  // 区間ごとに別の音程ジェスチャーを持つ。リズムだけ変えて同じ上下動をA〜Eへ貼らない。
-  // rev2: 主題ジェスチャーは主系列rngでなく区間ごとの独立ストリームから抽選する。
-  // rev1以前はPhrasePlanの消費直後の主系列を使っており、フレーズ計画の抽選回数が
-  // 変わるとジェスチャーが連動して変わる暗黙結合があった(保存曲は旧経路で再現)。
+  // 区間ごとに別の音程ジェスチャーを持つ。リズムだけ変えて同じ上下動を全区間へ貼らない。
+  // 主題ジェスチャーは主系列rngでなく区間ごとの独立ストリームから抽選する(主系列を使うと
+  // フレーズ計画の抽選回数が変わるたびにジェスチャーが連動して変わる暗黙結合になる)。
   const phraseGestures = songPlan.form.sections.map((_, sectionIndex) => makePhraseGesture(
-    engineRev >= 2
-      ? new Xoshiro128(((opts.seed ^ 0x4753_5452) + sectionIndex * 0x9e37_79b9) >>> 0)
-      : rng,
+    sectionRng(opts.seed, sectionIndex, 0x4753_5452),
     style,
   ));
   // 曲間モチーフ流用: 外部モチーフは主題区間(A)のジェスチャーだけを置き換える。
@@ -302,7 +297,7 @@ export function compose(opts: ComposeInput): Piece {
 
   // --- 各声部の実音化（声部ジェネレータは乱数を持たない決定論的実現） ---
   const ctx: ComposeContext = {
-    opts, style, form, bars, keyRoot, melodicLanguage, idiom, scalePcs, grooveFeel, engineRev, bassLinePolicy,
+    opts, style, form, bars, keyRoot, melodicLanguage, idiom, scalePcs, grooveFeel, bassLinePolicy,
     songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
     melodyPcsForChord, startMidi, climaxMidi, baseCenter, scaleStepMax,
   };
@@ -390,7 +385,6 @@ export function compose(opts: ComposeInput): Piece {
     styleId: style.id,
     tonality,
     melodicLanguage,
-    melodyMode,
     japanesePlan,
     melodicScalePcs: [...scalePcs],
     motif: { moves: phraseGestures[0]!.map((move) => ({ ...move })) },

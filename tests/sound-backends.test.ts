@@ -16,7 +16,7 @@ const pcmPartMatchesStageRole: MutuallyAssignable<PcmPart, StageRole> = true;
 void pcmPartMatchesStageRole;
 
 const kmmo: ComposeOptions = {
-  progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+  progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
 };
 
 describe('能力プロファイル', () => {
@@ -55,7 +55,7 @@ describe('ハモリ層(平行下3度)', () => {
 
   it('既存スタイルの既定では空(後方互換)', () => {
     const plain = compose({
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16, seed: 11,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const, seed: 11,
     });
     expect(plain.duet).toHaveLength(0);
   });

@@ -11,7 +11,7 @@ import type { Sf2Note } from '../src/audio/sf2.js';
  */
 
 const piece16 = (): Piece => compose({
-  progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 0, bpm: 120, bars: 16, seed: 8,
+  progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 0, bpm: 120, form: 'loop16' as const, seed: 8,
 });
 
 const programsByColor = (piece: Piece, lead: readonly Sf2Note[]): Map<number, Set<number>> => {

@@ -2,6 +2,10 @@ import { Xoshiro128 } from '../rng.js';
 import type { ComposeOptions } from './types.js';
 import { COMPOSITION_STRATEGIES } from './composition-strategy.js';
 import type { CompositionStrategy } from './composition-strategy.js';
+import { formPresetIdOf } from './form.js';
+
+/** 上位戦略は40小節の5区間弧(arc40)でだけ意味を持つ。ブラインド比較もそこに限る。 */
+export const BLIND_STUDY_FORM = 'arc40';
 
 export type BlindCandidateId = 'X' | 'Y' | 'Z';
 
@@ -37,7 +41,9 @@ export function createBlindStudyTrial(
   baseOptions: ComposeOptions,
   orderSeed: number,
 ): BlindStudyTrial {
-  if (baseOptions.bars !== 40) throw new Error('ブラインド比較は40小節の設定で生成してください');
+  if (formPresetIdOf(baseOptions.form) !== BLIND_STUDY_FORM) {
+    throw new Error('ブラインド比較は曲型「OPLL BIG風40小節」で生成してください');
+  }
   const rng = new Xoshiro128(orderSeed >>> 0);
   const strategies = COMPOSITION_STRATEGIES.map((strategy) => strategy.id);
   for (let index = strategies.length - 1; index > 0; index--) {
@@ -92,7 +98,7 @@ export function isBlindStudyVote(value: unknown): value is BlindStudyVote {
       || typeof options.keyRoot !== 'number'
       || typeof options.bpm !== 'number'
       || typeof options.seed !== 'number'
-      || options.bars !== 40
+      || options.form !== BLIND_STUDY_FORM
     ) return false;
   }
   if (vote.candidateOrder !== undefined) {

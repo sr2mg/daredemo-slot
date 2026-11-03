@@ -196,7 +196,7 @@ describe('SF2パーサ(合成最小フォント)', () => {
 
 describe('PCM編曲(Piece→GMノート)', () => {
   const piece = compose({
-    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 4, seed: 8,
+    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop4' as const, seed: 8,
   });
 
   it('スタイル別プログラムとパーカッションバンクを割り当てる', () => {
@@ -208,7 +208,7 @@ describe('PCM編曲(Piece→GMノート)', () => {
 
   it('受け渡し: 16小節ではセクションごとに主旋律のプリセットが変わる', () => {
     const piece16 = compose({
-      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
     });
     const parts = arrangeSf2Parts(piece16);
     const programs = new Set(parts.lead.map((n) => n.program));

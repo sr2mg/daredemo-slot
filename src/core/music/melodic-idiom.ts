@@ -21,7 +21,7 @@ import {
   MINOR_PENTATONIC_SCALE, NATURAL_MINOR_SCALE, YO_SCALE,
 } from './theory.js';
 import type {
-  JapanesePlan, JapaneseScaleChoice, MelodicLanguage, MelodyMode, Tonality,
+  JapanesePlan, JapaneseScaleChoice, MelodicLanguage, Tonality,
 } from './types.js';
 
 export interface MelodicIdiom {
@@ -72,8 +72,6 @@ export interface MelodicIdiom {
   introPrefersMotif: boolean;
   /** 主題予告型イントロが末尾に空ける拍数(息の長い「間」を取る語法は長い)。 */
   motifIntroBreakBeats: number;
-  /** Pieceの旧フィールド melodyMode への互換写像。null は調性名をそのまま使う。 */
-  legacyMelodyMode: MelodyMode | null;
 }
 
 const majorMinor = (major: readonly number[], minor: readonly number[]) =>
@@ -105,7 +103,6 @@ const DEFAULTS: Omit<MelodicIdiom, 'id' | 'label' | 'scaleIntervals'> = {
   scaleStepMax: maxAdjacentScaleInterval,
   introPrefersMotif: false,
   motifIntroBreakBeats: 0.5,
-  legacyMelodyMode: null,
 };
 
 export const MELODIC_IDIOMS: Record<MelodicLanguage, MelodicIdiom> = {
@@ -137,7 +134,6 @@ export const MELODIC_IDIOMS: Record<MelodicLanguage, MelodicIdiom> = {
     scaleStepMax: () => 4,
     introPrefersMotif: true,
     motifIntroBreakBeats: 1.5,
-    legacyMelodyMode: 'japanese',
   },
   pentatonic: {
     ...DEFAULTS,

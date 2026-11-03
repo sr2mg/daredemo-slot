@@ -55,7 +55,7 @@ describe('ドラムアーティキュレーション導出', () => {
 describe('compose→PCMのアーティキュレーション貫通', () => {
   it('ユーロビート(裏打ち)のハットはオープンとしてGM46で鳴る', () => {
     const piece = compose({
-      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 4, seed: 42,
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop4' as const, seed: 42,
     });
     const bodyHats = piece.drums.filter(
       (drum) => drum.inst === 'hat' && drum.beat >= piece.loopStartBeat,
@@ -72,7 +72,7 @@ describe('compose→PCMのアーティキュレーション貫通', () => {
 
   it('ロック(8分刻み)のハットは全てクローズで、拍節の強弱が付く', () => {
     const piece = compose({
-      progressionId: 'minor-pedal', styleId: 'rock', keyRoot: 9, bpm: 150, bars: 8,
+      progressionId: 'minor-pedal', styleId: 'rock', keyRoot: 9, bpm: 150, form: 'loop8' as const,
       tonality: 'minor', seed: 7,
     });
     const bodyHats = piece.drums.filter(

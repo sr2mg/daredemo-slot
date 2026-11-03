@@ -31,7 +31,6 @@ import type {
   IntroRole,
   JapaneseScaleChoice,
   MelodicLanguage,
-  MelodyMode,
   MotifTransform,
   PhraseFunction,
   RhythmVariant,
@@ -48,21 +47,14 @@ import type {
 export interface TonalOptions {
   tonality?: Tonality;
   melodicLanguage?: MelodicLanguage;
-  /** v1保存曲との互換入力。新規UIでは使わない。 */
-  melodyMode?: MelodyMode;
 }
 
 export function resolveTonality(options: TonalOptions): Tonality {
-  return options.tonality ?? (options.melodyMode === 'minor' ? 'minor' : 'major');
+  return options.tonality ?? 'major';
 }
 
 export function resolveMelodicLanguage(options: TonalOptions): MelodicLanguage {
-  return options.melodicLanguage ?? (options.melodyMode === 'japanese' ? 'japanese' : DEFAULT_MELODIC_LANGUAGE);
-}
-
-/** Pieceの旧フィールドを埋めるための互換表現。minor+japanese は和風を優先する。 */
-export function legacyMelodyMode(tonality: Tonality, language: MelodicLanguage): MelodyMode {
-  return idiomFor(language).legacyMelodyMode ?? tonality;
+  return options.melodicLanguage ?? DEFAULT_MELODIC_LANGUAGE;
 }
 
 /**
@@ -626,7 +618,6 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
     grooveFeel: options.grooveFeel,
     styleId: style.id,
     progressionId: progression.id,
-    progressionBars: progression.slots.length,
     soundChip: options.soundChip,
     intro: introPlanFor(options, harmony, harmonicActivity),
     form: formPlan,

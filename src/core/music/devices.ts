@@ -91,8 +91,6 @@ export interface DeviceContext {
   melodicLanguage: MelodicLanguage;
   grooveFeel: GrooveFeel;
   soundChip: SoundBackendId | undefined;
-  /** 解決済みの engineRev(types.ts の engineRevOf)。連符の旧語彙の読み替えに使う。 */
-  engineRev: number;
   tensionPolicy?: 'auto' | TensionPolicy | undefined;
   diminution?: 'auto' | DiminutionPolicy | undefined;
   duet?: 'auto' | DuetPolicy | undefined;
@@ -100,9 +98,6 @@ export interface DeviceContext {
   bassLine?: 'auto' | BassLinePolicy | undefined;
   tupletOverlay?: TupletOverlayChoice | undefined;
 }
-
-/** 旧語彙(rev<4)の連符指定: 省略=off、'auto'=区間ごと自動。 */
-const LEGACY_TUPLET_REV = 4;
 
 function resolveOne<T extends string | number>(
   choice: 'auto' | T | undefined,
@@ -128,10 +123,7 @@ export function resolveDevices(ctx: DeviceContext): ResolvedDevices {
     : null;
   const needs = (ok: boolean, reason: string): string | null => suppressed ?? (ok ? null : reason);
   const devices = ctx.style.devices;
-  // 旧語彙の連符指定を現行語彙へ読み替える(rev<4: 省略=off、'auto'=bySection)。
-  const tupletChoice: 'auto' | TupletOverlayPolicy | undefined = ctx.engineRev < LEGACY_TUPLET_REV
-    ? (ctx.tupletOverlay === 'auto' ? 'bySection' : ctx.tupletOverlay ?? 'off')
-    : ctx.tupletOverlay;
+  const tupletChoice: 'auto' | TupletOverlayPolicy | undefined = ctx.tupletOverlay;
   return {
     tension: resolveOne(
       ctx.tensionPolicy, devices?.tension,

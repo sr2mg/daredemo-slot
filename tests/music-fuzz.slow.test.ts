@@ -30,13 +30,13 @@ function buildCorpus(): { options: ComposeOptions; piece: Piece; where: string }
           styleId: STYLES[seed % STYLES.length]!.id,
           keyRoot: (seed * 5) % 12,
           bpm: 150,
-          bars: 40,
+          form: 'arc40' as const,
           tonality,
           seed: seed * 7919 + 1,
           // 監査対象は現行エンジン。省略すると rev0(engineRev導入前の保存曲互換経路)を
           // 監査することになり、revゲート付きの生成器変更がコーパスへ一切反映されない。
           engineRev: CURRENT_ENGINE_REV,
-          choice: variedChoiceFor(prog, 40, seed * 7919 + 1),
+          choice: variedChoiceFor(prog, 'arc40', seed * 7919 + 1),
           compositionStrategy: STRATEGIES[seed % STRATEGIES.length]!,
         };
         corpus.push({
@@ -97,9 +97,13 @@ describe('作曲エンジンの一括ファズ監査', () => {
     // (rootFifth の刻み・開放終止)が露出したので生成側で根音/オクターブへ。計測
     // melody 54 / harmony 5 / counterpoint 3。form の「全区間が同じ元を参照」は主題初出を
     // 元にする設計の必然なので検査を外した。
+    // 同日 rev5: 旧 rev 経路の削除、単一頂点の束縛(強拍吸着・非和声音の受け・タイの先取音を
+    // 頂点未満に限り、9半音超なら直前から6半音以内の和声音で受ける)、和声の過剰固定の検査を
+    // 区間列へ一般化(隣接区間の完全コピーを追加、不在区間の前後半一致は設計なので除外)。
+    // 計測 melody 38 / harmony 10 / counterpoint 3。
     // 予算は計測値+25%。恒常的に超えたら「生成と診断の乖離が広がった」ので原因を調べる
     // （予算を黙って上げない。下げられるときは下げる）。
-    const budget: Record<string, number> = { melody: 68, harmony: 7, counterpoint: 4 };
+    const budget: Record<string, number> = { melody: 48, harmony: 13, counterpoint: 4 };
     for (const [category, count] of warningCounts) {
       expect(count, `${category} 警告が予算超過`).toBeLessThanOrEqual(budget[category] ?? 0);
     }

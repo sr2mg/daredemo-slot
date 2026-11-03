@@ -41,7 +41,6 @@ export interface ComposeContext {
   /** 旋律語彙の絶対ピッチクラス。 */
   scalePcs: readonly number[];
   grooveFeel: GrooveFeel;
-  engineRev: number;
   bassLinePolicy: BassLinePolicy;
   songPlan: SongPlan;
   arrangementPlan: ArrangementPlan;

@@ -50,7 +50,6 @@ describe('旋律語法の戦略オブジェクト', () => {
     expect(japanese.scaleStepMax([0, 2, 5, 7, 9])).toBe(4);
     expect(japanese.motifIntroBreakBeats).toBe(1.5);
     expect(japanese.culturalPlan(0, 'ritsu', 1)?.id).toBe('ritsu');
-    expect(japanese.legacyMelodyMode).toBe('japanese');
     // 五音系は隣接音級の最大間隔から導出(無半音五音=3、六音=半音を含むが最大は3)。
     expect(idiomFor('pentatonic').scaleStepMax([0, 2, 4, 7, 9])).toBe(3);
     expect(idiomFor('hexatonic').scaleStepMax([...MAJOR_HEXATONIC_SCALE])).toBe(3);

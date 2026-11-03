@@ -21,10 +21,10 @@ function pieceFor(seed: number): Piece {
     styleId: 'eurobeat',
     keyRoot: 0,
     bpm: 150,
-    bars: 40,
+    form: 'arc40' as const,
     tonality: 'minor',
     seed,
-    choice: variedChoiceFor(prog, 40, seed),
+    choice: variedChoiceFor(prog, 'arc40', seed),
   });
   pieceCache.set(seed, piece);
   return piece;
@@ -127,10 +127,10 @@ describe('表現デバイスの発火（聴かない層の検証）', () => {
       styleId: 'eurobeat',
       keyRoot: 0,
       bpm: 150,
-      bars: 40,
+      form: 'arc40' as const,
       tonality: 'minor',
       seed: 42,
-      choice: variedChoiceFor(prog, 40, 42),
+      choice: variedChoiceFor(prog, 'arc40', 42),
       compositionStrategy: 'premiseArc',
     });
     // premiseArc は C 区間（bar16-23）がブレイクダウン

@@ -84,7 +84,7 @@ describe('ドラムバスFX', () => {
 
 describe('スタイル別ドラムキットとバス宣言', () => {
   const pieceFor = (styleId: string) => compose({
-    progressionId: 'royal-pop', styleId, keyRoot: 0, bpm: 170, bars: 4, seed: 42,
+    progressionId: 'royal-pop', styleId, keyRoot: 0, bpm: 170, form: 'loop4' as const, seed: 42,
   });
 
   it('dnbはPowerキット(16)+潰す宣言、garage2stepはDanceキット(26)+軽い宣言', () => {

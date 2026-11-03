@@ -15,7 +15,7 @@ const options = {
   styleId: 'eurobeat',
   keyRoot: 0,
   bpm: 170,
-  bars: 4 as const,
+  form: 'loop4' as const,
   seed: 42,
 };
 
@@ -54,7 +54,7 @@ describe('ファミコン2A03音源', () => {
   it('和風の「揺り」をパルス1のタイマー変化としてレンダリングする', () => {
     const piece = compose({
       ...options, progressionId: 'tanaka-manabe', seed: 1,
-      melodyMode: 'japanese', japaneseScale: 'ritsu',
+      melodicLanguage: 'japanese', japaneseScale: 'ritsu',
     });
     expect(piece.melody.some((note) => note.ornament === 'shake')).toBe(true);
     const withoutShake = {
@@ -77,7 +77,7 @@ describe('ファミコン2A03音源', () => {
   });
 
   it('16小節PCMにもイントロ後のループ区間を秒で持たせる', () => {
-    const gameOptions = { ...options, bars: 16 as const, seed: 43, soundChip: 'nes2a03' as const };
+    const gameOptions = { ...options, form: 'loop16' as const, seed: 43, soundChip: 'nes2a03' as const };
     const piece = compose(gameOptions);
     const def = arrangeComposedBgm(piece, gameOptions);
     expect(isPcmBgm(def)).toBe(true);

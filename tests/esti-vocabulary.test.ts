@@ -15,7 +15,7 @@ import {
  */
 
 const base: ComposeOptions = {
-  progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16, seed: 11,
+  progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const, seed: 11,
 };
 
 const cMajor = [...MAJOR_SCALE];
@@ -149,7 +149,7 @@ describe('vi軌道進行と韓国MMO風スタイル', () => {
 
   it('kmmoスタイルは既定でlush+richになり、診断を通る', () => {
     const piece = compose({
-      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, bars: 16, seed: 8,
+      progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 100, form: 'loop16' as const, seed: 8,
     });
     expect(piece.chords.some((c) => (c.colorPcs ?? []).length > 0)).toBe(true);
     expect(piece.melody.some((n) => n.role === 'ornament')).toBe(true);
@@ -164,7 +164,7 @@ describe('vi軌道進行と韓国MMO風スタイル', () => {
 
 describe('五音ペンタ語法(pentatonic): 五音語彙とカラートーン装置の共存', () => {
   const kmmoPenta: ComposeOptions = {
-    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 103, bars: 16, seed: 8,
+    progressionId: 'relative-orbit', styleId: 'kmmo', keyRoot: 2, bpm: 103, form: 'loop16' as const, seed: 8,
     melodicLanguage: 'pentatonic',
   };
 
@@ -289,7 +289,7 @@ describe('曲間モチーフ流用(externalMotif)', () => {
     const carried = JSON.parse(JSON.stringify(source.motif));
     // 別のキー・調性・語法・スタイルの曲へ移植
     const target: ComposeOptions = {
-      progressionId: 'relative-orbit', styleId: 'eurobeat', keyRoot: 7, bpm: 170, bars: 16,
+      progressionId: 'relative-orbit', styleId: 'eurobeat', keyRoot: 7, bpm: 170, form: 'loop16' as const,
       seed: 99, tonality: 'minor', melodicLanguage: 'pentatonic', externalMotif: carried,
     };
     const piece = compose(target);

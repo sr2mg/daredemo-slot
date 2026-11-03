@@ -14,16 +14,14 @@
  */
 
 import { Xoshiro128 } from '../rng.js';
-import { presetForBars, resolveForm, sectionStartBars } from './form.js';
+import { resolveForm, sectionStartBars } from './form.js';
 import type { ProgressionDef } from './theory.js';
-import type { SectionSpec, SongFormSpec } from './types.js';
+import type { SectionSpec, SongFormRef, SongFormSpec } from './types.js';
 
-/** 曲型、または旧入力の小節数(4/8/16/40。曲型入力へ移行後に廃止)。 */
-export type ChoiceForm = number | SongFormSpec;
+/** 曲型の参照(プリセットid か区間列)。 */
+export type ChoiceForm = SongFormRef;
 
-const formOf = (form: ChoiceForm): SongFormSpec => (
-  typeof form === 'number' ? resolveForm(presetForBars(form)) : form
-);
+const formOf = (form: ChoiceForm): SongFormSpec => resolveForm(form);
 
 const DOMINANT_TOKENS = ['V', 'V7m', 'I7'];
 

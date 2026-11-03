@@ -1,3 +1,4 @@
+import { presetForBars } from '../core/music/form.js';
 import type { ComposeOptions } from '../core/music/types.js';
 
 /**
@@ -42,7 +43,7 @@ export const PRESET_SONGS: readonly SavedSong[] = [
       styleId: 'eurobeat',
       keyRoot: 0,
       bpm: 170,
-      bars: 8,
+      form: 'loop8',
       seed: 20260704,
     },
   },
@@ -54,7 +55,7 @@ export const PRESET_SONGS: readonly SavedSong[] = [
       styleId: 'eurobeat',
       keyRoot: 0,
       bpm: 170,
-      bars: 4,
+      form: 'loop4',
       seed: 777,
     },
   },
@@ -65,10 +66,18 @@ export const DEFAULT_ASSIGN: BgmAssign = { bb: 'preset:preset-bb', rb: 'preset:p
 export function loadSongs(): SavedSong[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(SONGS_KEY) ?? '[]') as SavedSong[];
-    return Array.isArray(parsed) ? parsed.filter((s) => s && s.id && s.options) : [];
+    return Array.isArray(parsed) ? parsed.filter((s) => s && s.id && s.options).map(migrateSong) : [];
   } catch {
     return [];
   }
+}
+
+/** 曲型導入前の保存曲(bars: 4/8/16/40)を同名の曲型プリセットへ写す。音は rev5 で変わる。 */
+function migrateSong(song: SavedSong): SavedSong {
+  const legacy = song.options as ComposeOptions & { bars?: number };
+  if (legacy.form !== undefined || typeof legacy.bars !== 'number') return song;
+  const { bars, ...rest } = legacy;
+  return { ...song, options: { ...rest, form: presetForBars(bars) } };
 }
 
 export function saveSongs(songs: SavedSong[]): void {

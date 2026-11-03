@@ -83,7 +83,7 @@ describe('melodic-theme（単体）', () => {
 });
 
 const base: ComposeOptions = {
-  progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, bars: 16, seed: 0,
+  progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, form: 'loop16' as const, seed: 0,
 };
 
 function phrasePlanOf(piece: Piece, bar: number) {
@@ -120,8 +120,8 @@ describe('実音テーマ（作曲エンジン統合）', () => {
   it('40小節のD区間はAのフックをリテラルに帰還させる', () => {
     const prog = PROGRESSIONS.find((candidate) => candidate.id === 'minor-pedal')!;
     const pieces = Array.from({ length: 24 }, (_, seed) => compose({
-      ...base, progressionId: prog.id, bars: 40, tonality: 'minor', seed,
-      choice: variedChoiceFor(prog, 40, seed),
+      ...base, progressionId: prog.id, form: 'arc40' as const, tonality: 'minor', seed,
+      choice: variedChoiceFor(prog, 'arc40', seed),
     }));
     const literalReturns = pieces.filter((piece) => (
       piece.songPlan.form.sections[3]!.motifTransform === 'literal'

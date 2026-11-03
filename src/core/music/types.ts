@@ -19,15 +19,12 @@ import type { SoundBackendId } from './sound-capabilities.js';
 // 語彙（ユニオン型）
 // ---------------------------------------------------------------------------
 
-export type ComposeBars = 4 | 8 | 16 | 40;
 export type Tonality = 'major' | 'minor';
 /**
  * 旋律語法。standard=コードスケール追従、japanese=和風3様式(核音・間)、
  * pentatonic=無半音五音(五度圏5連続)、hexatonic=六音(五度圏6連続、長調は第4音抜き)。
  */
 export type MelodicLanguage = 'standard' | 'japanese' | 'pentatonic' | 'hexatonic';
-/** @deprecated v1保存曲の互換入力。新規コードはtonalityとmelodicLanguageを使う。 */
-export type MelodyMode = 'major' | 'minor' | 'japanese';
 export type JapaneseScale = 'ritsu' | 'minyo' | 'miyakobushi';
 export type JapaneseScaleChoice = 'auto' | JapaneseScale;
 export type OrnamentType = 'grace' | 'turn' | 'shake';
@@ -181,9 +178,12 @@ export interface ComposeInput {
   /** キー主音のピッチクラス（0 = C） */
   keyRoot: number;
   bpm: number;
-  /** 4 = RB / 8 = BB / 16 = ゲーム BGM / 40 = BIG本編（通常は2小節導入込みで42小節）。 */
-  bars: ComposeBars;
-  /** 16/40小節曲の先頭へ、初回だけ鳴る2小節イントロを付ける。省略時は有効。 */
+  /**
+   * 曲型: プリセットid(loop4/loop8/loop16/arc40/song)か明示の区間列(form.ts が解決)。
+   * 旧入力の bars(4/8/16/40)は同名のプリセットへ写した(presetForBars)。
+   */
+  form: SongFormRef;
+  /** 初回だけ鳴る2小節イントロ。省略時は曲型の既定(短いループは無し、他は有り: introDefaultFor)。 */
   intro?: boolean;
   /** 和声と進行カタログの調性。省略時はmajor。 */
   tonality?: Tonality;
@@ -193,8 +193,6 @@ export interface ComposeInput {
    * 装置は通常どおり使える汎用語彙(00年代ネトゲBGM系の「五音旋律×カラートーン和声」)。
    */
   melodicLanguage?: MelodicLanguage;
-  /** @deprecated v1保存曲との互換入力。 */
-  melodyMode?: MelodyMode;
   /** 和風モードの音組織。省略時はシードから3様式を選ぶ。 */
   japaneseScale?: JapaneseScaleChoice;
   /** 和風様式とは独立したゲーム向けのリズム層。 */
@@ -246,11 +244,11 @@ export interface ComposeInput {
   /**
    * この曲を生成したエンジンのリビジョン。音を変える生成器変更はこの値でゲートし、
    * 旧リビジョンの保存曲は旧挙動のまま再現する(一点式バージョニング)。
-   * 省略 = 0(engineRev導入前の全保存曲)。UIは保存時に CURRENT_ENGINE_REV を焼く。
+   * UIは保存時に CURRENT_ENGINE_REV を焼く。rev5 未満の値は再現経路を持たない(リセット)。
    */
   engineRev?: number;
   seed: number;
-  /** 全小節ぶんのスロット選択。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
+  /** 全小節ぶんのスロット選択(曲全体のフラット配列)。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
   choice?: readonly number[];
   /** ブラインド比較用の上位戦略。省略時は既存と同じ current。 */
   compositionStrategy?: CompositionStrategy;
@@ -305,17 +303,20 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  * - rev4: 連符レイヤーを他の装置と同じ解決規則(様式既定→明示→語法抑制→能力)へ統合。
  *   旧語彙では tupletOverlay 省略=off、'auto'=区間ごと自動だったので、rev<4 の保存曲は
  *   その読みを保つ(devices.ts)。rev4 から 省略/'auto'=様式既定(DeviceDefaults.tuplet)。
+ * - rev5: 曲型を区間リスト(SongFormSpec)へ。保存入力は bars(4/8/16/40)から form(プリセットid
+ *   か区間列)へ、主題計画は区間の宣言(theme/transform/quote)から、進行レシピは区間単位に、
+ *   終止曲型(ending final)と小節ごとの調(HarmonyBarPlan.keyRoot)を導入。rev1〜4 の分岐は
+ *   削除し、rev<5 の保存曲は再現しない(ユーザー不在のうちのリセット)。engineRev の値は
+ *   読まれず、常に現行として生成する(仕組みは rev6 以降のために残す)。
  */
-export const CURRENT_ENGINE_REV = 4;
+export const CURRENT_ENGINE_REV = 5;
 
 /**
- * この生成で実際に適用するリビジョン。未指定=0(導入前の全保存曲)。
- * 未来のリビジョン(新しいビルドで保存された曲)は再現不能なので現行へクランプして
- * ベストエフォートで鳴らす。非整数は壊れたデータとして 0 扱い。
+ * この生成で実際に適用するリビジョン。rev5 でリセットしたので、どの値も現行として扱う
+ * (未来のリビジョンは再現不能なので現行へクランプしてベストエフォートで鳴らす)。
  */
-export function engineRevOf(opts: Pick<ComposeOptions, 'engineRev'>): number {
-  const raw = opts.engineRev ?? 0;
-  return Number.isInteger(raw) ? Math.max(0, Math.min(CURRENT_ENGINE_REV, raw)) : 0;
+export function engineRevOf(_opts: Pick<ComposeOptions, 'engineRev'>): number {
+  return CURRENT_ENGINE_REV;
 }
 
 export interface NesVoiceOptions {
@@ -709,9 +710,8 @@ export interface SongPlan {
   melodicLanguage: MelodicLanguage;
   grooveFeel: GrooveFeel;
   styleId: string;
+  /** 曲既定の進行。区間ごとの実効値は form.sections[].progressionId / progressionBars。 */
   progressionId: string;
-  /** 進行カタログ自体の長さ。4小節進行を長尺化した際の反復診断に使う。 */
-  progressionBars: number;
   soundChip: SoundBackendId;
   intro: SongIntroPlan;
   form: SongFormPlan;
@@ -731,8 +731,6 @@ export interface Piece {
   styleId: string;
   tonality: Tonality;
   melodicLanguage: MelodicLanguage;
-  /** @deprecated 表示・保存互換用。 */
-  melodyMode: MelodyMode;
   japanesePlan: JapanesePlan | null;
   /**
    * 旋律語彙の絶対ピッチクラス(標準=ダイアトニック、和風=五音3様式、五音=無半音五音)。

@@ -13,7 +13,7 @@ import type { NoteEvent } from './types.js';
 
 export function generateBass(ctx: ComposeContext): NoteEvent[] {
   const {
-    form, bars, style, keyRoot, idiom, grooveFeel, engineRev, bassLinePolicy,
+    form, bars, style, keyRoot, idiom, grooveFeel, bassLinePolicy,
     songPlan, arrangementPlan, phrasePlan, phraseGestures, chords, chordAt, scaleAt,
   } = ctx;
   // --- ベース（スタイルの刻み + PhrasePlanの終止機能） ---
@@ -30,17 +30,13 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     return drumPatternStep(pattern, bar, step);
   };
   const bassPattern = style.bass.pattern;
-  // rev1: アンカーを直前アンカーへの最短連結で選ぶ(固定写像はE/D#間で11半音跳ぶ)。
-  // 分数コードのライン(bassLine)は連結が前提なので、装置onならrevに関わらず連結する。
-  const linkedAnchors = engineRev >= 1 || bassLinePolicy === 'on';
   let previousAnchor: number | null = null;
   for (const c of chords) {
     // ペダル低音は進行名だけで常設せず、曲全体で低音主導を選んだ場合にだけ使う。
     // 分数コード(bassPc)があればそれをアンカーにする(ペダルはラインより優先)。
     const anchorPc = arrangementPlan.bassRole === 'pedal' ? keyRoot : (c.bassPc ?? c.rootPc);
-    const root: number = linkedAnchors
-      ? nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50) // D#2..D3窓で直前へ最短連結。
-      : 40 + ((anchorPc - 4 + 12) % 12); // rev0の通常フォーム: 従来のE2..D#3帯固定写像。
+    // アンカーは直前アンカーへの最短連結(D#2..D3窓)。固定写像だとE/D#間で11半音跳ぶ。
+    const root = nearestWithPc(previousAnchor ?? 43, [anchorPc], 36, 50);
     previousAnchor = root;
     if (bassPattern === 'rootFifth') {
       // 五度は和音の品質に追従する（dimは減5度、augは増5度）。機械的な+7で和声外に落とさない。
@@ -121,19 +117,14 @@ export function generateBass(ctx: ComposeContext): NoteEvent[] {
     if (barPlan.cadence === 'closed') {
       last.midi = nearestWithPc(last.midi, [endRootPc], 36, 64);
     } else if (barPlan.cadence === 'open') {
-      if (engineRev >= 3) {
-        // rev3: 開放終止の5度は和音の品質に追従する(dimは減5度、augは増5度。rootFifth刻みと
-        // 同じ規則)。rev2以前は機械的な+7で、短調のiiDim(減三和音)上では和声外の完全5度に
-        // 落ちていた(診断 harmony「ベースの経過音が…解決していない」)。持続サブは長音を
-        // 保って最後の8分だけを5度へ割く(終止小節の低音の土台を1小節ぶん動かさない)。
-        // 5度を省いた和音(M13 等)では完全5度が和声外になるので、根音で開いたまま受ける。
-        const fifthPc = ([7, 6, 8] as const)
-          .map((interval) => (endRootPc + interval) % 12)
-          .find((pc) => endChord.pcs.includes(pc)) ?? endRootPc;
-        placeSustainedCadenceNote(nearestWithPc(last.midi, [fifthPc], 36, 64));
-      } else {
-        last.midi = nearestWithPc(last.midi, [(endRootPc + 7) % 12], 36, 64);
-      }
+      // 開放終止の5度は和音の品質に追従する(dimは減5度、augは増5度。rootFifth刻みと同じ規則。
+      // 機械的な+7だと短調のiiDim上で和声外の完全5度に落ちる)。持続サブは長音を保って
+      // 最後の8分だけを5度へ割く(終止小節の低音の土台を1小節ぶん動かさない)。
+      // 5度を省いた和音(M13 等)では完全5度が和声外になるので、根音で開いたまま受ける。
+      const fifthPc = ([7, 6, 8] as const)
+        .map((interval) => (endRootPc + interval) % 12)
+        .find((pc) => endChord.pcs.includes(pc)) ?? endRootPc;
+      placeSustainedCadenceNote(nearestWithPc(last.midi, [fifthPc], 36, 64));
     } else if (barPlan.cadence === 'half' || barPlan.cadence === 'turnaround') {
       // 様式の終止作法(半音接近・和声音接近)は語法が許すときだけ。和風は全音階の経過音へ。
       if (idiom.allowsStyledBassCadence && style.bass.cadence === 'chromatic') {
