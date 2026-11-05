@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, MutableRefObject } from 'react';
+import type { CSSProperties } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { playPerfect } from '../core/sim.js';
 import { NavLayer } from '../core/nav.js';
@@ -26,21 +26,43 @@ import { loadStored, oneOf, saveStored, usePersistentState } from './persist.js'
 import { Subboard } from './subboard.js';
 import type { SubboardView } from './subboard.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
+import { createReelGlView, LAMPS_ALL_ON } from './reel-gl.js';
+import type { LampLevels, ReelGlView, SymbolLook } from './reel-gl.js';
+import {
+  FLASH_CYCLES,
+  FLASH_PERIOD_MS,
+  flashLamps,
+  lampsForRows,
+  litRows,
+  payoutSchedule,
+  statusLamps,
+} from './cabinet-fx.js';
 import { SoundTestPanel } from './sound-test.js';
+import {
+  ACCEL_MS,
+  arrivalAt,
+  isArmed,
+  komaToStep,
+  motorSpec,
+  pushKomaAt,
+  stepAt,
+  stepToKoma,
+  stopTargetStep,
+} from './reel-motor.js';
+import type { MotorCommand } from './reel-motor.js';
 import { calculateLargeDisplayMetrics } from './display-mode.js';
 import type { BrowserViewport } from './display-mode.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
- * リールは連続位置（コマ単位の小数）で回し、押下時刻に「次に基準段（下段）へ整列するコマ」へ
- * 切り上げたものを pushPosition としてコアの GameSession に渡す
- * （押下時刻→コマ番号の決定論的量子化。docs/design/03）。
+ * リールはステッピングモーターの整数ステップで回す（reel-motor.ts: 回転開始時刻からの
+ * 経過時間 → ステップ位置の純関数）。押下時刻のステップ位置から「次に基準段（下段）へ整列する
+ * コマ」を pushPosition としてコアの GameSession に渡す（決定論的量子化。docs/design/03）。
+ * 描画は同じ軌道を rAF で標本化するだけで、量子化に関与しない。
  * 操作: Space = レバー / J・K・L = 左・中・右停止（ボタンクリックも可）
  */
 
-/** リール 1 周の時間。20 コマ ÷ 750ms ≒ 80rpm（規格上限相当） */
-const REV_MS = 750;
-/** 停止時のバウンド（行き過ぎて戻る量と時間。「ガチッ」の感触） */
+/** 停止時のバウンド（励磁保持に入った回転子の減衰振動。行き過ぎて戻る量と時間。「ガチッ」の感触） */
 const BOUNCE_KOMA = 0.16;
 const BOUNCE_MS = 110;
 /** ウエイト: 前ゲームのリール始動からこの時間が経つまで次のリールは回らない（実機は 4.1 秒） */
@@ -114,10 +136,12 @@ interface ReelView {
   /** 基準コマ番号（コアの stopPosition = 画面の下段。行番号は下から上へ 0,1,2） */
   top: number;
   stopped: boolean;
+  /** モーターへの回転指令。null は回転を経ない即時配置（初期化・機種切替・即入賞） */
+  motion: MotorCommand | null;
 }
 
 const freshReels = (machine: MachineDef): ReelView[] =>
-  machine.strips.map(() => ({ top: 0, stopped: true }));
+  machine.strips.map(() => ({ top: 0, stopped: true, motion: null }));
 
 function readBrowserViewport(): BrowserViewport {
   const viewport = window.visualViewport;
@@ -155,107 +179,98 @@ interface ReelColumnProps {
   strip: readonly string[];
   /** 停止時の基準コマ番号（コアの stopPosition = 画面の下段） */
   top: number;
-  spinning: boolean;
-  /** 親と共有する連続コマ位置（押下位置の量子化・停止音のタイミングに使う） */
-  positions: MutableRefObject<number[]>;
-  index: number;
+  /** モーターへの回転指令（親が作り、押下の量子化にも同じ指令を使う）。null は即時配置 */
+  motion: MotorCommand | null;
+  /** 上・中・下段のバックライト光量（1 = 通常点灯）。入賞ライン強調などの演出口 */
+  lamps?: LampLevels;
 }
 
+const symbolLook = (symbol: string): SymbolLook => {
+  const view = SYMBOL_VIEW[symbol];
+  const color = view?.className === 'sym-seven' ? '#d32f2f' : view?.className === 'sym-bar' ? '#111' : '#333';
+  return { text: view?.text ?? symbol, color };
+};
+
 /**
- * リール 1 本の見た目。全コマを CSS 3D の円周上へ並べ、円筒を連続回転させる。
- * アニメーションは rAF で DOM に直接書き、React の再レンダリングを毎フレーム走らせない。
- * - 回転は約 80rpm の等速
+ * リール 1 本の見た目。three.js（reel-gl.ts）で正 n 角柱に図柄を貼り、3 灯のバックライトで裏から照らす。
+ * アニメーションは rAF でビューに直接コマ位置を渡し、React の再レンダリングを毎フレーム走らせない。
+ * - 回転はモーターモデル（reel-motor.ts）の軌道を毎フレーム標本化する: 直線加速 → 80rpm の定速
  * - 実機準拠の下流れ: コマ番号が進む（滑る）方向のコマは画面の上から入ってくる。
- *   コマ番号が大きい面を円筒の上側へ配置し、回転角を減らすことで下へ流す。
- *   コアの stopPosition は下段なので、正面には常に stopPosition + 1 の面を合わせる
- * - 停止は押下の続き位置から等速のまま滑り込み（滑り 0〜4 コマ + 整列で最大 5 コマ弱 ≒ 190ms。
- *   実機の停止許容時間と同じオーダー）、回転方向へ微バウンドして着地
- * - 初期化・機種切り替え・即入賞（回転を経ない停止）は即座に合わせる
+ *   コアの stopPosition は下段なので、正面には常に stopPosition + 1 の面を合わせる（reel-gl.ts）
+ * - 停止は目標ステップまで定速のまま進んで励磁保持（滑り 0〜4 コマ + 整列で最大 119 ステップ
+ *   ≒ 186ms。実機の停止許容 190ms と整合）、回転方向へ微バウンドして着地
+ * - 初期化・機種切り替え・即入賞（motion = null）は即座に合わせる
+ * - WebGL が使えない環境では見える 3 段を文字で出す
  */
-function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps) {
-  const stripRef = useRef<HTMLDivElement | null>(null);
-  const wasSpinningRef = useRef(false);
+function ReelColumn({ strip, top, motion, lamps = LAMPS_ALL_ON }: ReelColumnProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<ReelGlView | null>(null);
+  const [glUnavailable, setGlUnavailable] = useState(false);
   const frames = strip.length;
-  const faceStep = 360 / frames;
-  // 正多角柱の隣接面が隙間なく接する外接半径。cell-h に追従するのでレスポンシブでも円筒を保てる。
-  const radiusFactor = 1 / (2 * Math.tan(Math.PI / frames));
+  const spec = useMemo(() => motorSpec(frames), [frames]);
+  const spinning = motion !== null && motion.targetStep === null;
 
   useEffect(() => {
-    const el = stripRef.current;
-    if (!el) return;
-    const faces = Array.from(el.querySelectorAll<HTMLElement>('.cell'));
-    const setPos = (p: number) => {
-      positions.current[index] = p;
+    const host = hostRef.current;
+    if (!host) return;
+    let view: ReelGlView;
+    try {
+      view = createReelGlView(host, { lookOf: symbolLook });
+    } catch (error) {
+      console.warn('WebGL reel unavailable; falling back to text', error);
+      setGlUnavailable(true);
+      return;
+    }
+    viewRef.current = view;
+    return () => {
+      view.dispose();
+      viewRef.current = null;
     };
-    /**
-     * 実機のバックライトはリール基体に固定され、上・中・下段の 3 領域を背面から照らす。
-     * 動く図柄へ光彩を貼るのではなく、各面が固定照明領域を横切る瞬間だけ透過率を上げる。
-     * 反射凹部間の仕切りを模して、段の中心では 1、境界では光量が滑らかに落ちる。
-     */
-    const applyBacklight = (wrapped: number) => {
-      const front = wrapped + 1;
-      for (let face = 0; face < faces.length; face++) {
-        let relative = face - front;
-        relative = ((((relative + frames / 2) % frames) + frames) % frames) - frames / 2;
-        const nearestLamp = Math.max(-1, Math.min(1, Math.round(relative)));
-        const lampOffset = relative - nearestLamp;
-        const distance = Math.abs(lampOffset);
-        const exposure = distance < 0.9 ? Math.exp(-Math.pow(distance / 0.48, 4)) : 0;
-        faces[face]!.style.setProperty('--lamp-exposure', exposure.toFixed(3));
-        // 面のローカル座標では光だまりを逆向きへずらし、窓に対して同じ位置へ留める。
-        // 反射凹部の境界では露光がほぼ 0 になるため、隣の灯への切り替えは見えない。
-        faces[face]!.style.setProperty('--lamp-y', `${(50 + lampOffset * 100).toFixed(2)}%`);
-      }
-    };
-    // stopPosition は下段。1 コマ先を正面へ向けると、上から [p+2, p+1, p] が並ぶ。
-    // 正規化の境界では角度が 360deg 飛ぶが、transition を使わないので見た目は連続する。
-    const apply = (p: number) => {
-      const wrapped = ((p % frames) + frames) % frames;
-      el.style.transform = `rotateX(${-(wrapped + 1) * faceStep}deg)`;
-      applyBacklight(wrapped);
-    };
+  }, []);
+
+  useEffect(() => {
+    viewRef.current?.setStrip(strip);
+  }, [strip]);
+
+  useEffect(() => {
+    viewRef.current?.setLamps(lamps);
+  }, [lamps]);
+
+  useEffect(() => {
+    const apply = (p: number) => viewRef.current?.setKoma(p);
     let raf = 0;
 
-    if (spinning) {
-      wasSpinningRef.current = true;
-      let last = performance.now();
+    // 回転を経ない配置
+    if (motion === null) {
+      apply(top);
+      return;
+    }
+
+    // 自由回転: 軌道を標本化するだけ（位置の状態を持たない。押下の量子化も同じ軌道を見る）
+    if (motion.targetStep === null) {
       const tick = (now: number) => {
-        const next = (positions.current[index]! + (now - last) * (frames / REV_MS)) % frames;
-        last = now;
-        setPos(next);
-        apply(next);
+        apply(stepToKoma(stepAt(spec, motion, now)));
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
       return () => cancelAnimationFrame(raf);
     }
 
-    // 停止。回転からの停止だけ滑り込み + バウンドの演出を挟む
-    const fromSpin = wasSpinningRef.current;
-    wasSpinningRef.current = false;
-    if (!fromSpin) {
-      setPos(top);
-      apply(top);
-      return;
-    }
-    const from = positions.current[index] ?? top;
-    const dist = (((top - from) % frames) + frames) % frames;
-    const slideMs = dist * (REV_MS / frames);
-    const start = performance.now();
+    // 停止: 目標ステップまで同じ軌道で進み（実機は減速せず止まる）、到達後にバウンド
+    const stopping = { ...motion, targetStep: motion.targetStep };
+    const landAt = arrivalAt(spec, stopping);
     let settled = false;
     const finish = () => {
       settled = true;
-      setPos(top);
       apply(top);
     };
     const tick = (now: number) => {
-      const t = now - start;
-      if (t < slideMs) {
-        apply(from + dist * (t / slideMs)); // 等速のまま滑る（実機は減速せず止まる）
+      if (now < landAt) {
+        apply(stepToKoma(stepAt(spec, stopping, now)));
         raf = requestAnimationFrame(tick);
         return;
       }
-      const bt = t - slideMs;
+      const bt = now - landAt;
       if (bt < BOUNCE_MS) {
         const k = bt / BOUNCE_MS;
         apply(top + BOUNCE_KOMA * Math.sin(Math.PI * k) * (1 - k)); // 減衰 1 往復
@@ -266,44 +281,34 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
     };
     raf = requestAnimationFrame(tick);
     // タブが非表示だと rAF が止まり滑り込みが完了しない。タイマーで最終位置に確定させる
-    const fallback = window.setTimeout(() => {
-      if (!settled) finish();
-    }, slideMs + BOUNCE_MS + 100);
+    const fallback = window.setTimeout(
+      () => {
+        if (!settled) finish();
+      },
+      Math.max(0, landAt - performance.now()) + BOUNCE_MS + 100,
+    );
     return () => {
       // 途中で次のゲームが始まったら最終位置に確定させてから回す
       cancelAnimationFrame(raf);
       window.clearTimeout(fallback);
       finish();
     };
-  }, [spinning, top, strip, frames, faceStep, positions, index]);
+  }, [motion, top, strip, frames, spec]);
 
   return (
-    <div className={`reel ${spinning ? 'reel-spinning' : ''}`}>
-      <div className="reel-backlight" aria-hidden="true" />
-      <div className="reel-strip" ref={stripRef}>
-        {strip.map((symbol, i) => {
-          const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
-          const img = SYMBOL_IMAGES[symbol];
-          return (
-            <div
-              key={i}
-              className={`cell ${view.className}`}
-              style={{
-                transform: `rotateX(${i * faceStep}deg) translateZ(calc(var(--cell-h) * ${radiusFactor}))`,
-              }}
-            >
-              {img ? (
-                <span className="symbol-stack">
-                  <img className="cell-img symbol-print" src={img} alt={view.text} />
-                  <img className="symbol-transmission" src={img} alt="" aria-hidden="true" />
-                </span>
-              ) : (
-                view.text
-              )}
-            </div>
-          );
-        })}
-      </div>
+    <div className={`reel ${spinning ? 'reel-spinning' : ''}`} ref={hostRef}>
+      {glUnavailable && (
+        <div className="reel-fallback" aria-hidden="true">
+          {[2, 1, 0].map((row) => {
+            const symbol = strip[(top + row) % frames]!;
+            return (
+              <span key={row} className={`reel-fallback-cell ${SYMBOL_VIEW[symbol]?.className ?? ''}`}>
+                {SYMBOL_VIEW[symbol]?.text ?? symbol}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -314,6 +319,8 @@ export function App() {
   const [engine, setEngine] = useState<EngineState>(() => initialState(machines[0]!));
   const [credit, setCredit] = useState(INITIAL_CREDIT);
   const [phase, setPhase] = useState<Phase>('ready');
+  /** リールが定速に達しストップボタンが有効か（表示用。判定は押下時刻から決定論的に行う） */
+  const [armed, setArmed] = useState(false);
   const [reels, setReels] = useState<ReelView[]>(() => freshReels(machines[0]!));
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -345,6 +352,14 @@ export function App() {
   );
   /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
   const [flashKey, setFlashKey] = useState(0);
+  /** 確定フラッシュ中のリールランプの明滅位相。null = フラッシュ中でない */
+  const [flashOn, setFlashOn] = useState<boolean | null>(null);
+  /** 全停止後に点灯させる段（リールごとの行集合）。null = 全段点灯。次のレバーで解除 */
+  const [litRowsByReel, setLitRowsByReel] = useState<ReadonlySet<number>[] | null>(null);
+  /** WIN 表示。払い出しを 1 枚ずつ刻むので event.payout とは別に持つ */
+  const [winShown, setWinShown] = useState(0);
+  /** 刻み中の払い出し（タイマーと未加算枚数）。レバーで残りを一括加算して打ち切る */
+  const payoutRef = useRef<{ timers: number[]; remaining: number } | null>(null);
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
@@ -407,8 +422,6 @@ export function App() {
   const noticeModeRef = useRef(noticeMode);
   noticeModeRef.current = noticeMode;
 
-  /** リールの連続コマ位置（ReelColumn が毎フレーム更新。押下位置の量子化に使う） */
-  const reelPositionsRef = useRef<number[]>([0, 0, 0]);
   /** 前回リールが回り始めた時刻（performance.now）。ウエイトの起点 */
   const lastSpinStartRef = useRef(-Infinity);
 
@@ -424,17 +437,92 @@ export function App() {
     sfxRef.current?.play(name);
   }, []);
 
+  /** 刻み中の払い出しを打ち切る。flush なら残りを一括加算（レバー）、そうでなければ捨てる（機種切替） */
+  const stopPayout = useCallback((flush: boolean) => {
+    const cur = payoutRef.current;
+    if (!cur) return;
+    payoutRef.current = null;
+    for (const t of cur.timers) window.clearTimeout(t);
+    if (flush && cur.remaining > 0) {
+      // レバーのクレジット判定は creditRef を同期的に読むので、state と一緒に ref も進める
+      creditRef.current += cur.remaining;
+      setCredit((c) => c + cur.remaining);
+      setWinShown((w) => w + cur.remaining);
+    }
+  }, []);
+
+  /**
+   * 払い出しを 1 枚ずつ刻む（cabinet-fx.payoutSchedule）。クレジットと WIN がコイン音の拍で進み、
+   * 音は 8 枚ごとに頭出しする。coinSfx が null（ファンファーレが払い出し音を消した）なら数字だけ進む
+   */
+  const startPayout = useCallback((payout: number, coinSfx: SfxName | null) => {
+    const plan = payoutSchedule(payout);
+    if (plan.coinAtMs.length === 0) return;
+    const state = { timers: [] as number[], remaining: payout };
+    payoutRef.current = state;
+    for (const at of plan.coinAtMs) {
+      state.timers.push(
+        window.setTimeout(() => {
+          state.remaining -= 1;
+          setCredit((c) => c + 1);
+          setWinShown((w) => w + 1);
+          if (state.remaining === 0 && payoutRef.current === state) payoutRef.current = null;
+        }, at),
+      );
+    }
+    if (coinSfx) {
+      // 1 回目は精算時のバッチ（優先度順の直列化）に含まれているので 2 回目以降だけ
+      for (const at of plan.sfxAtMs.slice(1)) {
+        state.timers.push(window.setTimeout(() => sfxRef.current?.play(coinSfx), at));
+      }
+    }
+  }, []);
+
+  // 確定フラッシュ: ファンファーレに合わせてリールのバックライトを明滅させる
+  useEffect(() => {
+    if (flashKey === 0) return;
+    let on = true;
+    let count = 0;
+    setFlashOn(true);
+    const id = window.setInterval(() => {
+      on = !on;
+      count += 1;
+      if (count >= FLASH_CYCLES * 2) {
+        window.clearInterval(id);
+        setFlashOn(null);
+        return;
+      }
+      setFlashOn(on);
+    }, FLASH_PERIOD_MS);
+    return () => {
+      window.clearInterval(id);
+      setFlashOn(null);
+    };
+  }, [flashKey]);
+
+  /** リールごとのバックライト。フラッシュ中は全段明滅、停止後は入賞ラインの段だけ点灯 */
+  const reelLamps = useMemo<LampLevels[]>(
+    () =>
+      machine.strips.map((_, reel) =>
+        flashOn !== null ? flashLamps(flashOn) : lampsForRows(litRowsByReel?.[reel] ?? null),
+      ),
+    [machine, flashOn, litRowsByReel],
+  );
+
   const applyMachine = useCallback((next: MachineDef, sel?: 'random' | number) => {
     const settings = next.lottery.settings ?? 1;
     const choice = sel ?? settingSelRef.current;
     const setting = choice === 'random' ? 1 + Math.floor(Math.random() * settings) : choice;
     sessionRef.current = null;
+    stopPayout(false); // クレジットは初期値に戻すので刻みの残りは捨てる
     navRef.current = next.nav ? new NavLayer(next, Date.now() >>> 0) : null;
     subRef.current = new Subboard(next, Date.now() >>> 0);
     setSubView(subRef.current.snapshot());
     setMachine(next);
     setEngine(initialState(next, setting));
     setCredit(INITIAL_CREDIT);
+    setWinShown(0);
+    setLitRowsByReel(null);
     setPhase('ready');
     setReels(freshReels(next));
     setLastEvent(null);
@@ -447,7 +535,7 @@ export function App() {
     setBetDone(false);
     sfxRef.current?.stopBgm();
     saveStored(MACHINE_KEY, next.name); // 再訪時に同じ台へ座り直す
-  }, []);
+  }, [stopPayout]);
 
   const allMachinesRef = useRef(allMachines);
   allMachinesRef.current = allMachines;
@@ -496,6 +584,7 @@ export function App() {
 
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
+    stopPayout(true); // 払い出しの刻みが残っていれば一括で入れてから次ゲーム
     // 強制フラグ（教材モード）: 次の 1 ゲームだけ抽選を上書き
     const sel = forceSelRef.current;
     const forceFlags = sel === '' ? undefined : sel === FORCE_PURE_MISS ? [] : sel.split('+');
@@ -535,10 +624,24 @@ export function App() {
     setSubView(subFx.view);
     setCredit((c) => c - session.bet);
     setLastEvent(null);
+    setWinShown(0);
+    setLitRowsByReel(null); // 入賞ラインの点灯はレバーで解除（全段点灯で回り出す）
     const startSpin = () => {
-      lastSpinStartRef.current = performance.now();
-      setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
+      const startAt = performance.now();
+      lastSpinStartRef.current = startAt;
+      // 停止中の整列ステップから加速開始。3 リール同時始動
+      setReels((prev) =>
+        prev.map((reel) => ({
+          top: reel.top,
+          stopped: false,
+          motion: { startAt, startStep: komaToStep(reel.top), targetStep: null },
+        })),
+      );
       setPhase('spinning');
+      setArmed(false);
+      window.setTimeout(() => {
+        if (sessionRef.current === session) setArmed(true);
+      }, ACCEL_MS);
     };
     if (waitMs > 0) {
       // ウエイト: レバーは受け付け済み。待ち時間が明けてからリールが回る
@@ -549,16 +652,17 @@ export function App() {
     } else {
       startSpin();
     }
-  }, [playSfx]);
+  }, [playSfx, stopPayout]);
 
   /** 全リール停止後の精算と演出。通常プレイ（stopReel）と即入賞（教材モード）で共用 */
   const settleSession = useCallback(
     (session: GameSession): { state: EngineState; event: GameEvent } => {
       const { state, event } = session.finish(rngRef.current);
       sessionRef.current = null;
+      stopPayout(true); // 即入賞の 2 ゲーム目など、前の刻みが残っていれば先に入れる
       setEngine(state);
-      setCredit((c) => c + event.payout);
       setLastEvent(event);
+      setLitRowsByReel(litRows(machineRef.current, event.stops)); // 入賞ラインの段だけ点灯
       setPhase('ready');
       setNavDisplay(null);
       const navNotes = navRef.current?.onEvent(event) ?? [];
@@ -593,13 +697,17 @@ export function App() {
       const batch: SfxName[] = [];
       const bonusStart = event.bonusStarted !== null && kindOf(event.bonusStarted) !== 'sb';
       if (bonusStart) batch.push('fanfare');
+      let coinSfx: SfxName | null = null;
       if (event.replayWon) batch.push('replay');
       else if (event.payout > 0) {
         // 払い出し音は状態と額で分ける。賭け枚数以下の払い出しは「勝ちに偽装された負け」なので
         // 祝福音ではなく受領の確認音だけにする（負けを勝ちに見せない）
         const inBonus = state.base.type === 'bonus' || state.ct !== null || (navRef.current?.atActive ?? false);
-        batch.push(inBonus ? 'payoutBonus' : event.payout < session.bet ? 'payoutLow' : 'payout');
+        coinSfx = inBonus ? 'payoutBonus' : event.payout < session.bet ? 'payoutLow' : 'payout';
+        batch.push(coinSfx);
       }
+      // クレジットは 1 枚ずつ刻む。ファンファーレが払い出し音を消すとき（planSfxBatch）は数字だけ進む
+      startPayout(event.payout, bonusStart ? null : coinSfx);
       if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
       if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
         batch.push('kyuin');
@@ -642,25 +750,30 @@ export function App() {
       if (parts.length > 0) pushLog(parts.join(' '));
       return { state, event };
     },
-    [pushLog, playSfx],
+    [pushLog, startPayout, stopPayout],
   );
 
   const stopReel = useCallback(
     (reel: number) => {
       const session = sessionRef.current;
       if (phaseRef.current !== 'spinning' || !session) return;
-      if (reelsRef.current[reel]!.stopped) return;
-      const frames = machineRef.current.frames;
-      const pos = reelPositionsRef.current[reel] ?? 0;
-      // 押下時刻の量子化: 次に基準段（下段）へ整列するコマ = 押下位置（ここから前進 0〜4 コマに滑る）
-      const push = Math.ceil(pos) % frames;
+      const view = reelsRef.current[reel]!;
+      if (view.stopped || view.motion === null) return;
+      const now = performance.now();
+      // 定速到達前はボタン未点灯（実機のボタン有効化）。押しても何も起きない
+      if (!isArmed(now - view.motion.startAt)) return;
+      const spec = motorSpec(machineRef.current.frames);
+      // 押下時刻の量子化: 押下ステップから次に基準段（下段）へ整列するコマ = 押下位置
+      // （ここから前進 0〜4 コマに滑る）。描画の状態ではなく軌道の式から直接求める
+      const pushStep = stepAt(spec, view.motion, now);
+      const push = pushKomaAt(spec, pushStep);
       const stopEvent = session.stopReel(reel, push);
-      // 停止音は見た目の停止（滑り込みの着地）に合わせる。最大 5 コマ弱 ≒ 190ms
-      const dist = (((stopEvent.stopPosition - pos) % frames) + frames) % frames;
-      const landMs = dist * (REV_MS / frames);
+      const motion = { ...view.motion, targetStep: stopTargetStep(spec, pushStep, stopEvent.stopPosition) };
+      // 停止音は見た目の停止（目標ステップへの到達）に合わせる。最大 119 ステップ ≒ 186ms
+      const landMs = Math.max(0, arrivalAt(spec, motion) - now);
       window.setTimeout(() => playSfx('reelStop'), landMs);
       setReels((prev) =>
-        prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
+        prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true, motion } : r)),
       );
       if (session.isComplete) {
         // 精算（払い出し音・WIN 表示・BGM イン）が見た目の停止より先に走らないよう、
@@ -695,7 +808,7 @@ export function App() {
         setReels(
           machineRef.current.strips.map((_, reel) => {
             const stop = session.stopped.find((s) => s.reel === reel)!;
-            return { top: stop.stopPosition, stopped: true };
+            return { top: stop.stopPosition, stopped: true, motion: null };
           }),
         );
         return settleSession(session);
@@ -825,6 +938,7 @@ export function App() {
     (noticeMode === 'flag' ? pendingBonus : noticeMode === 'release' ? pendingBonus && !engine.lid : false) ||
     (subFxOn && subView.lamp);
   const lampRainbow = subFxOn && subView.zone?.rainbow === true;
+  const cabinetLamps = statusLamps({ phase, betDone, pendingRebet: engine.pendingRebet, bet: machine.bet });
 
   const statusChips: string[] = [];
   if (engine.base.type === 'bonus') {
@@ -984,11 +1098,26 @@ export function App() {
               key={reel}
               strip={strip}
               top={reels[reel]!.top}
-              spinning={!reels[reel]!.stopped}
-              positions={reelPositionsRef}
-              index={reel}
+              motion={reels[reel]!.motion}
+              lamps={reelLamps[reel] ?? LAMPS_ALL_ON}
             />
           ))}
+        </div>
+
+        {/* 状態ランプ: 投入 → BET → スタート点滅 → 回転中は消灯（cabinet-fx.statusLamps） */}
+        <div className="status-lamps" data-testid="status-lamps" aria-hidden>
+          <span className={`status-lamp ${cabinetLamps.insert ? 'status-lamp-blink' : ''}`}>INSERT</span>
+          <span className="status-lamp-group">
+            {[1, 2, 3].map((n) => (
+              <span key={n} className={`status-lamp status-lamp-bet ${n <= cabinetLamps.betCount ? 'status-lamp-lit' : ''}`}>
+                {n}
+              </span>
+            ))}
+            <span className="status-lamp-caption">BET</span>
+          </span>
+          <span className={`status-lamp ${cabinetLamps.replay ? 'status-lamp-lit' : ''}`}>REPLAY</span>
+          <span className={`status-lamp ${cabinetLamps.start ? 'status-lamp-blink' : ''}`}>START</span>
+          <span className={`status-lamp ${cabinetLamps.wait ? 'status-lamp-lit' : ''}`}>WAIT</span>
         </div>
 
         <div className="controls">
@@ -1014,7 +1143,7 @@ export function App() {
               key={reel}
               className="stop-btn"
               onClick={() => stopReel(reel)}
-              disabled={phase !== 'spinning' || reels[reel]!.stopped}
+              disabled={phase !== 'spinning' || !armed || reels[reel]!.stopped}
               data-testid={`stop-${reel}`}
             >
               {['左 (J)', '中 (K)', '右 (L)'][reel]}
@@ -1029,7 +1158,7 @@ export function App() {
           </div>
           <div className="counter">
             <span className="counter-label">WIN</span>
-            <span className="counter-value win-value">{lastEvent?.payout ?? 0}</span>
+            <span className="counter-value win-value" data-testid="win">{winShown}</span>
           </div>
         </div>
 

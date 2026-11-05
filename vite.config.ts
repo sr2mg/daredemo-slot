@@ -20,6 +20,11 @@ export default defineConfig(({ mode }) => ({
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         bgm: fileURLToPath(new URL('./bgm.html', import.meta.url)),
       },
+      output: {
+        // three.js はリール描画（src/ui/reel-gl.ts）専用で更新頻度が低いので、アプリ本体と
+        // 別チャンクにしてデプロイをまたいだキャッシュを効かせる（bgm エントリは参照しない）。
+        manualChunks: { three: ['three'] },
+      },
     },
   },
   server: {

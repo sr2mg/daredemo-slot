@@ -40,3 +40,22 @@ export function winsAt(machine: MachineDef, stops: readonly number[]): RoleId[] 
   }
   return result;
 }
+
+/**
+ * 入賞したライン（machine.lines の添字）。winsAt と同じ判定をライン側から集計したもので、
+ * 入賞ラインの点灯（筐体演出）に使う。どの役も揃っていなければ空
+ */
+export function winningLines(machine: MachineDef, stops: readonly number[]): number[] {
+  const result: number[] = [];
+  machine.lines.forEach((line, index) => {
+    const hit = machine.roles.some((role) => {
+      for (let reel = 0; reel < stops.length; reel++) {
+        const want = role.pattern[reel]!;
+        if (want !== 'any' && symbolAt(machine, reel, stops[reel]!, line[reel]!) !== want) return false;
+      }
+      return true;
+    });
+    if (hit) result.push(index);
+  });
+  return result;
+}
