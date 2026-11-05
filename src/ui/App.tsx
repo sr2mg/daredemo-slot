@@ -28,6 +28,15 @@ import type { SubboardView } from './subboard.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
 import { createReelGlView, LAMPS_ALL_ON } from './reel-gl.js';
 import type { LampLevels, ReelGlView, SymbolLook } from './reel-gl.js';
+import {
+  FLASH_CYCLES,
+  FLASH_PERIOD_MS,
+  flashLamps,
+  lampsForRows,
+  litRows,
+  payoutSchedule,
+  statusLamps,
+} from './cabinet-fx.js';
 import { SoundTestPanel } from './sound-test.js';
 import {
   ACCEL_MS,
@@ -343,6 +352,14 @@ export function App() {
   );
   /** ボーナス開始フラッシュのトリガー（インクリメントで再生） */
   const [flashKey, setFlashKey] = useState(0);
+  /** 確定フラッシュ中のリールランプの明滅位相。null = フラッシュ中でない */
+  const [flashOn, setFlashOn] = useState<boolean | null>(null);
+  /** 全停止後に点灯させる段（リールごとの行集合）。null = 全段点灯。次のレバーで解除 */
+  const [litRowsByReel, setLitRowsByReel] = useState<ReadonlySet<number>[] | null>(null);
+  /** WIN 表示。払い出しを 1 枚ずつ刻むので event.payout とは別に持つ */
+  const [winShown, setWinShown] = useState(0);
+  /** 刻み中の払い出し（タイマーと未加算枚数）。レバーで残りを一括加算して打ち切る */
+  const payoutRef = useRef<{ timers: number[]; remaining: number } | null>(null);
   /** 効果音（OPLL/YM2413 実装 = emu2413）。AudioContext は初回操作時に生成 */
   const sfxRef = useRef<SfxPlayer | null>(null);
   if (sfxRef.current === null) sfxRef.current = new SfxPlayer();
@@ -420,17 +437,92 @@ export function App() {
     sfxRef.current?.play(name);
   }, []);
 
+  /** 刻み中の払い出しを打ち切る。flush なら残りを一括加算（レバー）、そうでなければ捨てる（機種切替） */
+  const stopPayout = useCallback((flush: boolean) => {
+    const cur = payoutRef.current;
+    if (!cur) return;
+    payoutRef.current = null;
+    for (const t of cur.timers) window.clearTimeout(t);
+    if (flush && cur.remaining > 0) {
+      // レバーのクレジット判定は creditRef を同期的に読むので、state と一緒に ref も進める
+      creditRef.current += cur.remaining;
+      setCredit((c) => c + cur.remaining);
+      setWinShown((w) => w + cur.remaining);
+    }
+  }, []);
+
+  /**
+   * 払い出しを 1 枚ずつ刻む（cabinet-fx.payoutSchedule）。クレジットと WIN がコイン音の拍で進み、
+   * 音は 8 枚ごとに頭出しする。coinSfx が null（ファンファーレが払い出し音を消した）なら数字だけ進む
+   */
+  const startPayout = useCallback((payout: number, coinSfx: SfxName | null) => {
+    const plan = payoutSchedule(payout);
+    if (plan.coinAtMs.length === 0) return;
+    const state = { timers: [] as number[], remaining: payout };
+    payoutRef.current = state;
+    for (const at of plan.coinAtMs) {
+      state.timers.push(
+        window.setTimeout(() => {
+          state.remaining -= 1;
+          setCredit((c) => c + 1);
+          setWinShown((w) => w + 1);
+          if (state.remaining === 0 && payoutRef.current === state) payoutRef.current = null;
+        }, at),
+      );
+    }
+    if (coinSfx) {
+      // 1 回目は精算時のバッチ（優先度順の直列化）に含まれているので 2 回目以降だけ
+      for (const at of plan.sfxAtMs.slice(1)) {
+        state.timers.push(window.setTimeout(() => sfxRef.current?.play(coinSfx), at));
+      }
+    }
+  }, []);
+
+  // 確定フラッシュ: ファンファーレに合わせてリールのバックライトを明滅させる
+  useEffect(() => {
+    if (flashKey === 0) return;
+    let on = true;
+    let count = 0;
+    setFlashOn(true);
+    const id = window.setInterval(() => {
+      on = !on;
+      count += 1;
+      if (count >= FLASH_CYCLES * 2) {
+        window.clearInterval(id);
+        setFlashOn(null);
+        return;
+      }
+      setFlashOn(on);
+    }, FLASH_PERIOD_MS);
+    return () => {
+      window.clearInterval(id);
+      setFlashOn(null);
+    };
+  }, [flashKey]);
+
+  /** リールごとのバックライト。フラッシュ中は全段明滅、停止後は入賞ラインの段だけ点灯 */
+  const reelLamps = useMemo<LampLevels[]>(
+    () =>
+      machine.strips.map((_, reel) =>
+        flashOn !== null ? flashLamps(flashOn) : lampsForRows(litRowsByReel?.[reel] ?? null),
+      ),
+    [machine, flashOn, litRowsByReel],
+  );
+
   const applyMachine = useCallback((next: MachineDef, sel?: 'random' | number) => {
     const settings = next.lottery.settings ?? 1;
     const choice = sel ?? settingSelRef.current;
     const setting = choice === 'random' ? 1 + Math.floor(Math.random() * settings) : choice;
     sessionRef.current = null;
+    stopPayout(false); // クレジットは初期値に戻すので刻みの残りは捨てる
     navRef.current = next.nav ? new NavLayer(next, Date.now() >>> 0) : null;
     subRef.current = new Subboard(next, Date.now() >>> 0);
     setSubView(subRef.current.snapshot());
     setMachine(next);
     setEngine(initialState(next, setting));
     setCredit(INITIAL_CREDIT);
+    setWinShown(0);
+    setLitRowsByReel(null);
     setPhase('ready');
     setReels(freshReels(next));
     setLastEvent(null);
@@ -443,7 +535,7 @@ export function App() {
     setBetDone(false);
     sfxRef.current?.stopBgm();
     saveStored(MACHINE_KEY, next.name); // 再訪時に同じ台へ座り直す
-  }, []);
+  }, [stopPayout]);
 
   const allMachinesRef = useRef(allMachines);
   allMachinesRef.current = allMachines;
@@ -492,6 +584,7 @@ export function App() {
 
   const pullLever = useCallback(() => {
     if (phaseRef.current !== 'ready') return;
+    stopPayout(true); // 払い出しの刻みが残っていれば一括で入れてから次ゲーム
     // 強制フラグ（教材モード）: 次の 1 ゲームだけ抽選を上書き
     const sel = forceSelRef.current;
     const forceFlags = sel === '' ? undefined : sel === FORCE_PURE_MISS ? [] : sel.split('+');
@@ -531,6 +624,8 @@ export function App() {
     setSubView(subFx.view);
     setCredit((c) => c - session.bet);
     setLastEvent(null);
+    setWinShown(0);
+    setLitRowsByReel(null); // 入賞ラインの点灯はレバーで解除（全段点灯で回り出す）
     const startSpin = () => {
       const startAt = performance.now();
       lastSpinStartRef.current = startAt;
@@ -557,16 +652,17 @@ export function App() {
     } else {
       startSpin();
     }
-  }, [playSfx]);
+  }, [playSfx, stopPayout]);
 
   /** 全リール停止後の精算と演出。通常プレイ（stopReel）と即入賞（教材モード）で共用 */
   const settleSession = useCallback(
     (session: GameSession): { state: EngineState; event: GameEvent } => {
       const { state, event } = session.finish(rngRef.current);
       sessionRef.current = null;
+      stopPayout(true); // 即入賞の 2 ゲーム目など、前の刻みが残っていれば先に入れる
       setEngine(state);
-      setCredit((c) => c + event.payout);
       setLastEvent(event);
+      setLitRowsByReel(litRows(machineRef.current, event.stops)); // 入賞ラインの段だけ点灯
       setPhase('ready');
       setNavDisplay(null);
       const navNotes = navRef.current?.onEvent(event) ?? [];
@@ -601,13 +697,17 @@ export function App() {
       const batch: SfxName[] = [];
       const bonusStart = event.bonusStarted !== null && kindOf(event.bonusStarted) !== 'sb';
       if (bonusStart) batch.push('fanfare');
+      let coinSfx: SfxName | null = null;
       if (event.replayWon) batch.push('replay');
       else if (event.payout > 0) {
         // 払い出し音は状態と額で分ける。賭け枚数以下の払い出しは「勝ちに偽装された負け」なので
         // 祝福音ではなく受領の確認音だけにする（負けを勝ちに見せない）
         const inBonus = state.base.type === 'bonus' || state.ct !== null || (navRef.current?.atActive ?? false);
-        batch.push(inBonus ? 'payoutBonus' : event.payout < session.bet ? 'payoutLow' : 'payout');
+        coinSfx = inBonus ? 'payoutBonus' : event.payout < session.bet ? 'payoutLow' : 'payout';
+        batch.push(coinSfx);
       }
+      // クレジットは 1 枚ずつ刻む。ファンファーレが払い出し音を消すとき（planSfxBatch）は数字だけ進む
+      startPayout(event.payout, bonusStart ? null : coinSfx);
       if (event.bonusEnded && kindOf(event.bonusEnded) !== 'sb') sfx?.stopBgm();
       if (event.queuedBonus && kindOf(event.queuedBonus) !== 'sb' && noticeModeRef.current === 'flag') {
         batch.push('kyuin');
@@ -650,7 +750,7 @@ export function App() {
       if (parts.length > 0) pushLog(parts.join(' '));
       return { state, event };
     },
-    [pushLog, playSfx],
+    [pushLog, startPayout, stopPayout],
   );
 
   const stopReel = useCallback(
@@ -838,6 +938,7 @@ export function App() {
     (noticeMode === 'flag' ? pendingBonus : noticeMode === 'release' ? pendingBonus && !engine.lid : false) ||
     (subFxOn && subView.lamp);
   const lampRainbow = subFxOn && subView.zone?.rainbow === true;
+  const cabinetLamps = statusLamps({ phase, betDone, pendingRebet: engine.pendingRebet, bet: machine.bet });
 
   const statusChips: string[] = [];
   if (engine.base.type === 'bonus') {
@@ -998,8 +1099,25 @@ export function App() {
               strip={strip}
               top={reels[reel]!.top}
               motion={reels[reel]!.motion}
+              lamps={reelLamps[reel] ?? LAMPS_ALL_ON}
             />
           ))}
+        </div>
+
+        {/* 状態ランプ: 投入 → BET → スタート点滅 → 回転中は消灯（cabinet-fx.statusLamps） */}
+        <div className="status-lamps" data-testid="status-lamps" aria-hidden>
+          <span className={`status-lamp ${cabinetLamps.insert ? 'status-lamp-blink' : ''}`}>INSERT</span>
+          <span className="status-lamp-group">
+            {[1, 2, 3].map((n) => (
+              <span key={n} className={`status-lamp status-lamp-bet ${n <= cabinetLamps.betCount ? 'status-lamp-lit' : ''}`}>
+                {n}
+              </span>
+            ))}
+            <span className="status-lamp-caption">BET</span>
+          </span>
+          <span className={`status-lamp ${cabinetLamps.replay ? 'status-lamp-lit' : ''}`}>REPLAY</span>
+          <span className={`status-lamp ${cabinetLamps.start ? 'status-lamp-blink' : ''}`}>START</span>
+          <span className={`status-lamp ${cabinetLamps.wait ? 'status-lamp-lit' : ''}`}>WAIT</span>
         </div>
 
         <div className="controls">
@@ -1040,7 +1158,7 @@ export function App() {
           </div>
           <div className="counter">
             <span className="counter-label">WIN</span>
-            <span className="counter-value win-value">{lastEvent?.payout ?? 0}</span>
+            <span className="counter-value win-value" data-testid="win">{winShown}</span>
           </div>
         </div>
 

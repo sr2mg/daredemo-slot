@@ -75,6 +75,14 @@ export interface SfxRecipe {
   build(root: number): SfxEvent[];
 }
 
+/**
+ * コイン払い出し音の 1 打の間隔（秒）と 1 回の音に含まれる打数。
+ * ホッパーの払い出し速度（約 16 枚/秒）の可聴化で、筐体のクレジット表示は
+ * この間隔で 1 枚ずつ刻む（音と数字が同じ拍で進む）
+ */
+export const COIN_STEP_SEC = 0.062;
+export const COINS_PER_SFX = 8;
+
 /** 低域補強の 1 打（タイトなキック）。中高域の主音に重ねて、騒音下でも輪郭が残るようにする */
 const kick = (t: number, gain = 0.5): NoiseEvent => ({ kind: 'noise', t, dur: 0.05, freq: 100, gain });
 
@@ -189,8 +197,8 @@ export const SFX_RECIPES: SfxRecipe[] = [
     defaultVoice: 12, // ビブラフォン
     build: (root) => {
       const events: SfxEvent[] = [];
-      for (let i = 0; i < 8; i++) {
-        events.push(tone(i * 0.062, 0.05, i % 2 === 0 ? root : root - 5, 0.45));
+      for (let i = 0; i < COINS_PER_SFX; i++) {
+        events.push(tone(i * COIN_STEP_SEC, 0.05, i % 2 === 0 ? root : root - 5, 0.45));
       }
       return events;
     },

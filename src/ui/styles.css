@@ -2102,3 +2102,97 @@ button:disabled {
 .form-issue-warning {
   color: #ffb74d;
 }
+
+/* ===== 筐体の状態ランプ（INSERT / BET / REPLAY / START / WAIT） =====
+ * リール窓の直下。実機の「投入 → BET 点灯 → START 点滅 → 回転中は消灯」を
+ * cabinet-fx.statusLamps が決め、ここは光り方だけを持つ */
+
+.status-lamps {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: clamp(8px, 1.6vmin, 16px);
+  margin: calc(clamp(14px, 2.5vmin, 24px) * -0.45) auto clamp(12px, 2vmin, 20px);
+}
+
+.status-lamp {
+  font-family: 'Consolas', monospace;
+  font-size: clamp(9px, 1.4vmin, 12px);
+  letter-spacing: 1px;
+  padding: 2px clamp(6px, 1.2vmin, 10px);
+  border-radius: 999px;
+  color: #4b4b60;
+  background: #15151d;
+  border: 1px solid #2c2c40;
+  transition: color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+
+.status-lamp-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.status-lamp-bet {
+  width: clamp(16px, 2.4vmin, 22px);
+  height: clamp(16px, 2.4vmin, 22px);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+}
+
+.status-lamp-caption {
+  font-size: clamp(9px, 1.4vmin, 12px);
+  letter-spacing: 1px;
+  color: #666;
+  margin-left: 4px;
+}
+
+.status-lamp-lit,
+.status-lamp-blink {
+  color: #17171f;
+  background: #ffd54f;
+  border-color: #ffb300;
+  box-shadow: 0 0 10px 2px rgba(255, 213, 79, 0.55);
+}
+
+.status-lamp-blink {
+  animation: status-blink 0.6s step-end infinite alternate;
+}
+
+@keyframes status-blink {
+  from {
+    color: #17171f;
+    background: #ffd54f;
+    box-shadow: 0 0 10px 2px rgba(255, 213, 79, 0.55);
+  }
+  to {
+    color: #4b4b60;
+    background: #15151d;
+    box-shadow: none;
+  }
+}
+
+.app-large-display .status-lamps {
+  gap: clamp(14px, calc(var(--large-cell-h) * 0.07), 24px);
+  margin-bottom: clamp(20px, calc(var(--large-cell-h) * 0.1), 30px);
+}
+
+.app-large-display .status-lamp,
+.app-large-display .status-lamp-caption {
+  font-size: clamp(12px, calc(var(--large-cell-h) * 0.065), 16px);
+}
+
+.app-large-display .status-lamp-bet {
+  width: clamp(22px, calc(var(--large-cell-h) * 0.12), 30px);
+  height: clamp(22px, calc(var(--large-cell-h) * 0.12), 30px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-lamp-blink {
+    animation: none;
+  }
+}
