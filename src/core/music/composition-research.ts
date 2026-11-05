@@ -309,6 +309,24 @@ export const COMPOSITION_HYPOTHESES: readonly CompositionHypothesis[] = [
     nextComparison: '同一曲で終わり方 final/ritardando を切り替えてブラインド比較。歌ものの谷区間を'
       + '通常/ロングトーン、サビ前をパワーコード連打にして緊張の起伏を標的質問で測る。',
   },
+  {
+    id: 'HYP-020',
+    title: '曲型を区間機能の文法から生成する(提示→展開→緩和→帰還→終幕の旋回と単一頂点)',
+    status: 'untested',
+    proposition: '手書きの曲型で得られた近さの大半は骨格(区間長・力の弧・拍の割り方の切替・テクスチャの置き場・'
+      + '進行と調の切替)から来ているので、骨格を verse→chorus の旋回の繰り返しと「最後の旋回だけが頂点を持つ」'
+      + '規則から生成すれば、様式と seed と長さだけで手書きと同じ構造クラスの曲型が出る。'
+      + '根拠は Caplin の形式機能論(提示・展開・終止の機能を区間の役割へ写す)と、ポピュラー音楽の verse-chorus 形式。'
+      + '単一頂点・頂点直前の谷・終幕の下降は力の弧の規則、主題の再登場の変形は役割が要求する認識可能性、'
+      + '拍の割り方の対比は格子の共有単位(ステップ=ヘミオラ、拍)から導く。',
+    assessment: '装置は実装済み(form-generator.ts の文法と予算配分、様式の拍節ファセット、役割ごとの進行の性質による'
+      + '選択、終幕の全音上への転調)。全様式・全長で validateForm 合格・主題 5 種以内・構造規約(単一頂点・谷・下降)を'
+      + 'テストで固定し、受理テスト(12/8 の A・S と 6/4 の B、谷と助走、rit.)の構造クラスが出ることも固定した。'
+      + '効果は未聴取。',
+    experimentIds: [],
+    nextComparison: '同じ様式・seed で手書きの曲型と生成した曲型をブラインド比較し、区間の切り替わりの知覚・頂点の'
+      + '位置の一致・終わった感を標的質問で測る。旋回数と拡張スロットの優先度を入れ替えた版も比較する。',
+  },
 ] as const;
 
 export const COMPOSITION_HYPOTHESIS_STATUS_LABELS: Record<CompositionHypothesisStatus, string> = {

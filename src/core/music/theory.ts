@@ -11,6 +11,7 @@ import { DRUM_GHOST } from './drum-articulation.js';
 import type { GrooveFeel } from './groove.js';
 import type {
   AccompanimentFigure,
+  BarGrouping,
   BassLinePolicy,
   DuetPolicy,
   GlidePolicy,
@@ -817,6 +818,22 @@ export function hasArpeggioAccompaniment(texture: TextureFacet | undefined): boo
   return accompanimentCandidates(texture).some((figure) => figure === 'arpeggio8' || figure === 'arpeggio16');
 }
 
+/**
+ * 拍節ファセット: この様式の曲型が使ってよい拍の割り方(grid.ts)。省略 = 4/4(4x2)だけ。
+ * 16 分格子そのものが同一性の様式(シャッフル 16 分・ブレイクビーツ・4 つ打ち)は宣言しない。
+ * ×3 の格子ではスウィングも連符レイヤーも無効(effectiveGroove)なので、shuffle16 を既定に持つ
+ * 様式が 4x2 以外を宣言すると矛盾する(tests/form-generator.test.ts が固定)。
+ * 読むのは曲型生成器(form-generator.ts)だけで、明示の曲型(プリセット・手入力)は制限しない。
+ */
+export interface MeterFacet {
+  groupings: readonly BarGrouping[];
+}
+
+/** 様式が許す拍の割り方(省略は 4x2 だけ)。 */
+export function allowedGroupings(meter: MeterFacet | undefined): readonly BarGrouping[] {
+  return meter?.groupings ?? ['4x2'];
+}
+
 /** 装置ファセット: スタイル既定の装置方針。省略はすべてoff(素の和音・骨格のみ)。 */
 export interface DeviceDefaults {
   /** テンション方針(tension.ts)。 */
@@ -867,6 +884,7 @@ export interface StyleDef {
   melody: MelodyFacet;
   texture: TextureFacet;
   devices?: DeviceDefaults;
+  meter?: MeterFacet;
 }
 
 export const STYLES: StyleDef[] = [
@@ -925,6 +943,8 @@ export const STYLES: StyleDef[] = [
       introRoles: ['fanfare'],
       counter: { maxDur: { counterline: 1.25, response: 0.75 } },
     },
+    // 8 ビートの 4/4 に加え、12/8(シャッフル・バラード)はロックの常用拍節。
+    meter: { groupings: ['4x2', '4x3'] },
   },
   {
     id: 'kmmo',
@@ -1131,6 +1151,8 @@ export const STYLES: StyleDef[] = [
       // 導入はモチーフの断片だけ(打楽器が無いのでグルーヴ提示・カウントインは成立しない)。
       introRoles: ['motif'],
     },
+    // 参照音源は 12/8 の歌と 6/4 のヘミオラ、4/4 を同じ小節長で行き来する(grid.ts)。
+    meter: { groupings: ['4x2', '4x3', '3x4'] },
     // 色付けは和音トークン側(add9/6/sus)で持つ。テンション装置で b7 を足すと属7の
     // 牽引力が戻り、主音不在の浮遊が壊れるので装置は宣言しない(off)。
   },

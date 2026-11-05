@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { compose } from '../core/music/compose.js';
 import { BLIND_STUDY_FORM } from '../core/music/blind-study.js';
+import { generateForm } from '../core/music/form-generator.js';
 import {
   FORM_PRESET_IDS, FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, resolveForm,
   sectionStartBars, totalBars, validateForm,
@@ -156,6 +157,14 @@ import type { SfxPlayer } from './sfx-player.js';
 
 const BLIND_VOTES_KEY = 'daredemo.bgmComposer.blindStudy.v1';
 
+/** 曲型生成の目標小節数(UI の既定は歌ものプリセットと同じ 96、4 小節刻み)。 */
+const DEFAULT_GENERATE_BARS = 96;
+const MIN_GENERATE_BARS = 4;
+const MAX_GENERATE_BARS = 160;
+const clampGenerateBars = (value: number): number => (
+  Number.isFinite(value) ? Math.max(MIN_GENERATE_BARS, Math.min(MAX_GENERATE_BARS, Math.round(value))) : DEFAULT_GENERATE_BARS
+);
+
 function loadBlindStudyVotes(): BlindStudyVote[] {
   return loadStored<BlindStudyVote[]>(
     BLIND_VOTES_KEY,
@@ -303,6 +312,19 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     setProgId(nextProgId);
     if (options.resetIntro) setIntro(introDefaultFor(next));
     resetChoice(nextProgId, next);
+  };
+  // 曲型の生成: 様式・新しい seed・目標小節数から区間列を作り、カスタム曲型として表へ展開する
+  // (保存形式は明示の区間列のまま。進行・イントロ・コード選択は selectForm が整える)。
+  const [generateBars, setGenerateBars] = useState(DEFAULT_GENERATE_BARS);
+  const generateNewForm = () => {
+    const style = STYLES.find((s) => s.id === styleId) ?? STYLES[0]!;
+    const generated = generateForm({
+      style,
+      seed: newSeed(),
+      targetBars: clampGenerateBars(generateBars),
+      defaults: { tonality, progressionId: prog.id, keyRoot },
+    });
+    selectForm(generated);
   };
   // 区間テーブルの検証。compose も同じ規則で拒否するので、ここでは行ごとに見せるだけ。
   const formIssues = useMemo(
@@ -910,17 +932,19 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                 <option value="pcm">PCM（SoundFont・制約最小）</option>
               </select>
             </SettingField>
-            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる">
+            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる。「生成」は様式と seed から区間列を作る">
               <select
                 value={formPresetId ?? 'custom'}
                 onChange={(e) => {
                   if (isFormPresetId(e.target.value)) selectForm(e.target.value as FormPresetId);
+                  else if (e.target.value === 'generate') generateNewForm();
                 }}
                 data-testid="st-form"
               >
                 {FORM_PRESET_IDS.map((id) => (
                   <option key={id} value={id}>{FORM_PRESET_LABELS[id]}</option>
                 ))}
+                <option value="generate">生成（様式と seed から {clampGenerateBars(generateBars)} 小節前後の区間列を作る）</option>
                 {formPresetId === null && <option value="custom">カスタム（{formBars}小節・{formSpec.sections.length}区間）</option>}
               </select>
             </SettingField>
@@ -988,8 +1012,25 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             </SettingField>
           </div>
 
-          {/* 曲型の区間列: プリセットは展開して編集できる(編集した時点でカスタム) */}
+          {/* 曲型の区間列: プリセットは展開して編集できる(編集した時点でカスタム)。生成はいつでも再抽選できる */}
           <div className="form-editor">
+            <div className="form-generate">
+              <label>
+                目標小節数
+                <input
+                  type="number"
+                  min={MIN_GENERATE_BARS}
+                  max={MAX_GENERATE_BARS}
+                  step={4}
+                  value={generateBars}
+                  onChange={(e) => setGenerateBars(Number(e.target.value))}
+                  data-testid="st-form-generate-bars"
+                />
+              </label>
+              <button type="button" onClick={generateNewForm} data-testid="st-form-generate">
+                🎲 曲型を生成（{styleDef.name}・{clampGenerateBars(generateBars)} 小節前後）
+              </button>
+            </div>
             {formPresetId !== null ? (
               <button
                 type="button"
