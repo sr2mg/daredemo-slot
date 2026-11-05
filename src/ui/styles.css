@@ -141,9 +141,6 @@ body {
   width: clamp(108px, 22vmin, 190px);
   height: calc(var(--cell-h) * 3);
   border: 1px solid #1b1b1b;
-  /* 正面固定カメラなので遠近は弱め。面の rotateX による縦圧縮を主役にする。 */
-  perspective: calc(var(--cell-h) * 24);
-  perspective-origin: 50% 50%;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.12),
     inset 0 0 16px rgba(0, 0, 0, 0.5);
@@ -204,130 +201,41 @@ body {
   box-shadow: inset 0 0 9px rgba(255, 255, 255, 0.08);
 }
 
-/* リール基体に固定された上・中・下段の 3 灯。図柄と一緒には回転しない。 */
-.reel-backlight {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 88% 31% at 50% 16.666%, rgba(255, 248, 218, 0.96) 0%, rgba(255, 241, 194, 0.58) 58%, transparent 100%),
-    radial-gradient(ellipse 88% 31% at 50% 50%, rgba(255, 250, 224, 0.98) 0%, rgba(255, 243, 200, 0.62) 58%, transparent 100%),
-    radial-gradient(ellipse 88% 31% at 50% 83.333%, rgba(255, 248, 218, 0.94) 0%, rgba(255, 239, 190, 0.54) 58%, transparent 100%),
-    #746e5d;
-}
-
-/* 反射凹部の仕切り。光源位置は窓に固定され、リール帯だけが前を通過する。 */
-.reel-backlight::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    transparent calc(33.333% - 1px),
-    rgba(35, 31, 23, 0.34) calc(33.333% - 1px),
-    rgba(35, 31, 23, 0.34) calc(33.333% + 1px),
-    transparent calc(33.333% + 1px),
-    transparent calc(66.666% - 1px),
-    rgba(35, 31, 23, 0.32) calc(66.666% - 1px),
-    rgba(35, 31, 23, 0.32) calc(66.666% + 1px),
-    transparent calc(66.666% + 1px),
-    transparent 100%
-  );
-}
-
-.reel-strip {
+/* three.js の描画面（reel-gl.ts）。リール帯・バックライトはすべてこの中で描く。CSS 側は窓枠と反射だけ。 */
+.reel-canvas {
   position: absolute;
   inset: 0;
   z-index: 1;
-  transform-style: preserve-3d;
-  transform-origin: 50% 50%;
-  will-change: transform;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.cell {
-  --lamp-exposure: 0;
-  --lamp-y: 50%;
-  --symbol-transmission: 0.12;
-  --transmission-brightness: 1.04;
-  --transmission-saturation: 1.08;
-  --transmission-contrast: 1.02;
+/* WebGL が使えない環境の代替表示（見える 3 段を文字で） */
+.reel-fallback {
   position: absolute;
-  top: 50%;
-  left: 0;
-  width: 100%;
-  height: var(--cell-h);
-  margin-top: calc(var(--cell-h) / -2);
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.reel-fallback-cell {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
   background: rgba(229, 226, 217, 0.92);
   font-size: clamp(32px, 8vmin, 64px);
   font-weight: bold;
   color: #333;
-  backface-visibility: hidden;
-  transform-origin: 50% 50%;
+  border-bottom: 1px solid rgba(35, 31, 23, 0.34);
 }
 
-/* 白色拡散インクを通る弱い透過光。図柄の抜き部分より大幅に暗い。 */
-.cell::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: calc(var(--lamp-exposure) * 0.14);
-  background: rgba(255, 249, 220, 0.78);
-}
-
-/* 図柄は640x400の透過印刷素材。3D変形はリール面だけにかけ、
-   画像自体は別レイヤー化しない（縮小後の再ラスタライズでぼけるため）。 */
-.symbol-stack {
-  position: relative;
-  isolation: isolate;
-  z-index: 1;
-  width: 94%;
-  height: 86%;
-  /* 隣接する3D面の背景との深度競合だけを避ける。子画像には重ねて指定しない。 */
-  transform: translateZ(0.1px);
-}
-
+/* 第四リール（演出専用）の図柄画像 */
 .cell-img {
   width: 94%;
   height: 86%;
   object-fit: contain;
-}
-
-.symbol-stack .cell-img,
-.symbol-transmission {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.symbol-print {
-  z-index: 1;
-}
-
-/* 透光性カラーインクを通った成分。図柄自体は発光体ではないため、
-   screen 合成は色がほんの少し持ち上がる程度に抑え、白を飽和させない。 */
-.symbol-transmission {
-  z-index: 2;
-  pointer-events: none;
-  opacity: calc(var(--lamp-exposure) * var(--symbol-transmission));
-  mix-blend-mode: screen;
-  -webkit-mask-image: radial-gradient(ellipse 120% 82% at 50% var(--lamp-y), #000 0%, #000 58%, transparent 100%);
-  mask-image: radial-gradient(ellipse 120% 82% at 50% var(--lamp-y), #000 0%, #000 58%, transparent 100%);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  filter:
-    brightness(var(--transmission-brightness, 1.12))
-    saturate(var(--transmission-saturation, 1.22))
-    contrast(var(--transmission-contrast, 1.06));
 }
 
 .panel-art {
@@ -341,40 +249,12 @@ body {
 }
 
 .sym-seven {
-  --symbol-transmission: 0.24;
-  --transmission-brightness: 1.04;
-  --transmission-saturation: 1.12;
-  --transmission-contrast: 1.03;
   color: #d32f2f;
 }
 
 .sym-bar {
-  --symbol-transmission: 0.24;
-  --transmission-brightness: 1.04;
-  --transmission-saturation: 1.08;
-  --transmission-contrast: 1.03;
   font-size: clamp(20px, 5vmin, 40px);
   color: #111;
-}
-
-.sym-bell {
-  --symbol-transmission: 0.18;
-}
-
-.sym-replay {
-  --symbol-transmission: 0.12;
-}
-
-.sym-cherry {
-  --symbol-transmission: 0.16;
-}
-
-.sym-melon {
-  --symbol-transmission: 0.15;
-}
-
-.sym-blank {
-  --symbol-transmission: 0;
 }
 
 .controls {

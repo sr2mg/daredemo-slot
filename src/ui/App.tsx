@@ -26,6 +26,8 @@ import { loadStored, oneOf, saveStored, usePersistentState } from './persist.js'
 import { Subboard } from './subboard.js';
 import type { SubboardView } from './subboard.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
+import { createReelGlView, LAMPS_ALL_ON } from './reel-gl.js';
+import type { LampLevels, ReelGlView, SymbolLook } from './reel-gl.js';
 import { SoundTestPanel } from './sound-test.js';
 import {
   ACCEL_MS,
@@ -170,59 +172,63 @@ interface ReelColumnProps {
   top: number;
   /** モーターへの回転指令（親が作り、押下の量子化にも同じ指令を使う）。null は即時配置 */
   motion: MotorCommand | null;
+  /** 上・中・下段のバックライト光量（1 = 通常点灯）。入賞ライン強調などの演出口 */
+  lamps?: LampLevels;
 }
 
+const symbolLook = (symbol: string): SymbolLook => {
+  const view = SYMBOL_VIEW[symbol];
+  const color = view?.className === 'sym-seven' ? '#d32f2f' : view?.className === 'sym-bar' ? '#111' : '#333';
+  return { text: view?.text ?? symbol, color };
+};
+
 /**
- * リール 1 本の見た目。全コマを CSS 3D の円周上へ並べ、円筒を連続回転させる。
- * アニメーションは rAF で DOM に直接書き、React の再レンダリングを毎フレーム走らせない。
+ * リール 1 本の見た目。three.js（reel-gl.ts）で正 n 角柱に図柄を貼り、3 灯のバックライトで裏から照らす。
+ * アニメーションは rAF でビューに直接コマ位置を渡し、React の再レンダリングを毎フレーム走らせない。
  * - 回転はモーターモデル（reel-motor.ts）の軌道を毎フレーム標本化する: 直線加速 → 80rpm の定速
  * - 実機準拠の下流れ: コマ番号が進む（滑る）方向のコマは画面の上から入ってくる。
- *   コマ番号が大きい面を円筒の上側へ配置し、回転角を減らすことで下へ流す。
- *   コアの stopPosition は下段なので、正面には常に stopPosition + 1 の面を合わせる
+ *   コアの stopPosition は下段なので、正面には常に stopPosition + 1 の面を合わせる（reel-gl.ts）
  * - 停止は目標ステップまで定速のまま進んで励磁保持（滑り 0〜4 コマ + 整列で最大 119 ステップ
  *   ≒ 186ms。実機の停止許容 190ms と整合）、回転方向へ微バウンドして着地
  * - 初期化・機種切り替え・即入賞（motion = null）は即座に合わせる
+ * - WebGL が使えない環境では見える 3 段を文字で出す
  */
-function ReelColumn({ strip, top, motion }: ReelColumnProps) {
-  const stripRef = useRef<HTMLDivElement | null>(null);
+function ReelColumn({ strip, top, motion, lamps = LAMPS_ALL_ON }: ReelColumnProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<ReelGlView | null>(null);
+  const [glUnavailable, setGlUnavailable] = useState(false);
   const frames = strip.length;
-  const faceStep = 360 / frames;
   const spec = useMemo(() => motorSpec(frames), [frames]);
   const spinning = motion !== null && motion.targetStep === null;
-  // 正多角柱の隣接面が隙間なく接する外接半径。cell-h に追従するのでレスポンシブでも円筒を保てる。
-  const radiusFactor = 1 / (2 * Math.tan(Math.PI / frames));
 
   useEffect(() => {
-    const el = stripRef.current;
-    if (!el) return;
-    const faces = Array.from(el.querySelectorAll<HTMLElement>('.cell'));
-    /**
-     * 実機のバックライトはリール基体に固定され、上・中・下段の 3 領域を背面から照らす。
-     * 動く図柄へ光彩を貼るのではなく、各面が固定照明領域を横切る瞬間だけ透過率を上げる。
-     * 反射凹部間の仕切りを模して、段の中心では 1、境界では光量が滑らかに落ちる。
-     */
-    const applyBacklight = (wrapped: number) => {
-      const front = wrapped + 1;
-      for (let face = 0; face < faces.length; face++) {
-        let relative = face - front;
-        relative = ((((relative + frames / 2) % frames) + frames) % frames) - frames / 2;
-        const nearestLamp = Math.max(-1, Math.min(1, Math.round(relative)));
-        const lampOffset = relative - nearestLamp;
-        const distance = Math.abs(lampOffset);
-        const exposure = distance < 0.9 ? Math.exp(-Math.pow(distance / 0.48, 4)) : 0;
-        faces[face]!.style.setProperty('--lamp-exposure', exposure.toFixed(3));
-        // 面のローカル座標では光だまりを逆向きへずらし、窓に対して同じ位置へ留める。
-        // 反射凹部の境界では露光がほぼ 0 になるため、隣の灯への切り替えは見えない。
-        faces[face]!.style.setProperty('--lamp-y', `${(50 + lampOffset * 100).toFixed(2)}%`);
-      }
+    const host = hostRef.current;
+    if (!host) return;
+    let view: ReelGlView;
+    try {
+      view = createReelGlView(host, { lookOf: symbolLook });
+    } catch (error) {
+      console.warn('WebGL reel unavailable; falling back to text', error);
+      setGlUnavailable(true);
+      return;
+    }
+    viewRef.current = view;
+    return () => {
+      view.dispose();
+      viewRef.current = null;
     };
-    // stopPosition は下段。1 コマ先を正面へ向けると、上から [p+2, p+1, p] が並ぶ。
-    // 正規化の境界では角度が 360deg 飛ぶが、transition を使わないので見た目は連続する。
-    const apply = (p: number) => {
-      const wrapped = ((p % frames) + frames) % frames;
-      el.style.transform = `rotateX(${-(wrapped + 1) * faceStep}deg)`;
-      applyBacklight(wrapped);
-    };
+  }, []);
+
+  useEffect(() => {
+    viewRef.current?.setStrip(strip);
+  }, [strip]);
+
+  useEffect(() => {
+    viewRef.current?.setLamps(lamps);
+  }, [lamps]);
+
+  useEffect(() => {
+    const apply = (p: number) => viewRef.current?.setKoma(p);
     let raf = 0;
 
     // 回転を経ない配置
@@ -278,35 +284,22 @@ function ReelColumn({ strip, top, motion }: ReelColumnProps) {
       window.clearTimeout(fallback);
       finish();
     };
-  }, [motion, top, strip, frames, faceStep, spec]);
+  }, [motion, top, strip, frames, spec]);
 
   return (
-    <div className={`reel ${spinning ? 'reel-spinning' : ''}`}>
-      <div className="reel-backlight" aria-hidden="true" />
-      <div className="reel-strip" ref={stripRef}>
-        {strip.map((symbol, i) => {
-          const view = SYMBOL_VIEW[symbol] ?? { text: symbol, className: '' };
-          const img = SYMBOL_IMAGES[symbol];
-          return (
-            <div
-              key={i}
-              className={`cell ${view.className}`}
-              style={{
-                transform: `rotateX(${i * faceStep}deg) translateZ(calc(var(--cell-h) * ${radiusFactor}))`,
-              }}
-            >
-              {img ? (
-                <span className="symbol-stack">
-                  <img className="cell-img symbol-print" src={img} alt={view.text} />
-                  <img className="symbol-transmission" src={img} alt="" aria-hidden="true" />
-                </span>
-              ) : (
-                view.text
-              )}
-            </div>
-          );
-        })}
-      </div>
+    <div className={`reel ${spinning ? 'reel-spinning' : ''}`} ref={hostRef}>
+      {glUnavailable && (
+        <div className="reel-fallback" aria-hidden="true">
+          {[2, 1, 0].map((row) => {
+            const symbol = strip[(top + row) % frames]!;
+            return (
+              <span key={row} className={`reel-fallback-cell ${SYMBOL_VIEW[symbol]?.className ?? ''}`}>
+                {SYMBOL_VIEW[symbol]?.text ?? symbol}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

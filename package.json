@@ -31,8 +31,10 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "@types/three": "^0.187.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "three": "^0.187.0",
     "wasm-media-encoders": "^0.7.0"
   }
 }
