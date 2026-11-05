@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, MutableRefObject } from 'react';
+import type { CSSProperties } from 'react';
 import { GameSession, initialState } from '../core/game.js';
 import { playPerfect } from '../core/sim.js';
 import { NavLayer } from '../core/nav.js';
@@ -27,20 +27,31 @@ import { Subboard } from './subboard.js';
 import type { SubboardView } from './subboard.js';
 import { PANEL_IMAGE, SYMBOL_IMAGES } from './symbol-assets.js';
 import { SoundTestPanel } from './sound-test.js';
+import {
+  ACCEL_MS,
+  arrivalAt,
+  isArmed,
+  komaToStep,
+  motorSpec,
+  pushKomaAt,
+  stepAt,
+  stepToKoma,
+  stopTargetStep,
+} from './reel-motor.js';
+import type { MotorCommand } from './reel-motor.js';
 import { calculateLargeDisplayMetrics } from './display-mode.js';
 import type { BrowserViewport } from './display-mode.js';
 
 /**
  * プレイヤー画面（docs/design/05-config-schema.md WebUI 構成）。
- * リールは連続位置（コマ単位の小数）で回し、押下時刻に「次に基準段（下段）へ整列するコマ」へ
- * 切り上げたものを pushPosition としてコアの GameSession に渡す
- * （押下時刻→コマ番号の決定論的量子化。docs/design/03）。
+ * リールはステッピングモーターの整数ステップで回す（reel-motor.ts: 回転開始時刻からの
+ * 経過時間 → ステップ位置の純関数）。押下時刻のステップ位置から「次に基準段（下段）へ整列する
+ * コマ」を pushPosition としてコアの GameSession に渡す（決定論的量子化。docs/design/03）。
+ * 描画は同じ軌道を rAF で標本化するだけで、量子化に関与しない。
  * 操作: Space = レバー / J・K・L = 左・中・右停止（ボタンクリックも可）
  */
 
-/** リール 1 周の時間。20 コマ ÷ 750ms ≒ 80rpm（規格上限相当） */
-const REV_MS = 750;
-/** 停止時のバウンド（行き過ぎて戻る量と時間。「ガチッ」の感触） */
+/** 停止時のバウンド（励磁保持に入った回転子の減衰振動。行き過ぎて戻る量と時間。「ガチッ」の感触） */
 const BOUNCE_KOMA = 0.16;
 const BOUNCE_MS = 110;
 /** ウエイト: 前ゲームのリール始動からこの時間が経つまで次のリールは回らない（実機は 4.1 秒） */
@@ -114,10 +125,12 @@ interface ReelView {
   /** 基準コマ番号（コアの stopPosition = 画面の下段。行番号は下から上へ 0,1,2） */
   top: number;
   stopped: boolean;
+  /** モーターへの回転指令。null は回転を経ない即時配置（初期化・機種切替・即入賞） */
+  motion: MotorCommand | null;
 }
 
 const freshReels = (machine: MachineDef): ReelView[] =>
-  machine.strips.map(() => ({ top: 0, stopped: true }));
+  machine.strips.map(() => ({ top: 0, stopped: true, motion: null }));
 
 function readBrowserViewport(): BrowserViewport {
   const viewport = window.visualViewport;
@@ -155,28 +168,27 @@ interface ReelColumnProps {
   strip: readonly string[];
   /** 停止時の基準コマ番号（コアの stopPosition = 画面の下段） */
   top: number;
-  spinning: boolean;
-  /** 親と共有する連続コマ位置（押下位置の量子化・停止音のタイミングに使う） */
-  positions: MutableRefObject<number[]>;
-  index: number;
+  /** モーターへの回転指令（親が作り、押下の量子化にも同じ指令を使う）。null は即時配置 */
+  motion: MotorCommand | null;
 }
 
 /**
  * リール 1 本の見た目。全コマを CSS 3D の円周上へ並べ、円筒を連続回転させる。
  * アニメーションは rAF で DOM に直接書き、React の再レンダリングを毎フレーム走らせない。
- * - 回転は約 80rpm の等速
+ * - 回転はモーターモデル（reel-motor.ts）の軌道を毎フレーム標本化する: 直線加速 → 80rpm の定速
  * - 実機準拠の下流れ: コマ番号が進む（滑る）方向のコマは画面の上から入ってくる。
  *   コマ番号が大きい面を円筒の上側へ配置し、回転角を減らすことで下へ流す。
  *   コアの stopPosition は下段なので、正面には常に stopPosition + 1 の面を合わせる
- * - 停止は押下の続き位置から等速のまま滑り込み（滑り 0〜4 コマ + 整列で最大 5 コマ弱 ≒ 190ms。
- *   実機の停止許容時間と同じオーダー）、回転方向へ微バウンドして着地
- * - 初期化・機種切り替え・即入賞（回転を経ない停止）は即座に合わせる
+ * - 停止は目標ステップまで定速のまま進んで励磁保持（滑り 0〜4 コマ + 整列で最大 119 ステップ
+ *   ≒ 186ms。実機の停止許容 190ms と整合）、回転方向へ微バウンドして着地
+ * - 初期化・機種切り替え・即入賞（motion = null）は即座に合わせる
  */
-function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps) {
+function ReelColumn({ strip, top, motion }: ReelColumnProps) {
   const stripRef = useRef<HTMLDivElement | null>(null);
-  const wasSpinningRef = useRef(false);
   const frames = strip.length;
   const faceStep = 360 / frames;
+  const spec = useMemo(() => motorSpec(frames), [frames]);
+  const spinning = motion !== null && motion.targetStep === null;
   // 正多角柱の隣接面が隙間なく接する外接半径。cell-h に追従するのでレスポンシブでも円筒を保てる。
   const radiusFactor = 1 / (2 * Math.tan(Math.PI / frames));
 
@@ -184,9 +196,6 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
     const el = stripRef.current;
     if (!el) return;
     const faces = Array.from(el.querySelectorAll<HTMLElement>('.cell'));
-    const setPos = (p: number) => {
-      positions.current[index] = p;
-    };
     /**
      * 実機のバックライトはリール基体に固定され、上・中・下段の 3 領域を背面から照らす。
      * 動く図柄へ光彩を貼るのではなく、各面が固定照明領域を横切る瞬間だけ透過率を上げる。
@@ -216,46 +225,37 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
     };
     let raf = 0;
 
-    if (spinning) {
-      wasSpinningRef.current = true;
-      let last = performance.now();
+    // 回転を経ない配置
+    if (motion === null) {
+      apply(top);
+      return;
+    }
+
+    // 自由回転: 軌道を標本化するだけ（位置の状態を持たない。押下の量子化も同じ軌道を見る）
+    if (motion.targetStep === null) {
       const tick = (now: number) => {
-        const next = (positions.current[index]! + (now - last) * (frames / REV_MS)) % frames;
-        last = now;
-        setPos(next);
-        apply(next);
+        apply(stepToKoma(stepAt(spec, motion, now)));
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
       return () => cancelAnimationFrame(raf);
     }
 
-    // 停止。回転からの停止だけ滑り込み + バウンドの演出を挟む
-    const fromSpin = wasSpinningRef.current;
-    wasSpinningRef.current = false;
-    if (!fromSpin) {
-      setPos(top);
-      apply(top);
-      return;
-    }
-    const from = positions.current[index] ?? top;
-    const dist = (((top - from) % frames) + frames) % frames;
-    const slideMs = dist * (REV_MS / frames);
-    const start = performance.now();
+    // 停止: 目標ステップまで同じ軌道で進み（実機は減速せず止まる）、到達後にバウンド
+    const stopping = { ...motion, targetStep: motion.targetStep };
+    const landAt = arrivalAt(spec, stopping);
     let settled = false;
     const finish = () => {
       settled = true;
-      setPos(top);
       apply(top);
     };
     const tick = (now: number) => {
-      const t = now - start;
-      if (t < slideMs) {
-        apply(from + dist * (t / slideMs)); // 等速のまま滑る（実機は減速せず止まる）
+      if (now < landAt) {
+        apply(stepToKoma(stepAt(spec, stopping, now)));
         raf = requestAnimationFrame(tick);
         return;
       }
-      const bt = t - slideMs;
+      const bt = now - landAt;
       if (bt < BOUNCE_MS) {
         const k = bt / BOUNCE_MS;
         apply(top + BOUNCE_KOMA * Math.sin(Math.PI * k) * (1 - k)); // 減衰 1 往復
@@ -266,16 +266,19 @@ function ReelColumn({ strip, top, spinning, positions, index }: ReelColumnProps)
     };
     raf = requestAnimationFrame(tick);
     // タブが非表示だと rAF が止まり滑り込みが完了しない。タイマーで最終位置に確定させる
-    const fallback = window.setTimeout(() => {
-      if (!settled) finish();
-    }, slideMs + BOUNCE_MS + 100);
+    const fallback = window.setTimeout(
+      () => {
+        if (!settled) finish();
+      },
+      Math.max(0, landAt - performance.now()) + BOUNCE_MS + 100,
+    );
     return () => {
       // 途中で次のゲームが始まったら最終位置に確定させてから回す
       cancelAnimationFrame(raf);
       window.clearTimeout(fallback);
       finish();
     };
-  }, [spinning, top, strip, frames, faceStep, positions, index]);
+  }, [motion, top, strip, frames, faceStep, spec]);
 
   return (
     <div className={`reel ${spinning ? 'reel-spinning' : ''}`}>
@@ -314,6 +317,8 @@ export function App() {
   const [engine, setEngine] = useState<EngineState>(() => initialState(machines[0]!));
   const [credit, setCredit] = useState(INITIAL_CREDIT);
   const [phase, setPhase] = useState<Phase>('ready');
+  /** リールが定速に達しストップボタンが有効か（表示用。判定は押下時刻から決定論的に行う） */
+  const [armed, setArmed] = useState(false);
   const [reels, setReels] = useState<ReelView[]>(() => freshReels(machines[0]!));
   const [lastEvent, setLastEvent] = useState<GameEvent | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -407,8 +412,6 @@ export function App() {
   const noticeModeRef = useRef(noticeMode);
   noticeModeRef.current = noticeMode;
 
-  /** リールの連続コマ位置（ReelColumn が毎フレーム更新。押下位置の量子化に使う） */
-  const reelPositionsRef = useRef<number[]>([0, 0, 0]);
   /** 前回リールが回り始めた時刻（performance.now）。ウエイトの起点 */
   const lastSpinStartRef = useRef(-Infinity);
 
@@ -536,9 +539,21 @@ export function App() {
     setCredit((c) => c - session.bet);
     setLastEvent(null);
     const startSpin = () => {
-      lastSpinStartRef.current = performance.now();
-      setReels((prev) => prev.map((reel) => ({ ...reel, stopped: false })));
+      const startAt = performance.now();
+      lastSpinStartRef.current = startAt;
+      // 停止中の整列ステップから加速開始。3 リール同時始動
+      setReels((prev) =>
+        prev.map((reel) => ({
+          top: reel.top,
+          stopped: false,
+          motion: { startAt, startStep: komaToStep(reel.top), targetStep: null },
+        })),
+      );
       setPhase('spinning');
+      setArmed(false);
+      window.setTimeout(() => {
+        if (sessionRef.current === session) setArmed(true);
+      }, ACCEL_MS);
     };
     if (waitMs > 0) {
       // ウエイト: レバーは受け付け済み。待ち時間が明けてからリールが回る
@@ -647,18 +662,23 @@ export function App() {
     (reel: number) => {
       const session = sessionRef.current;
       if (phaseRef.current !== 'spinning' || !session) return;
-      if (reelsRef.current[reel]!.stopped) return;
-      const frames = machineRef.current.frames;
-      const pos = reelPositionsRef.current[reel] ?? 0;
-      // 押下時刻の量子化: 次に基準段（下段）へ整列するコマ = 押下位置（ここから前進 0〜4 コマに滑る）
-      const push = Math.ceil(pos) % frames;
+      const view = reelsRef.current[reel]!;
+      if (view.stopped || view.motion === null) return;
+      const now = performance.now();
+      // 定速到達前はボタン未点灯（実機のボタン有効化）。押しても何も起きない
+      if (!isArmed(now - view.motion.startAt)) return;
+      const spec = motorSpec(machineRef.current.frames);
+      // 押下時刻の量子化: 押下ステップから次に基準段（下段）へ整列するコマ = 押下位置
+      // （ここから前進 0〜4 コマに滑る）。描画の状態ではなく軌道の式から直接求める
+      const pushStep = stepAt(spec, view.motion, now);
+      const push = pushKomaAt(spec, pushStep);
       const stopEvent = session.stopReel(reel, push);
-      // 停止音は見た目の停止（滑り込みの着地）に合わせる。最大 5 コマ弱 ≒ 190ms
-      const dist = (((stopEvent.stopPosition - pos) % frames) + frames) % frames;
-      const landMs = dist * (REV_MS / frames);
+      const motion = { ...view.motion, targetStep: stopTargetStep(spec, pushStep, stopEvent.stopPosition) };
+      // 停止音は見た目の停止（目標ステップへの到達）に合わせる。最大 119 ステップ ≒ 186ms
+      const landMs = Math.max(0, arrivalAt(spec, motion) - now);
       window.setTimeout(() => playSfx('reelStop'), landMs);
       setReels((prev) =>
-        prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true } : r)),
+        prev.map((r, i) => (i === reel ? { top: stopEvent.stopPosition, stopped: true, motion } : r)),
       );
       if (session.isComplete) {
         // 精算（払い出し音・WIN 表示・BGM イン）が見た目の停止より先に走らないよう、
@@ -693,7 +713,7 @@ export function App() {
         setReels(
           machineRef.current.strips.map((_, reel) => {
             const stop = session.stopped.find((s) => s.reel === reel)!;
-            return { top: stop.stopPosition, stopped: true };
+            return { top: stop.stopPosition, stopped: true, motion: null };
           }),
         );
         return settleSession(session);
@@ -982,9 +1002,7 @@ export function App() {
               key={reel}
               strip={strip}
               top={reels[reel]!.top}
-              spinning={!reels[reel]!.stopped}
-              positions={reelPositionsRef}
-              index={reel}
+              motion={reels[reel]!.motion}
             />
           ))}
         </div>
@@ -1012,7 +1030,7 @@ export function App() {
               key={reel}
               className="stop-btn"
               onClick={() => stopReel(reel)}
-              disabled={phase !== 'spinning' || reels[reel]!.stopped}
+              disabled={phase !== 'spinning' || !armed || reels[reel]!.stopped}
               data-testid={`stop-${reel}`}
             >
               {['左 (J)', '中 (K)', '右 (L)'][reel]}
