@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { compose } from '../core/music/compose.js';
 import { BLIND_STUDY_FORM } from '../core/music/blind-study.js';
+import { generateForm } from '../core/music/form-generator.js';
 import {
   FORM_PRESET_IDS, FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, resolveForm,
   sectionStartBars, totalBars, validateForm,
@@ -56,7 +57,7 @@ import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
 import { normalizeComposeOptions } from '../core/music/options.js';
 import { checkPieceStructure, suggestCompositionRepair } from '../core/music/diagnostics.js';
 import type { CompositionRepair } from '../core/music/diagnostics.js';
-import { defaultChoiceFor, hasVariedChoiceFor, variedChoiceFor } from '../core/music/harmony-plan.js';
+import { defaultChoiceFor, hasVariedChoiceFor, slotAtBar, variedChoiceFor } from '../core/music/harmony-plan.js';
 import { capabilitiesFor } from '../core/music/sound-capabilities.js';
 import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import {
@@ -155,6 +156,14 @@ import type { SfxPlayer } from './sfx-player.js';
 
 
 const BLIND_VOTES_KEY = 'daredemo.bgmComposer.blindStudy.v1';
+
+/** 曲型生成の目標小節数(UI の既定は歌ものプリセットと同じ 96、4 小節刻み)。 */
+const DEFAULT_GENERATE_BARS = 96;
+const MIN_GENERATE_BARS = 4;
+const MAX_GENERATE_BARS = 160;
+const clampGenerateBars = (value: number): number => (
+  Number.isFinite(value) ? Math.max(MIN_GENERATE_BARS, Math.min(MAX_GENERATE_BARS, Math.round(value))) : DEFAULT_GENERATE_BARS
+);
 
 function loadBlindStudyVotes(): BlindStudyVote[] {
   return loadStored<BlindStudyVote[]>(
@@ -303,6 +312,19 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
     setProgId(nextProgId);
     if (options.resetIntro) setIntro(introDefaultFor(next));
     resetChoice(nextProgId, next);
+  };
+  // 曲型の生成: 様式・新しい seed・目標小節数から区間列を作り、カスタム曲型として表へ展開する
+  // (保存形式は明示の区間列のまま。進行・イントロ・コード選択は selectForm が整える)。
+  const [generateBars, setGenerateBars] = useState(DEFAULT_GENERATE_BARS);
+  const generateNewForm = () => {
+    const style = STYLES.find((s) => s.id === styleId) ?? STYLES[0]!;
+    const generated = generateForm({
+      style,
+      seed: newSeed(),
+      targetBars: clampGenerateBars(generateBars),
+      defaults: { tonality, progressionId: prog.id, keyRoot },
+    });
+    selectForm(generated);
   };
   // 区間テーブルの検証。compose も同じ規則で拒否するので、ここでは行ごとに見せるだけ。
   const formIssues = useMemo(
@@ -910,7 +932,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                 <option value="pcm">PCM（SoundFont・制約最小）</option>
               </select>
             </SettingField>
-            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる">
+            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる。区間表の「曲型を生成」で様式から区間列を作れる">
               <select
                 value={formPresetId ?? 'custom'}
                 onChange={(e) => {
@@ -988,8 +1010,25 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
             </SettingField>
           </div>
 
-          {/* 曲型の区間列: プリセットは展開して編集できる(編集した時点でカスタム) */}
+          {/* 曲型の区間列: プリセットは展開して編集できる(編集した時点でカスタム)。生成はいつでも再抽選できる */}
           <div className="form-editor">
+            <div className="form-generate">
+              <label>
+                目標小節数
+                <input
+                  type="number"
+                  min={MIN_GENERATE_BARS}
+                  max={MAX_GENERATE_BARS}
+                  step={4}
+                  value={generateBars}
+                  onChange={(e) => setGenerateBars(Number(e.target.value))}
+                  data-testid="st-form-generate-bars"
+                />
+              </label>
+              <button type="button" onClick={generateNewForm} data-testid="st-form-generate">
+                🎲 曲型を生成（{styleDef.name}・{clampGenerateBars(generateBars)} 小節前後）
+              </button>
+            </div>
             {formPresetId !== null ? (
               <button
                 type="button"
@@ -1017,18 +1056,21 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               label: formSpec.sections.length > 1 ? section.id : '',
               start: formStarts[index]!,
               end: formStarts[index]! + section.bars,
+              // 区間の調で和音名を表示する(転調する区間は曲のキーと違う)。
+              keyRoot: section.keyRoot ?? keyRoot,
             })).map((section) => (
               <div key={section.label || 'all'} className="slot-section">
                 {section.label && <div className="slot-section-title">{section.label} セクション</div>}
                 <div className="slot-row">
                   {Array.from({ length: section.end - section.start }, (_, offset) => section.start + offset).map((bar) => {
-                    const slot = prog.slots[bar % prog.slots.length]!;
+                    // スロットは区間の進行(SectionSpec.progressionId)のもの。曲既定の進行の添字を流用しない。
+                    const slot = slotAtBar(prog, formSpec, bar);
                     const idx = Math.min(choice[bar] ?? 0, slot.length - 1);
                     return (
                       <div key={bar} className="slot-item">
                         <span className="slot-label">{bar + 1}小節</span>
                         {slot.length === 1 ? (
-                          <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, keyRoot)).join(' ')}</span>
+                          <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, section.keyRoot)).join(' ')}</span>
                         ) : (
                           <select
                             value={idx}
@@ -1041,7 +1083,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                           >
                             {slot.map((opt, i) => (
                               <option key={i} value={i}>
-                                {opt.map((t) => chordName(t, keyRoot)).join(' ')}
+                                {opt.map((t) => chordName(t, section.keyRoot)).join(' ')}
                               </option>
                             ))}
                           </select>

@@ -2037,6 +2037,34 @@ button:disabled {
   margin: 6px 0 12px;
 }
 
+/* 曲型の生成: 目標小節数と再抽選ボタン */
+.form-generate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.form-generate label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-generate input[type='number'] {
+  width: 72px;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #2a2a38;
+  color: #eee;
+  border: 1px solid #3a3a55;
+}
+
 .form-table table {
   border-collapse: collapse;
   font-size: 12px;

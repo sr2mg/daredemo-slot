@@ -16,7 +16,8 @@ import type { GrooveFeel } from './groove.js';
 import { DEFAULT_MELODIC_LANGUAGE, idiomFor } from './melodic-idiom.js';
 import type { MelodicIdiom } from './melodic-idiom.js';
 import type { SoundBackendId } from './sound-capabilities.js';
-import { CHORDS, PROGRESSIONS, harmonicFunctionForToken, progressionForTonality } from './theory.js';
+import { sectionProgressionOf } from './harmony-plan.js';
+import { CHORDS, PROGRESSIONS, harmonicFunctionForToken } from './theory.js';
 import type { ProgressionDef, StyleDef } from './theory.js';
 import type {
   BassLinePolicy,
@@ -479,7 +480,10 @@ function climaxBarFor(sections: readonly SongSectionPlan[], seed: number): numbe
   return peak.startBar + offset;
 }
 
-/** 区間の進行: 区間指定(progressionId)を区間の調性へ実現する。無ければ曲既定。 */
+/**
+ * 区間の進行: 区間指定(progressionId)を区間の調性へ実現する。無ければ曲既定。
+ * 解決は harmony-plan の sectionProgressionOf(レシピ・UI と同じ)で、ここでは不正を throw にする。
+ */
 function sectionProgressionFor(
   spec: SectionSpec,
   tonality: Tonality,
@@ -490,7 +494,7 @@ function sectionProgressionFor(
     ? options.progression
     : PROGRESSIONS.find((candidate) => candidate.id === progressionId);
   if (!base) throw new Error(`[${spec.id}] 未知の進行: ${progressionId}`);
-  const realized = progressionForTonality(base, tonality);
+  const realized = sectionProgressionOf(options.progression, { ...spec, tonality });
   if (!realized) {
     throw new Error(`[${spec.id}] ${tonality === 'minor' ? '短調' : '長調'}では進行「${base.name}」を使用できません`);
   }
