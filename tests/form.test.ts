@@ -106,6 +106,26 @@ describe('曲型の検証', () => {
     expect(messages.some((message) => message.includes('id がない'))).toBe(true);
   });
 
+  it('主題の元は初出区間(song-plan と同じ): ロングトーンの落ちサビの後にサビを literal で戻せる', () => {
+    const chorus: SectionSpec = { ...ok, id: 'S', theme: 'S', energy: 4 };
+    const form = spec([
+      ok,
+      chorus,
+      { ...chorus, id: 's', role: 'relief', energy: 1, texture: 'sustain' },
+      // 助走(pulse)は旋律を借りないので 4 小節でもよい。
+      { ...chorus, id: 'P', role: 'development', bars: 4, texture: 'pulse' },
+      { ...chorus, id: "S'", role: 'return', energy: 5, transform: 'literal' },
+    ], 'final');
+    expect(validateForm(form, defaults)).toEqual([]);
+    // 初出がテクスチャ区間なら、以降の再登場は元が旋律を持たない。
+    const texturedOrigin = spec([
+      ok,
+      { ...chorus, texture: 'pulse' },
+      { ...chorus, id: "S'", role: 'return' },
+    ], 'final');
+    expect(validateForm(texturedOrigin, defaults).map((issue) => issue.message).join()).toContain('旋律を持たない');
+  });
+
   it('主題の再登場と引用は同じ長さの先行区間にだけ成立する', () => {
     const shortReturn = validateForm(spec([ok, { ...ok, id: 'A2', bars: 4 }]), defaults);
     expect(shortReturn.map((issue) => issue.message).join()).toContain('小節数が違う');

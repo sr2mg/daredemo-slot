@@ -12,7 +12,14 @@ import { grooveBeat } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
 import { LOOP_BOUNDARY_MAX_SEMITONES, MELODY_HI, MELODY_LO } from './theory.js';
 import type { ComposeContext } from './compose-context.js';
+import { engineRevOf } from './types.js';
 import type { NoteArticulation, NoteEvent } from './types.js';
+
+/** 調 from → to の最短の半音差(-6..+5)。全音上の転調は +2、短3度下は -3。 */
+function keyShiftSemitones(fromKeyRoot: number, toKeyRoot: number): number {
+  const delta = (((toKeyRoot - fromKeyRoot) % 12) + 12) % 12;
+  return delta > 6 ? delta - 12 : delta;
+}
 
 export function generateMelody(ctx: ComposeContext): NoteEvent[] {
   const {
@@ -88,6 +95,12 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     if (pairBorrows && pairSection.motifTransform === 'literal') {
       const sourcePair = Math.floor(pairPlan.motifSourceBar / 2);
       let anchor = phraseAnchors[sourcePair] ?? startMidi;
+      // rev6: 元区間と調が違うリテラルは、アンカーを調差ぶん平行移動してフックをそのまま持ち上げる
+      // (最終サビの転調)。進行も同じ度数で転調しているので、移した音は新しい調の同じ和声音に当たる。
+      const literalSource = songPlan.form.sections.find((candidate) => candidate.id === pairSection.motifSourceSection);
+      if (engineRevOf(opts) >= 6 && literalSource && literalSource.keyRoot !== pairSection.keyRoot) {
+        anchor += keyShiftSemitones(literalSource.keyRoot, pairSection.keyRoot);
+      }
       if (appliesReturnRegister) anchor = nearestWithPc(anchor + returnRegister!.offset, pairChordPcs);
       phraseAnchors.push(anchor);
       // リテラル帰還は元区間と同音で入るのが装置(区間頭記録は重複回避の対象外)。

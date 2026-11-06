@@ -85,6 +85,38 @@ describe('区間ごとの調', () => {
     expect(flat.chords.every((chord) => chord.name !== 'E' || chord.pcs.includes(8))).toBe(true);
   });
 
+  it('転調した literal の再登場(最終サビのリフト)は、フックを調差ぶん平行移動して持ち上げる(rev6)', () => {
+    const lift: SongFormSpec = {
+      sections: [
+        { id: 'A', role: 'hook', bars: 8, energy: 3, theme: 'A' },
+        { id: 'S', role: 'hook', bars: 8, energy: 4, theme: 'S' },
+        { id: "S'", role: 'finale', bars: 8, energy: 5, theme: 'S', transform: 'literal', keyRoot: 2 },
+      ],
+      ending: 'final',
+    };
+    const options: ComposeOptions = {
+      progressionId: 'royal-pop', styleId: 'eurobeat', keyRoot: 0, bpm: 170, seed: 3, tonality: 'major', form: lift,
+    };
+    for (const seed of [3, 11, 29]) {
+      const lifted = compose({ ...options, seed });
+      const liftStarts = sectionStartBars(lifted.songPlan.form);
+      // 提示フレーズ(区間頭 2 小節)の骨格音を区間内の拍位置で引く。
+      const phraseNotes = (sectionIndex: number): Map<number, number> => {
+        const from = lifted.loopStartBeat + liftStarts[sectionIndex]! * 4;
+        return new Map(lifted.melody
+          .filter((note) => note.role === 'structural' && note.beat >= from && note.beat < from + 8)
+          .map((note) => [Math.round((note.beat - from) * 1000) / 1000, note.midi]));
+      };
+      const original = phraseNotes(1);
+      const returned = phraseNotes(2);
+      const shared = [...returned.keys()].filter((beat) => original.has(beat));
+      expect(shared.length, `seed=${seed}`).toBeGreaterThan(0);
+      // literal はフレーズ頭のアンカーを継ぐ: リフトしたサビの入り(最初の共通打点)は全音(2 半音)上。
+      expect(returned.get(shared[0]!)! - original.get(shared[0]!)!, `seed=${seed}`).toBe(2);
+      expect(validatePiece(lifted), `seed=${seed}`).toEqual([]);
+    }
+  });
+
   it('ベースライン装置は調の境界をまたいでも検証を通る', () => {
     for (const seed of [1, 2, 3]) {
       const lined = compose({ ...base, form, seed, bassLine: 'on' });

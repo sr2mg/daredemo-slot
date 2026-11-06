@@ -289,6 +289,7 @@ export const RHYTHM_FAMILY_COUNT = 5;
  * 曲型の検証。compose は error があれば throw し、UI は行ごとに表示する。
  * 主題の再登場と部分引用は、長さの異なる区間の間では成立しない
  * (phrase-plan の motifSourceBar が 2小節フレーズ単位で元区間を指すため)。
+ * 再登場の元区間は主題の初出区間(song-plan と同じ解釈)。
  */
 export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIssue[] {
   const issues: FormIssue[] = [];
@@ -343,17 +344,22 @@ export function validateForm(form: SongFormSpec, defaults: FormDefaults): FormIs
     const groupingOf = (candidate: SectionSpec): string => candidate.grouping ?? DEFAULT_GROUPING;
     const groupingLabel = (value: string): string => (isBarGrouping(value) ? BAR_GROUPING_LABELS[value] : value);
 
-    const themeSource = [...seen.values()].reverse().find((candidate) => candidate.theme === spec.theme);
-    if (themeSource && themeSource.bars !== spec.bars) {
+    // 主題の元は初出区間(song-plan の motifPlansFor と同じ)。直前の同主題区間ではない:
+    // 落ちサビ(サビ主題のロングトーン)の後にサビを literal で戻せるのは初出が通常区間だから。
+    const themeSource = [...seen.values()].find((candidate) => candidate.theme === spec.theme);
+    // 旋律を休ませる区間(パワーコード連打)は主題から何も借りないので、元区間との長さ・割り方・
+    // テクスチャの整合は要らない(主題 id は「どの主題の上に立つ助走か」の宣言)。
+    const borrowsMelody = textureOf(spec) !== 'pulse';
+    if (themeSource && borrowsMelody && themeSource.bars !== spec.bars) {
       error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${themeSource.bars}小節)と小節数が違う`);
     }
     // リズム族の添字は拍の割り方ごとの表を指すので、割り方の違う区間間では主題を継げない
     // (再標本化は将来の仮説)。
-    if (themeSource && groupingOf(themeSource) !== grouping) {
+    if (themeSource && borrowsMelody && groupingOf(themeSource) !== grouping) {
       error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」(${groupingLabel(groupingOf(themeSource))})と拍の割り方が違う`);
     }
     // 旋律を持たない(ロングトーン・パワーコード)区間は主題の元になれない。
-    if (themeSource && textureOf(themeSource) !== 'normal') {
+    if (themeSource && borrowsMelody && textureOf(themeSource) !== 'normal') {
       error(id, `主題「${spec.theme}」の元区間「${themeSource.id}」が${SECTION_TEXTURE_LABELS[textureOf(themeSource)]}で旋律を持たない`);
     }
     if (spec.quote) {

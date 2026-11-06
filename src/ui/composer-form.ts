@@ -8,7 +8,7 @@ import {
   FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, presetForBars, resolveForm, totalBars,
   validateForm,
 } from '../core/music/form.js';
-import { defaultChoiceFor } from '../core/music/harmony-plan.js';
+import { defaultChoiceFor, slotAtBar } from '../core/music/harmony-plan.js';
 import {
   DEFAULT_GROOVE_FEEL, GROOVE_FEEL_LABELS, isGrooveFeel,
 } from '../core/music/groove.js';
@@ -259,7 +259,8 @@ export function loadComposerForm(): ComposerForm {
         && raw.choice.every((c, bar) => (
           Number.isInteger(c)
           && c >= 0
-          && c < initialProgression.slots[bar % initialProgression.slots.length]!.length
+          // 区間が自分の進行を持つときはその進行のスロット数で検証する。
+          && c < (bar < bars ? slotAtBar(initialProgression, form, bar).length : Number.POSITIVE_INFINITY)
         ))
         ? (raw.choice as number[])
         : defaultChoiceFor(initialProgression, form),

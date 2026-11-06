@@ -307,17 +307,22 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  * - rev5: 曲型を区間リスト(SongFormSpec)へ。保存入力は bars(4/8/16/40)から form(プリセットid
  *   か区間列)へ、主題計画は区間の宣言(theme/transform/quote)から、進行レシピは区間単位に、
  *   終止曲型(ending final)と小節ごとの調(HarmonyBarPlan.keyRoot)を導入。rev1〜4 の分岐は
- *   削除し、rev<5 の保存曲は再現しない(ユーザー不在のうちのリセット)。engineRev の値は
- *   読まれず、常に現行として生成する(仕組みは rev6 以降のために残す)。
+   *   削除し、rev<5 の保存曲は再現しない(ユーザー不在のうちのリセット)。
+ * - rev6: 元区間と調(keyRoot)が違う literal の再登場は、フレーズアンカーを調差ぶん平行移動する
+ *   (melody-voice.ts)。rev5 では元区間の絶対音高のアンカーをそのまま継いだため、転調した
+ *   最終サビのフックが持ち上がらなかった。同じ調の literal・transpose・invert は不変。
  */
-export const CURRENT_ENGINE_REV = 5;
+export const CURRENT_ENGINE_REV = 6;
 
 /**
- * この生成で実際に適用するリビジョン。rev5 でリセットしたので、どの値も現行として扱う
- * (未来のリビジョンは再現不能なので現行へクランプしてベストエフォートで鳴らす)。
+ * この生成で実際に適用するリビジョン。rev5 で再現経路をリセットしたので、rev5 未満の値は
+ * rev5 として扱い、未来のリビジョンは再現不能なので現行へクランプしてベストエフォートで鳴らす。
+ * 省略(保存前の新規作曲)は現行。
  */
-export function engineRevOf(_opts: Pick<ComposeOptions, 'engineRev'>): number {
-  return CURRENT_ENGINE_REV;
+export function engineRevOf(opts: Pick<ComposeOptions, 'engineRev'>): number {
+  const rev = opts.engineRev;
+  if (rev === undefined || !Number.isFinite(rev)) return CURRENT_ENGINE_REV;
+  return Math.min(CURRENT_ENGINE_REV, Math.max(5, Math.floor(rev)));
 }
 
 export interface NesVoiceOptions {
@@ -540,6 +545,8 @@ export type SectionRole = 'hook' | 'development' | 'relief' | 'return' | 'finale
 /**
  * literal は「移調も反転もしない帰還」。実現側はアンカー（フレーズ頭・終止音）だけを
  * その場の和声へ合わせ、内部の音程・リズムを保存する（フックのリテラル再現）。
+ * 元区間と調(keyRoot)が違う literal は、アンカーを調差ぶん平行移動してフックをそのまま
+ * 持ち上げる(最終サビの転調。rev6)。transpose は調とは無関係の度数移調(トーナルアンサー)。
  */
 export type MotifTransform = 'original' | 'transpose' | 'invert' | 'contrast' | 'literal';
 export type RhythmVariant = 0 | 1 | 2 | 3 | 4;
@@ -585,8 +592,9 @@ export interface SectionSpec {
   bars: SectionBars;
   energy: SectionEnergy;
   /**
-   * 主題ID。初出の区間が主題を提示し(original)、再登場の区間は「同じ theme の直前の区間」を
+   * 主題ID。初出の区間が主題を提示し(original)、再登場の区間は「同じ theme の初出区間」を
    * 元に transform で区間全体を作り直す(externalMotifPhrases=[0] 型: 区間全体がその主題)。
+   * song-plan(主題計画)と validateForm(長さ・割り方・テクスチャの整合)は同じ初出区間を見る。
    */
   theme: string;
   /** 再登場時の変形。省略=literal。初出では無視。 */
@@ -606,7 +614,8 @@ export interface SectionSpec {
   /**
    * 省略=normal。sustain=区間頭の 1 音を区間末尾まで保続し、伴奏は再打鍵せず、ベースは持続、
    * ドラム無し。pulse=旋律を休ませ、パワーコード(開放五度)を格子の各ステップで刻む。
-   * 先頭区間と、主題・引用の元になる区間は normal であること(validateForm)。
+   * 先頭区間と、主題・引用の元になる区間は normal であること(validateForm)。pulse は主題から
+   * 何も借りないので、元区間との長さ・割り方の一致は要らない(4 小節の助走がサビ主題の上に立てる)。
    */
   texture?: SectionTexture;
   /**

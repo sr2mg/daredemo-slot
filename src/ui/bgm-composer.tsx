@@ -57,7 +57,7 @@ import { DIMINUTION_POLICY_LABELS } from '../core/music/diminution.js';
 import { normalizeComposeOptions } from '../core/music/options.js';
 import { checkPieceStructure, suggestCompositionRepair } from '../core/music/diagnostics.js';
 import type { CompositionRepair } from '../core/music/diagnostics.js';
-import { defaultChoiceFor, hasVariedChoiceFor, variedChoiceFor } from '../core/music/harmony-plan.js';
+import { defaultChoiceFor, hasVariedChoiceFor, slotAtBar, variedChoiceFor } from '../core/music/harmony-plan.js';
 import { capabilitiesFor } from '../core/music/sound-capabilities.js';
 import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import {
@@ -932,19 +932,17 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                 <option value="pcm">PCM（SoundFont・制約最小）</option>
               </select>
             </SettingField>
-            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる。「生成」は様式と seed から区間列を作る">
+            <SettingField label="曲型" hint="ループはBGM向け。歌ものは96小節・12区間で終止して閉じる。区間表の「曲型を生成」で様式から区間列を作れる">
               <select
                 value={formPresetId ?? 'custom'}
                 onChange={(e) => {
                   if (isFormPresetId(e.target.value)) selectForm(e.target.value as FormPresetId);
-                  else if (e.target.value === 'generate') generateNewForm();
                 }}
                 data-testid="st-form"
               >
                 {FORM_PRESET_IDS.map((id) => (
                   <option key={id} value={id}>{FORM_PRESET_LABELS[id]}</option>
                 ))}
-                <option value="generate">生成（様式と seed から {clampGenerateBars(generateBars)} 小節前後の区間列を作る）</option>
                 {formPresetId === null && <option value="custom">カスタム（{formBars}小節・{formSpec.sections.length}区間）</option>}
               </select>
             </SettingField>
@@ -1058,18 +1056,21 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
               label: formSpec.sections.length > 1 ? section.id : '',
               start: formStarts[index]!,
               end: formStarts[index]! + section.bars,
+              // 区間の調で和音名を表示する(転調する区間は曲のキーと違う)。
+              keyRoot: section.keyRoot ?? keyRoot,
             })).map((section) => (
               <div key={section.label || 'all'} className="slot-section">
                 {section.label && <div className="slot-section-title">{section.label} セクション</div>}
                 <div className="slot-row">
                   {Array.from({ length: section.end - section.start }, (_, offset) => section.start + offset).map((bar) => {
-                    const slot = prog.slots[bar % prog.slots.length]!;
+                    // スロットは区間の進行(SectionSpec.progressionId)のもの。曲既定の進行の添字を流用しない。
+                    const slot = slotAtBar(prog, formSpec, bar);
                     const idx = Math.min(choice[bar] ?? 0, slot.length - 1);
                     return (
                       <div key={bar} className="slot-item">
                         <span className="slot-label">{bar + 1}小節</span>
                         {slot.length === 1 ? (
-                          <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, keyRoot)).join(' ')}</span>
+                          <span className="slot-fixed">{slot[0]!.map((t) => chordName(t, section.keyRoot)).join(' ')}</span>
                         ) : (
                           <select
                             value={idx}
@@ -1082,7 +1083,7 @@ export function BgmComposerPanel({ player, pcmRenderer = null, onPcmNeededChange
                           >
                             {slot.map((opt, i) => (
                               <option key={i} value={i}>
-                                {opt.map((t) => chordName(t, keyRoot)).join(' ')}
+                                {opt.map((t) => chordName(t, section.keyRoot)).join(' ')}
                               </option>
                             ))}
                           </select>

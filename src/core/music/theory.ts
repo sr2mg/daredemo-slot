@@ -18,6 +18,7 @@ import type {
   HarmonicFunction,
   IntroRole,
   MelodicLanguage,
+  SongEnding,
   TextureStrategy,
   TupletOverlayPolicy,
 } from './types.js';
@@ -819,19 +820,28 @@ export function hasArpeggioAccompaniment(texture: TextureFacet | undefined): boo
 }
 
 /**
- * 拍節ファセット: この様式の曲型が使ってよい拍の割り方(grid.ts)。省略 = 4/4(4x2)だけ。
- * 16 分格子そのものが同一性の様式(シャッフル 16 分・ブレイクビーツ・4 つ打ち)は宣言しない。
- * ×3 の格子ではスウィングも連符レイヤーも無効(effectiveGroove)なので、shuffle16 を既定に持つ
- * 様式が 4x2 以外を宣言すると矛盾する(tests/form-generator.test.ts が固定)。
- * 読むのは曲型生成器(form-generator.ts)だけで、明示の曲型(プリセット・手入力)は制限しない。
+ * 曲型ファセット: この様式の曲型が取ってよい形。読むのは曲型生成器(form-generator.ts)だけで、
+ * 明示の曲型(プリセット・手入力)は制限しない。
+ * - groupings: 使ってよい拍の割り方(grid.ts)。省略 = 4/4(4x2)だけ。16 分格子そのものが
+ *   同一性の様式(シャッフル 16 分・ブレイクビーツ・4 つ打ち)は宣言しない。×3 の格子では
+ *   スウィングも連符レイヤーも無効(effectiveGroove)なので、shuffle16 を既定に持つ様式が
+ *   4x2 以外を宣言すると矛盾する(tests/form-generator.test.ts が固定)。
+ * - ending: 終止で閉じるときの終わり方。省略 = final。ritardando は様式の演奏慣習
+ *   (弾き語り・バラード)で、編成(打楽器の有無)からは導けないので宣言で持つ。
  */
-export interface MeterFacet {
-  groupings: readonly BarGrouping[];
+export interface FormFacet {
+  groupings?: readonly BarGrouping[];
+  ending?: Exclude<SongEnding, 'loop'>;
 }
 
 /** 様式が許す拍の割り方(省略は 4x2 だけ)。 */
-export function allowedGroupings(meter: MeterFacet | undefined): readonly BarGrouping[] {
-  return meter?.groupings ?? ['4x2'];
+export function allowedGroupings(form: FormFacet | undefined): readonly BarGrouping[] {
+  return form?.groupings ?? ['4x2'];
+}
+
+/** 様式が終止で閉じるときの終わり方(省略は final)。 */
+export function closingEndingFor(form: FormFacet | undefined): SongEnding {
+  return form?.ending ?? 'final';
 }
 
 /** 装置ファセット: スタイル既定の装置方針。省略はすべてoff(素の和音・骨格のみ)。 */
@@ -884,7 +894,7 @@ export interface StyleDef {
   melody: MelodyFacet;
   texture: TextureFacet;
   devices?: DeviceDefaults;
-  meter?: MeterFacet;
+  form?: FormFacet;
 }
 
 export const STYLES: StyleDef[] = [
@@ -944,7 +954,7 @@ export const STYLES: StyleDef[] = [
       counter: { maxDur: { counterline: 1.25, response: 0.75 } },
     },
     // 8 ビートの 4/4 に加え、12/8(シャッフル・バラード)はロックの常用拍節。
-    meter: { groupings: ['4x2', '4x3'] },
+    form: { groupings: ['4x2', '4x3'] },
   },
   {
     id: 'kmmo',
@@ -1152,7 +1162,8 @@ export const STYLES: StyleDef[] = [
       introRoles: ['motif'],
     },
     // 参照音源は 12/8 の歌と 6/4 のヘミオラ、4/4 を同じ小節長で行き来する(grid.ts)。
-    meter: { groupings: ['4x2', '4x3', '3x4'] },
+    // 弾き語りの終止はリタルダンドで閉じる(打楽器の有無ではなく様式の演奏慣習)。
+    form: { groupings: ['4x2', '4x3', '3x4'], ending: 'ritardando' },
     // 色付けは和音トークン側(add9/6/sus)で持つ。テンション装置で b7 を足すと属7の
     // 牽引力が戻り、主音不在の浮遊が壊れるので装置は宣言しない(off)。
   },
