@@ -99,7 +99,7 @@ describe('最短声部連結ストランド（guideStrands / featuredGuideStrand
   });
 });
 
-describe('呪文ループ進行（minor-incantation）', () => {
+describe('半音下行のクリシェ（minor-incantation）', () => {
   it('キーCの定番形は Cm7 G7 A# F7（i7–V7–♭VII–IV7）', () => {
     const piece = compose(base);
     expect(piece.barChordNames).toEqual(['Cm7', 'G7', 'A#', 'F7']);

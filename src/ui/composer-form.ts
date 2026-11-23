@@ -100,7 +100,7 @@ export function formSummary(form: SongFormRef): string {
   return `カスタム${totalBars(spec)}小節(${spec.sections.length}区間${spec.ending === 'loop' ? '' : '・終止'})`;
 }
 
-/** 保存曲の一覧表示用サマリ（例: BB風8小節 / 田中・真部進行 / キーC / BPM170） */
+/** 保存曲の一覧表示用サマリ（例: BB風8小節 / 4-5-6 進行 / キーC / BPM170） */
 export function songSummary(options: ComposeOptions): string {
   const prog = PROGRESSIONS.find((p) => p.id === options.progressionId)?.name ?? options.progressionId;
   const key = KEYS.find((k) => k.root === options.keyRoot)?.label ?? '?';

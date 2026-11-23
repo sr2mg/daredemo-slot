@@ -356,7 +356,7 @@ describe('compose', () => {
     }
   });
 
-  it('定番の田中・真部進行はキー C で F G Am C', () => {
+  it('定番の4-5-6 進行はキー C で F G Am C', () => {
     const piece = compose({ ...base, progressionId: 'tanaka-manabe' });
     expect(piece.barChordNames).toEqual(['F', 'G', 'Am', 'C']);
   });

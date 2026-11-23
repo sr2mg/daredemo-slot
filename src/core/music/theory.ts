@@ -164,7 +164,7 @@ export const CHORDS: Record<string, ChordDef> = {
   Isus2: chord(0, 'sus2', 'colour'),
   /** 短調の♭VIIを掛留した形(3度抜き)。相対長調読みのVsus4と同じ音集合。 */
   VIIsus4: chord(10, 'sus4', 'dominant'),
-  // --- 5音の開離配置で周回する主音不在ループの語彙(長調綴り / 相対短調綴り)。
+  // --- 5音の開離配置で周回する主和音を避けるループの語彙(長調綴り / 相対短調綴り)。
   /** vi の m11(9th抜き)。11度は調の第2音で、主音なしの浮遊を保つ。 */
   vi7add11: chord(9, 'm7add11', 'tonic'),
   i7add11: chord(0, 'm7add11', 'tonic'),
@@ -328,7 +328,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'tanaka-manabe',
-    name: '田中・真部進行',
+    name: '4-5-6 進行',
     feel: 'アニソン的疾走感・切なさ',
     tonality: 'major',
     // C長調の IV→V→vi→I は、相対短調Aでは VI→VII→i→III として同じ引力を保つ。
@@ -450,7 +450,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'minor-incantation',
-    name: '呪文ループ',
+    name: '半音下行のクリシェ（短調）',
     feel: '妖しい浮遊感・半音下行',
     tonality: 'minor',
     // i7–V7–♭VII–IV7。上声部の最短連結が主音→導音→♭7→♮6の半音下行クリシェを描く。
@@ -472,7 +472,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'relative-orbit',
-    name: 'vi軌道ループ',
+    name: '6-4-1-5 進行',
     feel: '寂しげだが開ける・00年代ネトゲ',
     tonality: 'major',
     // 平行短調の主和音(vi)から出発し、長調の機能衛星(IV→I→V)を巡回して開ける。
@@ -505,7 +505,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'minor-drive',
-    name: '短調ドライブ',
+    name: 'エオリアン循環（i–♭VI–♭III–♭VII）',
     feel: '暗い疾走・回帰感',
     tonality: 'minor',
     slots: [
@@ -525,7 +525,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'drifting-orbit',
-    name: '主音不在ループ',
+    name: '主和音を避けるループ',
     feel: '浮遊・夜明け前の弾き語り',
     tonality: 'major',
     // vi→IV→V を回り続け、I が一度も来ない。V は b7 を持たない add9/6/sus4 で属7の
@@ -591,9 +591,25 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'neapolitan-drift',
-    name: 'ナポリの浮遊',
+    name: 'ナポリの長七ループ',
     feel: '短調の8小節ループ・♭IIの長七へ降りる',
     tonality: 'minor',
+    // 長調の実体: 主和音を長七にし、同主短調(♭III・♭VI)とフリギア(♭II)から借りた長七を並べる。
+    // 4 つとも長七の平行移動になり、末尾の掛留(3 度なし)は長短どちらの主和音へも降りられる。
+    realizations: {
+      major: {
+        slots: [
+          [['IM7']],
+          [['IM7']],
+          [['IIIM7']],
+          [['IIIM7']],
+          [['bIIM7']],
+          [['bIIM7']],
+          [['VImaj7'], ['i9sus4'], ['bIIM7']],
+          [['VImaj7'], ['IM7'], ['i9sus4', 'IM7']],
+        ],
+      },
+    },
     // 2小節に1和音。低音は i → ♭III → ♭II と動き、♭III→♭II→(i) が半音・半音の下行になる。
     // 和音はすべて七の和音で、属七(導音)を一度も使わない: ♭IIM7 の長7度は主音そのものなので、
     // 主音を保ったまま低音だけがずれ、解決を要求しない(機能進行ではなく色彩の並置)。
@@ -740,7 +756,7 @@ export function chordScalePcs(
  * スタイルを追加してテーブルを忘れるとコンパイルエラーになる。
  * 保存曲のstyleIdは任意文字列で来るので、参照時はstyleLookup()で照合する。
  */
-export const STYLE_IDS = ['eurobeat', 'rock', 'kmmo', 'ska', 'garage2step', 'dnb', 'acoustic'] as const;
+export const STYLE_IDS = ['eurobeat', 'rock', 'kmmo', 'ska', 'garage2step', 'dnb', 'acoustic', 'breaks'] as const;
 export type StyleId = (typeof STYLE_IDS)[number];
 
 export const isStyleId = (value: string): value is StyleId =>
@@ -1160,6 +1176,49 @@ export const STYLES: StyleDef[] = [
     },
     texture: {},
     // アトモスフェリックなカラートーン和声(リキッド系)をlushで近似する。
+    devices: { tension: 'lush' },
+  },
+  {
+    id: 'breaks',
+    name: 'ブレイクス',
+    feel: 'ツーステップのブレイクに七の和音と持続サブ(BPM148前後)',
+    defaults: {
+      // 参照音源の実測(analysis/): 148.0 BPM 一定・16 分ストレート。
+      bpm: 148,
+      // 和声は 2 小節に 1 和音の色彩ループ(短調で使える最初の進行。長調では進行を変えない)。
+      progressionIds: ['neapolitan-drift'],
+    },
+    percussion: {
+      kind: 'kit',
+      // 実測の 1 小節ループ(128 小節中 91 小節が同一): 1 拍目と 3 拍裏のキック(DnB と同じ
+      // ツーステップ・ブレイクの骨格)に、2 拍裏と 4 拍裏の弱打が付く。弱打は主打の 8 分前に
+      // 置かれ、次の主打(3 拍裏のキック・次の小節頭)へ転がり込む。
+      kick: [1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 0, 1, 0, 0, 0, DRUM_GHOST, 0],
+      // バックビート(2・4拍)だけ。ゴーストはキック側が担う。
+      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+      // 8 分の表が骨格(実測の打点率 91〜100%)。16 分の裏は 34〜52% で揺れるので、率の高い
+      // 2 か所(3 拍頭の直後・小節末)だけを弱打で足す。
+      hat: [1, 0, 1, 0, 1, 0, 1, 0, 1, DRUM_GHOST, 1, 0, 1, 0, 1, DRUM_GHOST],
+      sectionB: {
+        kick: [1, 0, 0, 0, 0, 0, DRUM_GHOST, 0, 0, 0, 1, 0, 0, 0, DRUM_GHOST, 0],
+        // 実測では 2 周目以降の区間で 3 拍頭に打点が加わる(66%)。バックビートは不変。
+        snare: [0, 0, 0, 0, 1, 0, 0, 0, DRUM_GHOST, 0, 0, 0, 1, 0, 0, 0],
+        hat: [1, 0, 1, 0, 1, 0, 1, DRUM_GHOST, 1, DRUM_GHOST, 1, 0, 1, 0, 1, DRUM_GHOST],
+      },
+    },
+    // 低音は和音ごとの持続サブ(実測: 発音 1.3 回/小節、80Hz 未満が全エネルギーの 5 割超)。
+    bass: { pattern: 'sustain', cadence: 'chordTone' },
+    melody: {
+      // 実測の上声は長い音が 1 拍目と 3 拍目に入るだけ(発音 0.3 回/小節、間隔の中央値 2.5 拍、
+      // 8 分格子への畳み込みで step 0 と 4 に 23/33)。ブレイクの細かさは打楽器に任せ、旋律は
+      // 拍頭の長音でつなぐ。音程の動きは未実測で、パッドの上声らしい順次進行寄りを仮に置く。
+      onsetWeights: [100, 10, 25, 15, 100, 10, 25, 20],
+      density: [2, 4],
+      gate: 0.96,
+      stepwisePercent: 70,
+    },
+    texture: {},
+    // 実測の和音は m9・M9・add9(七の和音に 9th)。lush のテンションで出す。
     devices: { tension: 'lush' },
   },
   {

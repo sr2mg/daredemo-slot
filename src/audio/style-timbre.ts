@@ -180,6 +180,20 @@ export const STYLE_TIMBRES: Record<StyleId, StyleTimbre> = {
     // 弾き語りは残響の長い室内(ホール寄り)。参照音源のRT60は未測定で、これは参照値。
     roomRt60Sec: 1.8,
   },
+  breaks: {
+    // DnB と同じクラブ系の割り当て(シンセリード・パッド持続・シンセベース)。
+    opll: {
+      lead: 10, backing: 8, bass: 13, counter: 3, ostinato: 4, backingPattern: 'half',
+      rhythm: { levels: { kick: 0, snare: 1, hat: 5, tom: 3, cymbal: 4 }, kickTuning: 'bassRoot', subKickVoice: 14 },
+    },
+    // 参照音源のキックは低域の尾が長い(スペクトログラムで 1 拍近く残る)ので 808/909 キット。
+    // リードとパッドは未実測で、DnB の割り当てを仮に置く。
+    pcm: { leadPalette: [81, 85], counter: 54, ostinato: 45, backing: 89, bass: 38, drumKit: 25 },
+    // 参照音源のドラムの加工は未測定。素通しにする。
+    drumBus: null,
+    // RT60 は未測定の参照値。ドラムの輪郭を立てるクラブ系の短めの部屋。
+    roomRt60Sec: 1.0,
+  },
 };
 
 /** 保存曲の未知idで鳴らす既定の音色(従来の各表の既定値と同じ)。 */
