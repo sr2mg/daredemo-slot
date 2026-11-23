@@ -8,6 +8,7 @@ import { beatStep, effectiveGroove, nearBeat, offPulseSteps, stepBeat, strongBea
 import type { GridDef } from './grid.js';
 import { melodicPhraseSimilarity, melodicSectionSimilarities } from './diversity.js';
 import { gridAtBeat, sectionIndexAt, sectionStartBars } from './form.js';
+import { ACCOMPANIMENT_MAX_LEAP } from './voicing.js';
 import type { ArrangementSectionPlan, ChordEvent, MelodyEdit, NoteEvent, Piece } from './types.js';
 
 export interface Violation {
@@ -302,8 +303,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     if (chord.voicing === 'power' || previous.voicing === 'power') continue;
     for (const voice of [1, 2]) {
       if (chord.midis[voice] === undefined || previous.midis[voice] === undefined) continue;
-      if (Math.abs(chord.midis[voice]! - previous.midis[voice]!) > 7) {
-        add('voiceLeading', 'warning', chord.beat, chord.midis[voice]!, '伴奏声部の移動が7半音を超える');
+      if (Math.abs(chord.midis[voice]! - previous.midis[voice]!) > ACCOMPANIMENT_MAX_LEAP) {
+        add('voiceLeading', 'warning', chord.beat, chord.midis[voice]!, `伴奏声部の移動が${ACCOMPANIMENT_MAX_LEAP}半音を超える`);
       }
     }
   }
@@ -331,8 +332,8 @@ export function diagnosePiece(piece: Piece): CompositionReport {
     ) {
       for (const voice of [1, 2]) {
         if (firstChord.midis[voice] === undefined || lastChord.midis[voice] === undefined) continue;
-        if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > 7) {
-          add('voiceLeading', 'warning', lastChord.beat, lastChord.midis[voice]!, '伴奏のループ境界が7半音を超える');
+        if (Math.abs(firstChord.midis[voice]! - lastChord.midis[voice]!) > ACCOMPANIMENT_MAX_LEAP) {
+          add('voiceLeading', 'warning', lastChord.beat, lastChord.midis[voice]!, `伴奏のループ境界が${ACCOMPANIMENT_MAX_LEAP}半音を超える`);
         }
       }
     }

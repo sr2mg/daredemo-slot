@@ -85,6 +85,7 @@ import type {
   Tonality,
   TupletDivision,
 } from './types.js';
+import { engineRevOf } from './types.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
 import { makePhraseGesture, makePhrasePlan, sanitizeMotif } from './phrase-plan.js';
 import { voiceChord } from './voicing.js';
@@ -217,6 +218,9 @@ export function compose(opts: ComposeInput): Piece {
   const barChordDurations = songPlan.harmony.map((bar) => [...bar.durations]);
 
   const chords: ChordEvent[] = [];
+  // rev7: 伴奏ボイシングは音塊(2度の連続)にならない配置を優先する(voicing.ts)。rev6 までは
+  // 最短連結だけで選んだので、テンションを足した5声の和音が 2 度 3 つの団子になった。
+  const avoidClusters = engineRevOf(opts) >= 7;
   let previousVoicing: number[] | null = null;
   barTokens.forEach((tokens, bar) => {
     const barBassDegrees = songPlan.harmony[bar]!.bassDegrees;
@@ -240,7 +244,9 @@ export function compose(opts: ComposeInput): Piece {
         ? []
         : selectTensionPcs(pcs, chordScaleFor(token, pcs, rootPc, scalePcsAt(bar)), rootPc, tensionPolicy)
       ).slice(0, Math.max(0, 5 - pcs.length)); // 密集配置(≤14半音)が成立する5声まで
-      const midis = voiceChord([...pcs, ...colorPcs], previousVoicing, power || idiom.openFifthsVoicing);
+      const midis = voiceChord(
+        [...pcs, ...colorPcs], previousVoicing, power || idiom.openFifthsVoicing, avoidClusters,
+      );
       const bassDegree = barBassDegrees?.[i] ?? null;
       chords.push({
         beat: bar * 4 + offset,
@@ -268,6 +274,7 @@ export function compose(opts: ComposeInput): Piece {
       for (const chord of chords) {
         chord.midis = voiceChord(
           [...chord.pcs, ...(chord.colorPcs ?? [])], previous, chord.voicing === 'power' || idiom.openFifthsVoicing,
+          avoidClusters,
         );
         previous = chord.midis;
       }

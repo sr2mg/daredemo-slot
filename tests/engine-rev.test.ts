@@ -27,14 +27,15 @@ const liftForm: SongFormSpec = {
 };
 
 describe('engineRev(rev6: 転調した literal のアンカーを調差ぶん移す)', () => {
-  it('現行リビジョンはrev6(保存曲の焼き込み値の前提)', () => {
-    expect(CURRENT_ENGINE_REV).toBe(6);
+  it('現行リビジョンはrev7(保存曲の焼き込み値の前提)', () => {
+    expect(CURRENT_ENGINE_REV).toBe(7);
   });
 
   it('rev5 未満は rev5、未来の値は現行へクランプ、省略は現行', () => {
-    expect(engineRevOf({})).toBe(6);
+    expect(engineRevOf({})).toBe(7);
     for (const engineRev of [0, 2, 4, 5]) expect(engineRevOf({ engineRev })).toBe(5);
-    for (const engineRev of [6, 7, 99]) expect(engineRevOf({ engineRev })).toBe(6);
+    expect(engineRevOf({ engineRev: 6 })).toBe(6);
+    for (const engineRev of [7, 8, 99]) expect(engineRevOf({ engineRev })).toBe(7);
   });
 
   it('同じ調の曲型(プリセット)は省略・旧値・現行値で同じ音になる', () => {
