@@ -164,7 +164,7 @@ export const CHORDS: Record<string, ChordDef> = {
   Isus2: chord(0, 'sus2', 'colour'),
   /** 短調の♭VIIを掛留した形(3度抜き)。相対長調読みのVsus4と同じ音集合。 */
   VIIsus4: chord(10, 'sus4', 'dominant'),
-  // --- 5音の開離配置で周回する主音不在ループの語彙(長調綴り / 相対短調綴り)。
+  // --- 5音の開離配置で周回する主和音を避けるループの語彙(長調綴り / 相対短調綴り)。
   /** vi の m11(9th抜き)。11度は調の第2音で、主音なしの浮遊を保つ。 */
   vi7add11: chord(9, 'm7add11', 'tonic'),
   i7add11: chord(0, 'm7add11', 'tonic'),
@@ -328,7 +328,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'tanaka-manabe',
-    name: '田中・真部進行',
+    name: '4-5-6 進行',
     feel: 'アニソン的疾走感・切なさ',
     tonality: 'major',
     // C長調の IV→V→vi→I は、相対短調Aでは VI→VII→i→III として同じ引力を保つ。
@@ -450,7 +450,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'minor-incantation',
-    name: '呪文ループ',
+    name: '半音下行のクリシェ（短調）',
     feel: '妖しい浮遊感・半音下行',
     tonality: 'minor',
     // i7–V7–♭VII–IV7。上声部の最短連結が主音→導音→♭7→♮6の半音下行クリシェを描く。
@@ -472,7 +472,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'relative-orbit',
-    name: 'vi軌道ループ',
+    name: '6-4-1-5 進行',
     feel: '寂しげだが開ける・00年代ネトゲ',
     tonality: 'major',
     // 平行短調の主和音(vi)から出発し、長調の機能衛星(IV→I→V)を巡回して開ける。
@@ -505,7 +505,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'minor-drive',
-    name: '短調ドライブ',
+    name: 'エオリアン循環（i–♭VI–♭III–♭VII）',
     feel: '暗い疾走・回帰感',
     tonality: 'minor',
     slots: [
@@ -525,7 +525,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'drifting-orbit',
-    name: '主音不在ループ',
+    name: '主和音を避けるループ',
     feel: '浮遊・夜明け前の弾き語り',
     tonality: 'major',
     // vi→IV→V を回り続け、I が一度も来ない。V は b7 を持たない add9/6/sus4 で属7の
@@ -591,7 +591,7 @@ export const PROGRESSIONS: ProgressionDef[] = [
   },
   {
     id: 'neapolitan-drift',
-    name: 'ナポリの浮遊',
+    name: 'ナポリの長七ループ',
     feel: '短調の8小節ループ・♭IIの長七へ降りる',
     tonality: 'minor',
     // 長調の実体: 主和音を長七にし、同主短調(♭III・♭VI)とフリギア(♭II)から借りた長七を並べる。

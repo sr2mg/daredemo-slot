@@ -32,7 +32,7 @@ const VOLUME_KEY = 'daredemo.bgmComposer.volume.v1';
 
 /**
  * プリセット曲（デフォルト BGM）。固定シードなので全員の環境で同じ曲になる。
- * BB = 田中・真部進行の 8 小節 A+A'、RB = 王道ポップの 4 小節ループ。
+ * BB = 4-5-6 進行の 8 小節 A+A'、RB = 王道ポップの 4 小節ループ。
  */
 export const PRESET_SONGS: readonly SavedSong[] = [
   {

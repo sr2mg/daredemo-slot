@@ -48,7 +48,7 @@ describe('3度を薄めた和音トークン', () => {
     expect(CHORDS.Vadd9!.tones).not.toContain(5);
   });
 
-  it('主音不在ループは長調スロットに主和音(root=0のtonic)を一つも持たず、短調へも解決できる', () => {
+  it('主和音を避けるループは長調スロットに主和音(root=0のtonic)を一つも持たず、短調へも解決できる', () => {
     const prog = PROGRESSIONS.find((p) => p.id === 'drifting-orbit')!;
     for (const slot of prog.slots) {
       for (const option of slot) {
@@ -179,7 +179,7 @@ describe('アコースティック様式', () => {
   });
 });
 
-describe('5音の開離配置で周回する主音不在ループ', () => {
+describe('5音の開離配置で周回する主和音を避けるループ', () => {
   const dense = [2, 3, 3, 3] as const;
   const choiceFor = (bars: number) => Array.from({ length: bars }, (_, bar) => dense[bar % 4]!);
 
