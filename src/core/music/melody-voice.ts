@@ -6,7 +6,7 @@
 
 import { fragmentOf, invertTheme, realizeDegree, themeDegreeSpan, themeFromGesture, transposeTheme } from './melodic-theme.js';
 import type { ThemeSpec } from './melodic-theme.js';
-import { barInSection, sectionRng } from './form.js';
+import { barInSection, sectionRng, sectionStreamSeed } from './form.js';
 import { stepBeat } from './grid.js';
 import { grooveBeat } from './groove.js';
 import { bridgeWithPc, nearestWithPc, stepOnScale } from './pitch.js';
@@ -54,7 +54,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
       if (section.motifTransform === 'invert') borrowed = invertTheme(sourceTheme);
       else if (section.motifTransform === 'transpose') {
         // 移調の幅と向きは区間ごとの独立ストリームから(順序非依存、区間数に上限なし)。
-        const rng = sectionRng(opts.seed, section.index, 0x5452_5350);
+        const rng = sectionRng(sectionStreamSeed(opts, section.id), section.index, 0x5452_5350);
         const magnitude = rng.nextInt(2) === 0 ? 1 : 2;
         const direction = rng.nextInt(2) === 0 ? 1 : -1;
         borrowed = transposeTheme(sourceTheme, magnitude * direction);
@@ -213,7 +213,7 @@ export function generateMelody(ctx: ComposeContext): NoteEvent[] {
     // ゼクエンツ用の断片と方向。クライマックスが前方にあれば上行で頂点へ向かう。
     const sequenceFragment = fragmentOf(barTheme, 'tail');
     const sequenceAscending = phrasePlan.climaxBar > bar
-      || (phrasePlan.climaxBar < bar && sectionRng(opts.seed, sectionDesign.index, 0x5345_5144).nextInt(2) === 0);
+      || (phrasePlan.climaxBar < bar && sectionRng(sectionStreamSeed(opts, sectionDesign.id), sectionDesign.index, 0x5345_5144).nextInt(2) === 0);
     pendingAppoggiaturaResolution = null;
     if (barPlan.phraseFunction !== 'departure' || offsetInSection % 2 === 0) lastSequenceHead = null;
 

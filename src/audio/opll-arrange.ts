@@ -12,7 +12,8 @@ import {
 import type { SfxDef } from './opll-core.js';
 
 import { glideDurationSec } from '../core/music/glide.js';
-import type { StageRole } from './stage.js';
+import { isMuted } from './stage.js';
+import type { BgmMix, StageRole } from './stage.js';
 import { timbreFor } from './style-timbre.js';
 import type { StyleVoices } from './style-timbre.js';
 import { noteStageEchoFor } from './time-layer.js';
@@ -24,6 +25,22 @@ import { beatToSeconds, bpmAt, tempoMapOf } from '../core/music/tempo.js';
  * 足したもの。役割追加時は型エラーで網羅を強制。
  */
 type MelodicPart = Exclude<StageRole, 'drums'> | 'doubling' | 'subKick';
+
+/** 旋律パート → ミックスの役割(ミュート/ソロの単位)。エコー再発音はリード、サブキックはドラムに属す。 */
+const PART_ROLE: Record<MelodicPart, StageRole> = {
+  lead: 'lead', doubling: 'lead', duet: 'duet', counter: 'counter', ostinato: 'ostinato',
+  backing: 'backing', bass: 'bass', subKick: 'drums',
+};
+
+/** チャンネル表示用: 旋律6chへ割り当てた1音(ch=0..5)、または声部不足で落とした1音(ch=null)。 */
+export interface ChannelNote {
+  ch: number | null;
+  part: string;
+  role: StageRole;
+  beat: number;
+  endBeat: number;
+  midi: number;
+}
 
 export interface VoiceAllocationStats {
   assigned: number;
@@ -42,6 +59,8 @@ export interface ArrangedBgm extends SfxDef {
   loopEnd: number;
   /** OPLLの旋律6chへ優先度順に収めた結果。 */
   voiceStats: VoiceAllocationStats;
+  /** 割り当ての内訳(どの音がどのchで鳴り、どの音が落ちたか)。チャンネル表示が読む。 */
+  channelNotes: ChannelNote[];
 }
 
 /** スタイル別の音色定義は style-timbre.ts(1様式1レコード)が持つ。 */
@@ -192,6 +211,7 @@ const emptyPartStats = (): VoiceAllocationStats['parts'] => ({
  */
 function allocateSixChannels(candidates: readonly Candidate[]): {
   notes: AssignedCandidate[];
+  droppedNotes: Candidate[];
   stats: VoiceAllocationStats;
 } {
   const sorted = [...candidates].sort((a, b) => a.beat - b.beat || b.priority - a.priority);
@@ -199,6 +219,7 @@ function allocateSixChannels(candidates: readonly Candidate[]): {
   const notes: AssignedCandidate[] = [];
   const freeChannels = [0, 1, 2, 3, 4, 5];
   const parts = emptyPartStats();
+  const droppedNotes: Candidate[] = [];
   let dropped = 0;
 
   for (const candidate of sorted) {
@@ -223,6 +244,7 @@ function allocateSixChannels(candidates: readonly Candidate[]): {
     if (ch === undefined) {
       dropped++;
       parts[candidate.part].dropped++;
+      droppedNotes.push(candidate);
       continue;
     }
     const assigned: AssignedCandidate = {
@@ -245,7 +267,7 @@ function allocateSixChannels(candidates: readonly Candidate[]): {
     concurrent += boundary.delta;
     maxConcurrent = Math.max(maxConcurrent, concurrent);
   }
-  return { notes, stats: { assigned: notes.length, dropped, maxConcurrent, parts } };
+  return { notes, droppedNotes, stats: { assigned: notes.length, dropped, maxConcurrent, parts } };
 }
 
 function noteCandidate(
@@ -274,6 +296,7 @@ export function arrangePiece(
   styleId: string,
   override?: VoiceOverride,
   userPatchId: OpllUserPatchId = 'brightLead',
+  audition?: BgmMix,
 ): ArrangedBgm {
   const voices = { ...timbreFor(styleId).opll, ...pickVoices(override) };
   const tempo = tempoMapOf(piece);
@@ -445,8 +468,18 @@ export function arrangePiece(
 
   const allocation = allocateSixChannels(candidates);
   allocation.notes.sort((a, b) => a.beat - b.beat || b.priority - a.priority);
+  const channelNotes: ChannelNote[] = [
+    ...allocation.notes.map((note) => ({
+      ch: note.ch, part: note.part, role: PART_ROLE[note.part], beat: note.beat, endBeat: note.endBeat, midi: note.midi,
+    })),
+    ...allocation.droppedNotes.map((note) => ({
+      ch: null, part: note.part, role: PART_ROLE[note.part], beat: note.beat, endBeat: note.beat + note.dur, midi: note.midi,
+    })),
+  ];
   for (const note of allocation.notes) {
     if (note.endBeat - note.beat < 0.02) continue;
+    // ミュートは割り当ての後で落とす(ソロで聴く音 = ミックス中で実際に鳴る音)。
+    if (isMuted(audition, PART_ROLE[note.part])) continue;
     const start = toSec(note.beat);
     const end = toSec(note.endBeat);
     const freq = midiFreq(note.midi);
@@ -488,7 +521,7 @@ export function arrangePiece(
     for (const [reg, val] of Object.entries(levelRegs)) b.raw(Number(reg), val, 0);
   }
   const hits = new Map<number, { bits: number; levels: Partial<Record<DrumEvent['inst'], number>>; kickMidi?: number }>();
-  for (const drum of piece.drums) {
+  for (const drum of isMuted(audition, 'drums') ? [] : piece.drums) {
     const at = toSec(drum.beat);
     const hit = hits.get(at) ?? { bits: 0, levels: {} };
     hit.bits |= DRUM_BITS[drum.inst];
@@ -533,5 +566,6 @@ export function arrangePiece(
     duration,
     events: b.events,
     voiceStats: allocation.stats,
+    channelNotes,
   };
 }

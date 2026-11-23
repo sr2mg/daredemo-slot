@@ -261,6 +261,19 @@ export function sectionRng(seed: number, index: number, salt: number): Xoshiro12
   return new Xoshiro128(((seed ^ salt) + index * 0x9e37_79b9) >>> 0);
 }
 
+/**
+ * 区間の独立ストリームが使うシード。ComposeInput.sectionSeeds に区間 id の指定があれば
+ * それを、無ければ曲のシードを返す。区間単位の作り直し(その区間の主題ジェスチャーと
+ * フレーズ計画だけを引き直す)の唯一の入口で、指定が無い曲の出力は変わらない。
+ */
+export function sectionStreamSeed(
+  opts: { seed: number; sectionSeeds?: Readonly<Record<string, number>> | undefined },
+  sectionId: string,
+): number {
+  const override = opts.sectionSeeds?.[sectionId];
+  return override !== undefined && Number.isFinite(override) ? override >>> 0 : opts.seed;
+}
+
 export interface FormIssue {
   level: 'error' | 'warning';
   /** 該当区間の id。曲型全体の問題なら null。 */

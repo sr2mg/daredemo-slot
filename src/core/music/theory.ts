@@ -274,7 +274,7 @@ export interface ProgressionDef extends ProgressionRealization {
    * 恒久凍結ID。compose が旋律シードへハッシュ化して混ぜ(音が変わる)、保存曲の
    * ComposeOptions が参照し、未知IDは throw する。リネーム・削除・再利用は保存曲を
    * 壊すため禁止。用途ラベル等のクライアント文脈の表示語彙は core に置かず、
-   * このIDをキーにクライアント側(bgm-composer の表引き)が持つ。
+   * このIDをキーにクライアント側(ui/progression-usage.ts の表引き)が持つ。
    */
   id: string;
   name: string;

@@ -2,38 +2,15 @@ import type { ReactNode } from 'react';
 import type { DeviceState } from '../core/music/devices.js';
 
 /**
- * 作曲フォームの設定を3層で見せるための部品。
+ * 作曲の設定を3層で見せるための部品(層の見出しはインスペクタ composer/inspector.tsx のグループ)。
  *
- * 1. 決める: 音源・尺・様式・調性・キー・BPM・進行(曲の正体を決める軸)
+ * 1. 基本: 様式・音源・調性・キー・BPM・進行(曲の正体を決める軸)と曲型
  * 2. 様式の既定を上書き: 語法・グルーヴ・装置(様式が既定を持ち、明示したときだけ上書き)
  * 3. 音色: 音源ごとの編曲層の設定(作曲結果は変えない)
  *
  * 2層の行は「選択」と並べて「いま何が効いているか」を必ず示す: 様式既定の解決値、
  * 上書き中の実効値、または装置が使えない理由。選択肢を消して黙らせない。
  */
-
-export function SettingsLayer({ step, title, note, action, children, testId }: {
-  step: number;
-  title: string;
-  /** 見出しの右に添える短い説明。 */
-  note?: string;
-  /** 見出し行の右端に置く操作(「様式の既定に戻す」など)。 */
-  action?: ReactNode;
-  children: ReactNode;
-  testId?: string;
-}) {
-  return (
-    <section className="composer-layer" data-testid={testId}>
-      <header className="composer-layer-head">
-        <span className="composer-layer-step">{step}</span>
-        <h3>{title}</h3>
-        {note && <span className="composer-layer-note">{note}</span>}
-        {action && <span className="composer-layer-action">{action}</span>}
-      </header>
-      {children}
-    </section>
-  );
-}
 
 /** 1層・3層向け: ラベル付きの入力(横並びグリッドに収まる)。 */
 export function SettingField({ label, hint, children }: {

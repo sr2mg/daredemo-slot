@@ -4,6 +4,10 @@ import { renderNesPiece, renderNesPieceAsync, NES_SAMPLE_RATE } from './nes-apu.
 import type { PcmBgmDef } from './pcm-types.js';
 import { arrangePiece } from './opll-arrange.js';
 import type { SfxDef } from './opll-core.js';
+import { mixCacheSuffix } from './stage.js';
+import type { BgmMix } from './stage.js';
+
+export type { BgmMix } from './stage.js';
 
 export type { PcmBgmDef } from './pcm-types.js';
 
@@ -21,7 +25,7 @@ export const isPcmBgm = (def: ComposedBgmDef): def is PcmBgmDef =>
  */
 export interface BgmPcmRenderer {
   idFor(options: ComposeOptions): string;
-  render(piece: Piece, options: ComposeOptions): Promise<ComposedBgmDef>;
+  render(piece: Piece, options: ComposeOptions, mix?: BgmMix): Promise<ComposedBgmDef>;
 }
 
 /**
@@ -29,18 +33,18 @@ export interface BgmPcmRenderer {
  * soundChip='pcm'(作曲対象がPCM)の曲は、SoundFont環境が無い文脈(ゲーム本体)では
  * OPLL編曲へ品位よく劣化させる。スタジオではpcmRendererオーバーライドが優先される。
  */
-export function arrangeComposedBgm(piece: Piece, options: ComposeOptions): ComposedBgmDef {
+export function arrangeComposedBgm(piece: Piece, options: ComposeOptions, mix?: BgmMix): ComposedBgmDef {
   if (options.soundChip === 'nes2a03') {
     const tempo = tempoMapOf(piece);
     return {
       kind: 'pcm',
-      wave: renderNesPiece(piece, options.nes),
+      wave: renderNesPiece(piece, options.nes, mix),
       sampleRate: NES_SAMPLE_RATE,
       loopStart: beatToSeconds(tempo, piece.loopStartBeat),
       loopEnd: beatToSeconds(tempo, piece.beats),
     };
   }
-  return arrangePiece(piece, options.styleId, options.voices, options.opllUserPatch);
+  return arrangePiece(piece, options.styleId, options.voices, options.opllUserPatch, mix);
 }
 
 /** その曲の再生に使う外部レンダラ。曲側の音源設定がpcmのときだけPCMレンダラを使う。 */
@@ -60,9 +64,12 @@ export function bgmRendererFor(
 export function bgmCacheKey(
   options: ComposeOptions,
   pcmRenderer: BgmPcmRenderer | null = null,
+  mix?: BgmMix,
 ): string {
   const renderer = bgmRendererFor(options, pcmRenderer);
-  return renderer ? `${JSON.stringify(options)}|${renderer.idFor(options)}` : JSON.stringify(options);
+  const base = renderer ? `${JSON.stringify(options)}|${renderer.idFor(options)}` : JSON.stringify(options);
+  // 試聴用のミュートは別波形。ミュート無しは接尾辞が空なので従来キーと同一。
+  return base + mixCacheSuffix(mix);
 }
 
 /**
@@ -75,20 +82,21 @@ export async function renderComposedBgm(
   options: ComposeOptions,
   pcmRenderer: BgmPcmRenderer | null = null,
   onProgress?: (ratio: number) => void,
+  mix?: BgmMix,
 ): Promise<ComposedBgmDef> {
   const renderer = bgmRendererFor(options, pcmRenderer);
-  if (renderer) return renderer.render(piece, options);
+  if (renderer) return renderer.render(piece, options, mix);
   // 2A03はサンプル合成が重い(曲丸ごと同期でレンダリングするとメインスレッドが
   // 数百ms〜秒単位止まる)ため、非同期経路ではチャンク合成を使う。
   if (options.soundChip === 'nes2a03') {
     const tempo = tempoMapOf(piece);
     return {
       kind: 'pcm',
-      wave: await renderNesPieceAsync(piece, options.nes, onProgress),
+      wave: await renderNesPieceAsync(piece, options.nes, onProgress, mix),
       sampleRate: NES_SAMPLE_RATE,
       loopStart: beatToSeconds(tempo, piece.loopStartBeat),
       loopEnd: beatToSeconds(tempo, piece.beats),
     };
   }
-  return arrangeComposedBgm(piece, options);
+  return arrangeComposedBgm(piece, options, mix);
 }

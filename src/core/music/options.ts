@@ -3,7 +3,7 @@
  *
  * 曲の保存単位とキャッシュキーは ComposeOptions の JSON なので、「実際に音へ
  * 効かない値は入れない」「既定値は省く」という正準化規則がそのままキーの同一性を
- * 決める。以前はこの規則が UI(bgm-composer の optionsFor) にあり、エンジン内部の
+ * 決める。以前はこの規則が UI(旧 bgm-composer の optionsFor) にあり、エンジン内部の
  * 能力ゲート・語法ゲートと二重表現になっていた。ここ(core)へ一元化し、UI は
  * フォームの生値を渡すだけにする。
  *
@@ -32,6 +32,7 @@ import type {
   GlidePolicy,
   JapaneseScaleChoice,
   MelodicLanguage,
+  MelodyEdit,
   NesVoiceOptions,
   OpllUserPatchId,
   PcmVoiceOverride,
@@ -72,6 +73,10 @@ export interface ComposeDraft {
   pcmVoices?: PcmVoiceOverride | undefined;
   nes: NesVoiceOptions;
   compositionStrategy?: CompositionStrategy | undefined;
+  /** 区間単位の作り直し(区間 id → 区間ストリームのシード)。空は省く。 */
+  sectionSeeds?: Readonly<Record<string, number>> | undefined;
+  /** 診断の局所修正。空は省く。 */
+  melodyEdits?: readonly MelodyEdit[] | undefined;
 }
 
 /**
@@ -184,5 +189,10 @@ export function normalizeComposeOptions(draft: ComposeDraft): ComposeOptions {
       : {}),
     ...(draft.soundChip === 'nes2a03' ? { nes: { ...draft.nes } } : {}),
     ...(draft.compositionStrategy ? { compositionStrategy: draft.compositionStrategy } : {}),
+    // 以下は指定があるときだけ末尾へ足す(無い曲のJSON=キャッシュキーは従来と同一)。
+    ...(draft.sectionSeeds && Object.keys(draft.sectionSeeds).length > 0
+      ? { sectionSeeds: { ...draft.sectionSeeds } }
+      : {}),
+    ...(draft.melodyEdits && draft.melodyEdits.length > 0 ? { melodyEdits: [...draft.melodyEdits] } : {}),
   };
 }

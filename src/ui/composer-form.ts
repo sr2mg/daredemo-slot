@@ -1,6 +1,6 @@
 /**
  * 作曲フォームのモデル層: フォーム値の型・検証付きデシリアライズ・保存キー・
- * 保存曲の一覧サマリ。React状態そのものは BgmComposerPanel が持ち、
+ * 保存曲の一覧サマリ。React状態そのものは作曲ワークスペース(composer/use-composer.ts)が持ち、
  * ここは純関数とデータだけを置く。
  */
 
@@ -8,7 +8,7 @@ import {
   FORM_PRESET_LABELS, formPresetIdOf, introDefaultFor, isFormPresetId, presetForBars, resolveForm, totalBars,
   validateForm,
 } from '../core/music/form.js';
-import { defaultChoiceFor, slotAtBar } from '../core/music/harmony-plan.js';
+import { defaultChoiceFor, slotAtBar, variedChoiceFor } from '../core/music/harmony-plan.js';
 import {
   DEFAULT_GROOVE_FEEL, GROOVE_FEEL_LABELS, isGrooveFeel,
 } from '../core/music/groove.js';
@@ -21,7 +21,10 @@ import { capabilitiesFor } from '../core/music/sound-capabilities.js';
 import type { SoundBackendId } from '../core/music/sound-capabilities.js';
 import { resolveMelodicLanguage, resolveTonality } from '../core/music/song-plan.js';
 import { TENSION_POLICY_LABELS } from '../core/music/tension.js';
-import { KEYS, PROGRESSIONS, progressionsForTonality, STYLES } from '../core/music/theory.js';
+import { KEYS, PROGRESSIONS, progressionForTonality, progressionsForTonality, STYLES } from '../core/music/theory.js';
+import type { ProgressionDef } from '../core/music/theory.js';
+import { normalizeComposeOptions } from '../core/music/options.js';
+import type { CompositionStrategy } from '../core/music/composition-strategy.js';
 import {
   JAPANESE_SCALE_LABELS,
   TUPLET_OVERLAY_LABELS,
@@ -32,8 +35,10 @@ import type {
   DiminutionPolicy,
   JapaneseScaleChoice,
   MelodicLanguage,
+  MelodyEdit,
   NesVoiceOptions,
   OpllUserPatchId,
+  PcmVoiceOverride,
   SongFormRef,
   SongFormSpec,
   TensionPolicy,
@@ -169,6 +174,10 @@ export interface ComposerForm {
   intro: boolean;
   seed: number;
   loop: boolean;
+  /** 区間単位の作り直し(区間 id → 区間ストリームのシード)。新しいシードで作曲すると空へ戻る。 */
+  sectionSeeds: Record<string, number>;
+  /** 診断の局所修正。新しいシードで作曲すると空へ戻る。 */
+  melodyEdits: MelodyEdit[];
 }
 
 /** 保存済みフォームをフィールド単位で検証して読む（壊れた項目だけ既定に落ちる） */
@@ -268,5 +277,117 @@ export function loadComposerForm(): ComposerForm {
     intro: typeof raw.intro === 'boolean' ? raw.intro : introDefaultFor(form),
     seed: typeof raw.seed === 'number' && Number.isInteger(raw.seed) && raw.seed >= 0 ? raw.seed : newSeed(),
     loop: raw.loop !== false,
+    sectionSeeds: raw.sectionSeeds !== null && typeof raw.sectionSeeds === 'object' && !Array.isArray(raw.sectionSeeds)
+      ? Object.fromEntries(
+        Object.entries(raw.sectionSeeds as Record<string, unknown>)
+          .filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+      )
+      : {},
+    melodyEdits: Array.isArray(raw.melodyEdits)
+      ? (raw.melodyEdits as unknown[]).filter((edit): edit is MelodyEdit => (
+        edit !== null && typeof edit === 'object'
+        && (['beat', 'fromMidi', 'toMidi'] as const).every((key) => Number.isFinite((edit as Record<string, unknown>)[key]))
+      ))
+      : [],
+  };
+}
+
+/** フォームの調性と区間の最短小節数で使える進行(スロット数が区間に収まるもの)。 */
+export function progressionChoicesFor(form: Pick<ComposerForm, 'form' | 'tonality'>): ProgressionDef[] {
+  const minSectionBars = Math.min(...resolveForm(form.form).sections.map((section) => section.bars));
+  return progressionsForTonality(form.tonality).filter((p) => p.slots.length <= minSectionBars);
+}
+
+/** フォームが指す進行の実体。使えない id は先頭の候補へ落ちる(表示と作曲が同じ実体を見る)。 */
+export function progressionOf(form: Pick<ComposerForm, 'form' | 'tonality' | 'progId'>): ProgressionDef {
+  const choices = progressionChoicesFor(form);
+  return choices.find((p) => p.id === form.progId) ?? choices[0]!;
+}
+
+/**
+ * フォームの生値から正準の ComposeOptions を組む(正準化規則は core の normalizeComposeOptions)。
+ * overrides は曲型・シード・コード選択だけを差し替えた別案(ブラインド比較など)用。
+ */
+export function optionsOfForm(
+  form: ComposerForm,
+  pcmVoices?: PcmVoiceOverride,
+  overrides: {
+    seed?: number;
+    form?: SongFormRef;
+    choice?: readonly number[];
+    compositionStrategy?: CompositionStrategy;
+  } = {},
+): ComposeOptions {
+  const derived = overrides.form !== undefined || overrides.seed !== undefined;
+  return normalizeComposeOptions({
+    progressionId: progressionOf(form).id,
+    styleId: form.styleId,
+    keyRoot: form.keyRoot,
+    bpm: form.bpm,
+    form: overrides.form ?? form.form,
+    seed: overrides.seed ?? form.seed,
+    choice: overrides.choice ?? form.choice,
+    soundChip: form.soundChip,
+    intro: form.intro,
+    tonality: form.tonality,
+    melodicLanguage: form.melodicLanguage,
+    japaneseScale: form.japaneseScale,
+    grooveFeel: form.grooveFeel,
+    tupletOverlay: form.tupletOverlay,
+    tensionPolicy: form.tensionPolicy,
+    diminution: form.diminution,
+    duet: form.duet,
+    glide: form.glide,
+    bassLine: form.bassLine,
+    voices: form.voices,
+    opllUserPatch: form.opllUserPatch,
+    pcmVoices,
+    nes: form.nes,
+    compositionStrategy: overrides.compositionStrategy,
+    // 別のシード・曲型の案には、この曲の区間シードと局所修正を持ち込まない。
+    sectionSeeds: derived ? undefined : form.sectionSeeds,
+    melodyEdits: derived ? undefined : form.melodyEdits,
+  });
+}
+
+/**
+ * 保存曲・プリセットの ComposeOptions を編集フォームへ戻す(省略値を既定で埋める)。
+ * コード選択が省略された曲は compose() と同じ規則で確定させ、読み込み直後の音が変わらないようにする。
+ * エンジンのリビジョンは次の作曲で現行へ上がる(normalizeComposeOptions が焼く)。
+ */
+export function formFromOptions(options: ComposeOptions): ComposerForm {
+  const tonality = resolveTonality(options);
+  const source = PROGRESSIONS.find((p) => p.id === options.progressionId) ?? PROGRESSIONS[0]!;
+  const prog = progressionForTonality(source, tonality) ?? progressionsForTonality(tonality)[0]!;
+  const bars = totalBars(resolveForm(options.form));
+  return {
+    form: options.form,
+    progId: prog.id,
+    styleId: STYLES.some((s) => s.id === options.styleId) ? options.styleId : STYLES[0]!.id,
+    tonality,
+    melodicLanguage: resolveMelodicLanguage(options),
+    japaneseScale: options.japaneseScale ?? 'auto',
+    grooveFeel: options.grooveFeel ?? DEFAULT_GROOVE_FEEL,
+    tupletOverlay: options.tupletOverlay ?? 'auto',
+    tensionPolicy: options.tensionPolicy ?? 'auto',
+    diminution: options.diminution ?? 'auto',
+    duet: options.duet ?? 'auto',
+    glide: options.glide ?? 'auto',
+    bassLine: options.bassLine ?? 'auto',
+    keyRoot: options.keyRoot,
+    bpm: options.bpm,
+    soundChip: options.soundChip ?? 'opll',
+    voices: { ...(options.voices ?? {}) },
+    opllUserPatch: options.opllUserPatch ?? 'brightLead',
+    nes: { pulse1Duty: options.nes?.pulse1Duty ?? 1, pulse2Duty: options.nes?.pulse2Duty ?? 2 },
+    choice: options.choice
+      ? [...options.choice]
+      : bars >= 8 ? variedChoiceFor(prog, options.form, options.seed) : defaultChoiceFor(prog, options.form),
+    autoVary: false,
+    intro: options.intro ?? introDefaultFor(options.form),
+    seed: options.seed,
+    loop: true,
+    sectionSeeds: { ...(options.sectionSeeds ?? {}) },
+    melodyEdits: [...(options.melodyEdits ?? [])],
   };
 }

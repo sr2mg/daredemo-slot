@@ -29,7 +29,8 @@ import { duckWet, onePoleLowpass, pingPongDelay, stereoChorus, stereoReverb } fr
 import type { PcmBgmDef } from './pcm-types.js';
 import { renderSf2Stems } from './sf2.js';
 import type { Sf2FontStack, Sf2Note } from './sf2.js';
-import { panGains, ROLE_STAGE, roomFor } from './stage.js';
+import { isMuted, panGains, ROLE_STAGE, roomFor } from './stage.js';
+import type { BgmMix } from './stage.js';
 import { timbreFor } from './style-timbre.js';
 import {
   AUDIO_STAGE_DELAY_BEATS,
@@ -251,6 +252,7 @@ export async function renderSf2Bgm(
   font: Sf2FontStack,
   overrides: PcmVoiceOverride = {},
   onProgress?: (ratio: number) => void,
+  mix?: BgmMix,
 ): Promise<PcmBgmDef> {
   // 名目 bpm の拍長は単一の遅延線(オーディオ段ディレイ・ドラムバス)だけに使う。発音位置は写像で写す。
   const spb = 60 / piece.bpm;
@@ -281,7 +283,7 @@ export async function renderSf2Bgm(
     gridAtBeat(piece.songPlan.form, piece.loopStartBeat, toBeat(note.startSec)),
   );
   const partEntries = (Object.entries(parts) as [PcmPart, Sf2Note[]][])
-    .filter(([, baseNotes]) => baseNotes.length > 0);
+    .filter(([part, baseNotes]) => baseNotes.length > 0 && !isMuted(mix, part));
   let renderedParts = 0;
   for (const [part, baseNotes] of partEntries) {
     const stage = ROLE_STAGE[part];

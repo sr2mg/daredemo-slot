@@ -23,6 +23,24 @@ export interface StereoWave {
  */
 export type StageRole = 'lead' | 'duet' | 'counter' | 'ostinato' | 'backing' | 'bass' | 'drums';
 
+export const STAGE_ROLES: readonly StageRole[] = ['lead', 'duet', 'counter', 'ostinato', 'backing', 'bass', 'drums'];
+
+/**
+ * 試聴用のミックス指定(作曲スタジオのミュート/ソロ)。曲の保存単位(ComposeOptions)には
+ * 入れない。各編曲層は声部の割り当てを通常どおり行ってから該当役割の発音だけを落とす
+ * (ソロで聴く音 = ミックスの中で実際に鳴っている音)。
+ */
+export interface BgmMix {
+  muted: readonly StageRole[];
+}
+
+export const isMuted = (mix: BgmMix | undefined, role: StageRole): boolean =>
+  mix !== undefined && mix.muted.includes(role);
+
+/** キャッシュキーへ混ぜる接尾辞。ミュート無しは空文字(既存キーと同一)。 */
+export const mixCacheSuffix = (mix: BgmMix | undefined): string =>
+  mix && mix.muted.length > 0 ? `|mute:${[...mix.muted].sort().join(',')}` : '';
+
 /** パートの役割ごとの舞台位置。楽器ではなく役割に紐づく(SC-88世代の定番配置)。 */
 export interface StagePosition {
   /** 横: -1(左)..0(中央)..1(右)。 */

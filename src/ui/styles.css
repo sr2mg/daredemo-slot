@@ -559,20 +559,6 @@ button:disabled {
 }
 
 /* サウンドテスト */
-.composer-theory {
-  margin-bottom: 14px;
-  border: 1px solid #3a3a55;
-  border-radius: 10px;
-  background: #171721;
-}
-
-.composer-theory > summary {
-  cursor: pointer;
-  padding: 10px 12px;
-  color: #9fd;
-  font-size: 14px;
-  font-weight: bold;
-}
 
 .composer-theory-body {
   padding: 0 14px 12px;
@@ -604,62 +590,6 @@ button:disabled {
 }
 
 /* 作曲フォームの3層(決める / 様式の既定を上書き / 音色) */
-.composer-layer {
-  margin-bottom: 14px;
-  padding: 10px 12px 4px;
-  border: 1px solid #3a3a55;
-  border-radius: 10px;
-  background: #171721;
-}
-
-.composer-layer-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.composer-layer-head h3 {
-  margin: 0;
-  font-size: 14px;
-  color: #ffd54f;
-}
-
-.composer-layer-step {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #3949ab;
-  color: #fff;
-  font-size: 12px;
-  font-weight: bold;
-}
-
-.composer-layer-note {
-  font-size: 12px;
-  color: #888;
-}
-
-.composer-layer-action {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 12px;
-  color: #aaa;
-}
-
-.composer-layer-action button {
-  padding: 6px 10px;
-  font-size: 12px;
-  background: #2a2a38;
-  color: #ddd;
-  border: 1px solid #3a3a55;
-}
 
 .setting-grid {
   display: grid;
@@ -769,59 +699,9 @@ button:disabled {
   }
 }
 
-.slot-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.slot-sections {
-  display: flex;
-  flex-direction: column;
-}
-
-.slot-section-title {
-  width: fit-content;
-  margin: 2px 0 7px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: #28283a;
-  color: #ffd54f;
-  font-size: 12px;
-  font-weight: bold;
-}
-
-.slot-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
-}
-
 .slot-label {
   font-size: 11px;
   color: #888;
-}
-
-.slot-fixed {
-  font-family: 'Consolas', monospace;
-  font-size: 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #101018;
-  border: 1px solid #2e2e44;
-  color: #9fd;
-}
-
-.slot-item select {
-  font-family: 'Consolas', monospace;
-  font-size: 14px;
-  padding: 9px 8px;
-  border-radius: 8px;
-  background: #2a2a38;
-  color: #eee;
-  border: 1px solid #3a3a55;
 }
 
 .song-name-input {
@@ -1353,33 +1233,6 @@ button:disabled {
   .composition-research > summary small {
     text-align: left;
   }
-}
-
-.chord-line {
-  font-family: 'Consolas', monospace;
-  font-size: clamp(15px, 2.4vmin, 19px);
-  color: #ffd54f;
-  margin-bottom: 6px;
-}
-
-.chord-line.chord-form {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.chord-line.chord-form b {
-  display: inline-block;
-  min-width: 1.5em;
-  color: #9fd;
-}
-
-.melody-line {
-  font-family: 'Consolas', monospace;
-  font-size: 12px;
-  color: #9fd;
-  margin-bottom: 6px;
-  word-break: break-all;
 }
 
 .composer-diagnosis {
@@ -2003,34 +1856,6 @@ button:disabled {
 }
 
 /* 作曲スタジオ（bgm.html 単独エントリ） */
-.bgm-studio {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 12px 16px;
-}
-
-.studio-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 8px;
-}
-
-.studio-header h1 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-.studio-voices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.studio-voices select {
-  max-width: 240px;
-}
 
 /* 曲型の区間テーブル(作曲フォーム1層) */
 .form-editor {
@@ -2038,32 +1863,6 @@ button:disabled {
 }
 
 /* 曲型の生成: 目標小節数と再抽選ボタン */
-.form-generate {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: #aaa;
-}
-
-.form-generate label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.form-generate input[type='number'] {
-  width: 72px;
-  font-family: inherit;
-  font-size: 13px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: #2a2a38;
-  color: #eee;
-  border: 1px solid #3a3a55;
-}
 
 .form-table table {
   border-collapse: collapse;

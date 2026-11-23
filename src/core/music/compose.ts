@@ -24,7 +24,7 @@ import type { StyleDef } from './theory.js';
 import { featuredGuideStrand } from './voice-leading.js';
 import { arrangementPlanFor, arrangementSectionFor } from './arrangement.js';
 import {
-  formErrorMessage, formPresetIdOf, gridAtBeat, groupingAt, introDefaultFor, resolveForm, sectionIndexAt, sectionRng,
+  formErrorMessage, formPresetIdOf, gridAtBeat, groupingAt, introDefaultFor, resolveForm, sectionIndexAt, sectionRng, sectionStreamSeed,
   totalBars, validateForm,
 } from './form.js';
 import { effectiveGroove, gridFor, stepBeat, strongBeatOffsets } from './grid.js';
@@ -181,6 +181,7 @@ export function compose(opts: ComposeInput): Piece {
     form,
     presetId,
     seed: opts.seed,
+    sectionSeeds: opts.sectionSeeds,
     keyRoot,
     tonality,
     melodicLanguage,
@@ -303,7 +304,7 @@ export function compose(opts: ComposeInput): Piece {
   // 主題ジェスチャーは主系列rngでなく区間ごとの独立ストリームから抽選する(主系列を使うと
   // フレーズ計画の抽選回数が変わるたびにジェスチャーが連動して変わる暗黙結合になる)。
   const phraseGestures = songPlan.form.sections.map((section, sectionIndex) => makePhraseGesture(
-    sectionRng(opts.seed, sectionIndex, 0x4753_5452),
+    sectionRng(sectionStreamSeed(opts, section.id), sectionIndex, 0x4753_5452),
     style,
     gridFor(section.grouping).steps,
   ));

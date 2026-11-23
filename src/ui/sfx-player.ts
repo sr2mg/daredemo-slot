@@ -40,6 +40,16 @@ export class SfxPlayer {
   private gain: GainNode | null = null;
   private bgmGain: GainNode | null = null;
   private bgmSource: AudioBufferSourceNode | null = null;
+  /** 再生中の自作 BGM の時計(AudioContext 時刻の開始点と、曲内の開始位置・ループ区間)。 */
+  private bgmClock: {
+    startedAt: number;
+    offset: number;
+    duration: number;
+    loop: boolean;
+    loopStart: number;
+    loopEnd: number;
+    stopAfter: number | null;
+  } | null = null;
   /** PCM化後も効果音を前へ出すための、OPLL実機のBGMボイス退避に相当する短いダック。 */
   private sfxDuckUntil = 0;
   private sfxDuckTimer: ReturnType<typeof setTimeout> | null = null;
@@ -225,6 +235,23 @@ export class SfxPlayer {
     return this.loading;
   }
 
+  /**
+   * 再生中の自作 BGM の曲内位置(秒)。鳴っていなければ null。ループ中は loopStart..loopEnd へ
+   * 折り返した位置を返す(作曲スタジオの再生ヘッド用)。
+   */
+  bgmPositionSec(): number | null {
+    const clock = this.bgmClock;
+    if (!clock || !this.ctx || !this.bgmSource) return null;
+    const elapsed = this.ctx.currentTime - clock.startedAt;
+    if (elapsed < 0) return clock.offset;
+    if (clock.stopAfter !== null && elapsed >= clock.stopAfter) return null;
+    const position = clock.offset + elapsed;
+    if (!clock.loop) return position >= clock.duration ? null : position;
+    const span = clock.loopEnd - clock.loopStart;
+    if (position < clock.loopEnd || span <= 0) return position;
+    return clock.loopStart + ((position - clock.loopStart) % span);
+  }
+
   /** BGM 音量（0..1。0.5 = 従来の内蔵 BGM 音量）。再生中でも即座に反映 */
   setBgmVolume(v: number): void {
     this.bgmVolume = Math.max(0, Math.min(1, v));
@@ -390,6 +417,15 @@ export class SfxPlayer {
       source.start(startAt, offset);
       if (opts.stopAfterSec !== undefined) source.stop(startAt + Math.max(0, opts.stopAfterSec));
       this.bgmSource = source;
+      this.bgmClock = {
+        startedAt: startAt,
+        offset,
+        duration: buffer.duration,
+        loop: source.loop,
+        loopStart: source.loopStart,
+        loopEnd: source.loopEnd,
+        stopAfter: opts.stopAfterSec ?? null,
+      };
       return 'played';
     } catch {
       return 'failed'; // 音は演出。失敗してもゲームを止めない
@@ -418,6 +454,7 @@ export class SfxPlayer {
       // 未 start の source を stop した場合など。無視してよい
     }
     this.bgmSource = null;
+    this.bgmClock = null;
     this.setKeyRoot(0); // 効果音はプリセットの設計キー（C）へ戻す
   }
 

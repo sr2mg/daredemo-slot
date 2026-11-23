@@ -1,3 +1,5 @@
+import { isMuted } from './stage.js';
+import type { BgmMix } from './stage.js';
 import type { NesVoiceOptions, NoteEvent, Piece } from '../core/music/types.js';
 import { offbeatBackingRiff } from './backing-riff.js';
 import { midiFreq } from './pitch.js';
@@ -178,7 +180,7 @@ function tndOutput(triangle: number, noise: number, dmc = 0): number {
  * 状態(発振器・フィルタ・LFSR)は閉包が持ち、renderRange は先頭から順に
  * 呼ばれる前提(チャンク分割はできるが、範囲の巻き戻し・スキップはできない)。
  */
-function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
+function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}, mix?: BgmMix): {
   length: number;
   out: Float32Array;
   renderRange: (start: number, end: number) => void;
@@ -192,7 +194,7 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
   const triangleEvents: GateEvent[] = [];
   const noiseHits: NoiseHit[] = [];
 
-  for (const n of piece.melody) {
+  for (const n of isMuted(mix, 'lead') ? [] : piece.melody) {
     const strong = strongBeatOffsets(gridAtBeat(piece.songPlan.form, piece.loopStartBeat, n.beat))
       .some((offset) => nearBeat(((n.beat % 4) + 4) % 4, offset));
     addNoteEvents(
@@ -215,18 +217,20 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
     }
   }
   const counter = piece.counterMelody ?? [];
-  for (const n of chordBacking.filter((note) => !counter.some((response) => notesOverlap(note, response)))) {
+  // ミュートは配線の後で落とす: 副旋律に譲った伴奏は、副旋律をミュートしても鳴らない。
+  const audibleBacking = chordBacking.filter((note) => !counter.some((response) => notesOverlap(note, response)));
+  for (const n of isMuted(mix, 'backing') ? [] : audibleBacking) {
     addNoteEvents(pulse2Events, n.beat, n.dur, toSec, n.midi, n.volume);
   }
-  for (const n of counter) {
+  for (const n of isMuted(mix, 'counter') ? [] : counter) {
     addNoteEvents(pulse2Events, n.beat, n.dur, toSec, n.midi, nesVolumeFor(n, 11));
   }
-  for (const n of piece.bass) addTriangleEvents(triangleEvents, n.beat, n.dur, toSec, n.midi);
+  for (const n of isMuted(mix, 'bass') ? [] : piece.bass) addTriangleEvents(triangleEvents, n.beat, n.dur, toSec, n.midi);
   sortGateEvents(pulse1Events);
   sortGateEvents(pulse2Events);
   sortGateEvents(triangleEvents);
 
-  for (const d of piece.drums) {
+  for (const d of isMuted(mix, 'drums') ? [] : piece.drums) {
     const sample = toSample(toSec(d.beat));
     if (d.inst === 'kick') noiseHits.push({ sample, period: 14, mode: 1, volume: 15, decayFrames: 3 });
     else if (d.inst === 'snare') noiseHits.push({ sample, period: 8, mode: 0, volume: 13, decayFrames: 2 });
@@ -309,8 +313,8 @@ function prepareNesRender(piece: Piece, options: NesVoiceOptions = {}): {
  * pulse1=主旋律 / pulse2=単音伴奏 / triangle=ベース / noise=ドラム。
  * DMCは初版では常に0（未使用）。拡張音源・リバーブ・任意波形は使わない。
  */
-export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}): Float32Array {
-  const { length, out, renderRange } = prepareNesRender(piece, options);
+export function renderNesPiece(piece: Piece, options: NesVoiceOptions = {}, mix?: BgmMix): Float32Array {
+  const { length, out, renderRange } = prepareNesRender(piece, options, mix);
   renderRange(0, length);
   return out;
 }
@@ -323,8 +327,9 @@ export async function renderNesPieceAsync(
   piece: Piece,
   options: NesVoiceOptions = {},
   onProgress?: (ratio: number) => void,
+  mix?: BgmMix,
 ): Promise<Float32Array> {
-  const { length, out, renderRange } = prepareNesRender(piece, options);
+  const { length, out, renderRange } = prepareNesRender(piece, options, mix);
   const chunk = Math.round(0.5 * NES_SAMPLE_RATE);
   for (let start = 0; start < length; start += chunk) {
     const end = Math.min(length, start + chunk);

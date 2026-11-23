@@ -249,6 +249,12 @@ export interface ComposeInput {
    */
   engineRev?: number;
   seed: number;
+  /**
+   * 区間 id → その区間の独立ストリーム(主題ジェスチャー・フレーズ計画・移調幅)だけに使う
+   * シード。指定した区間と、その主題を借りる再登場区間の旋律だけが変わり、他の区間・声部は
+   * 曲のシードのまま(form.ts の sectionStreamSeed)。省略=全区間が曲のシード。
+   */
+  sectionSeeds?: Readonly<Record<string, number>>;
   /** 全小節ぶんのスロット選択(曲全体のフラット配列)。省略時は8小節以上で区間変化、4小節で定番形を選ぶ。 */
   choice?: readonly number[];
   /** ブラインド比較用の上位戦略。省略時は既存と同じ current。 */

@@ -8,7 +8,7 @@ import type {
 } from './composition-strategy.js';
 import {
   RHYTHM_FAMILY_COUNT, barInSection, closesWithCadence, phraseFunctionFor, sectionIndexAt, sectionProgressionId,
-  sectionRng, sectionStartBars, sectionTonality, totalBars,
+  sectionRng, sectionStartBars, sectionStreamSeed, sectionTonality, totalBars,
 } from './form.js';
 import { DEFAULT_GROUPING, gridFor, snapDurationsToPulses } from './grid.js';
 import { hasGrooveDevice } from './groove.js';
@@ -145,6 +145,7 @@ function motifPlansFor(
   sections: readonly SectionSpec[],
   seed: number,
   policy: CompositionPolicy,
+  sectionSeeds?: Readonly<Record<string, number>>,
 ): SectionMotifPlan[] {
   const themeOrder: string[] = [];
   const occurrences = new Map<string, number>();
@@ -167,7 +168,7 @@ function motifPlansFor(
     occurrences.set(spec.theme, occurrence + 1);
     const base = ((themeIndex + occurrence) % RHYTHM_FAMILY_COUNT) as RhythmVariant;
     let plan: SectionMotifPlan = {
-      ...phrasePlanFor(base, seed, index),
+      ...phrasePlanFor(base, sectionStreamSeed({ seed, sectionSeeds }, spec.id), index),
       externalMotifPhrases: [],
       motifSourceSection: null,
       motifTransform: 'original',
@@ -324,6 +325,8 @@ export interface CreateSongPlanOptions {
   /** プリセット参照なら id。エネルギー弧のシード揺らぎと上位戦略(arc40 限定)が読む。 */
   presetId: FormPresetId | null;
   seed: number;
+  /** 区間 id → 区間ストリームのシード(ComposeInput.sectionSeeds)。 */
+  sectionSeeds?: Readonly<Record<string, number>> | undefined;
   /** 曲既定の調(区間指定が無い区間で使う)。0..11 に正規化済み。 */
   keyRoot: number;
   tonality: Tonality;
@@ -516,7 +519,7 @@ export function createSongPlan(options: CreateSongPlanOptions): SongPlan {
   const presetEnergies = presetId === 'loop16' || presetId === 'arc40'
     ? presetEnergiesFor(count, seed, compositionPolicy)
     : null;
-  const motifPlans = motifPlansFor(form.sections, seed, compositionPolicy);
+  const motifPlans = motifPlansFor(form.sections, seed, compositionPolicy, options.sectionSeeds);
   const sectionProgressions: ProgressionDef[] = [];
   const sections: SongSectionPlan[] = form.sections.map((spec, index) => {
     const keyRoot = (((spec.keyRoot ?? options.keyRoot) % 12) + 12) % 12;
