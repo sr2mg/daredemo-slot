@@ -614,7 +614,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
       "endBeat": 8,
       "parts": {
         "bass": "edaa127b",
-        "chords": "b93e7a62",
+        "chords": "03f9f5e5",
         "counter": "811c9dc5",
         "drums": "811c9dc5",
         "melody": "3663ec71",
@@ -627,7 +627,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
       "endBeat": 40,
       "parts": {
         "bass": "e18e3e2d",
-        "chords": "54d63eee",
+        "chords": "81fe7206",
         "counter": "811c9dc5",
         "drums": "b3eba3f7",
         "melody": "ada1097f",
@@ -640,7 +640,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
       "endBeat": 72,
       "parts": {
         "bass": "2e2077cb",
-        "chords": "a8fa0831",
+        "chords": "4b54d219",
         "counter": "e0bf6813",
         "drums": "0f8d676e",
         "melody": "05da2ffe",
@@ -677,7 +677,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
       "endBeat": 40,
       "parts": {
         "bass": "7d2245f9",
-        "chords": "e920c293",
+        "chords": "6b858749",
         "counter": "84afaac0",
         "drums": "290317bc",
         "duet": "35cf34b3",
@@ -691,7 +691,7 @@ exports[`作曲エンジンの音イベントは意図なく変わらない > �
       "endBeat": 72,
       "parts": {
         "bass": "4a1dcd31",
-        "chords": "d8120a7e",
+        "chords": "bbedc61a",
         "counter": "811c9dc5",
         "drums": "30e5c5f9",
         "duet": "811c9dc5",

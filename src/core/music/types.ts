@@ -311,8 +311,11 @@ export interface ComposeOptions extends ComposeInput, RenderConfig {}
  * - rev6: 元区間と調(keyRoot)が違う literal の再登場は、フレーズアンカーを調差ぶん平行移動する
  *   (melody-voice.ts)。rev5 では元区間の絶対音高のアンカーをそのまま継いだため、転調した
  *   最終サビのフックが持ち上がらなかった。同じ調の literal・transpose・invert は不変。
+ * - rev7: 伴奏ボイシングは音塊(隣り合う3声が長3度以内 = 2度の連続)にならない配置を優先する
+ *   (voicing.ts)。rev6 までは直前の和音からの最短連結だけで選び、テンションを足した5声の和音が
+ *   2度3つの団子になった。音塊を作れない3声・4声の配置は不変。
  */
-export const CURRENT_ENGINE_REV = 6;
+export const CURRENT_ENGINE_REV = 7;
 
 /**
  * この生成で実際に適用するリビジョン。rev5 で再現経路をリセットしたので、rev5 未満の値は

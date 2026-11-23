@@ -19,5 +19,6 @@ export const PROGRESSION_USAGE: Record<string, string> = {
   'minor-drive': 'BIG・ゲームBGM向き',
   'drifting-orbit': '待機画面・環境BGM向き（主音に着地しない）',
   'aeolian-ladder': '歌もの短調Aメロ向き（8小節・導音で戻る）',
+  'neapolitan-drift': '待機画面・夜景向き（8小節・属七なしで浮遊）',
   'mixture-rise': 'ブリッジ・決め台詞向き（♭VI→♭VII→I）',
 };

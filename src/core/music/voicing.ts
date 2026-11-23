@@ -11,13 +11,37 @@ export function midiCandidatesForPc(pc: number, lo: number, hi: number): number[
 }
 
 /**
+ * 伴奏声部が和音の変わり目で動いてよい上限(完全5度)。これを超えると声部の連結として聴こえず、
+ * 別の配置へ跳んだように聴こえる。診断(diagnostics.ts の伴奏声部の移動)と同じ値を共有する。
+ */
+export const ACCOMPANIMENT_MAX_LEAP = 7;
+
+/** 長3度(半音4つ)。この幅に隣り合う3声が収まると、2度が2つ連続した音塊になる。 */
+const CLUSTER_SPAN = 4;
+
+/**
+ * 音塊(クラスター): 隣り合う3声が長3度以内に収まる配置。2度が2つ連続し、和音の3度堆積が
+ * 聴き取れなくなる(密集配置の和声法で、2度の隣接は1か所ずつ離して置くのが原則)。
+ * 9th・11th を足した5声の和音を1オクターブ強へ畳むと最短連結がここへ寄るので、配置の段階で除く。
+ */
+export function hasSecondCluster(sortedMidis: readonly number[]): boolean {
+  for (let index = 0; index + 2 < sortedMidis.length; index++) {
+    if (sortedMidis[index + 2]! - sortedMidis[index]! <= CLUSTER_SPAN) return true;
+  }
+  return false;
+}
+
+/**
  * 各コードを低音から高音へ並べ、直前の同じ声部から最短距離になる転回形を選ぶ。
  * OPLLの単音バッキングが参照する中央2声を特に滑らかにする。
+ * avoidClusters(rev7〜): 全声部が ACCOMPANIMENT_MAX_LEAP 以内で届く配置のなかに音塊にならないものが
+ * あれば、その中から最短連結を選ぶ。声部の連結が先で、音塊を避けるために配置を跳ばすことはしない。
  */
 export function voiceChord(
   pcs: readonly number[],
   previous: readonly number[] | null,
   openFifths = false,
+  avoidClusters = false,
 ): number[] {
   // 和風モードでは三度・七度を伴奏から抜き、根音－五度－根音の開いた配置にする。
   // 和声機能そのものは ChordEvent.pcs に残すので、進行の意味までは失わない。
@@ -49,6 +73,12 @@ export function voiceChord(
     }
     return total;
   };
-  return candidates.sort((a, b) => score(a) - score(b))[0]
+  const open = avoidClusters
+    ? candidates.filter((notes) => (
+      !hasSecondCluster(notes)
+      && notes.every((midi, index) => Math.abs(midi - voiceAt(reference, index)) <= ACCOMPANIMENT_MAX_LEAP)
+    ))
+    : [];
+  return (open.length > 0 ? open : candidates).sort((a, b) => score(a) - score(b))[0]
     ?? voicingPcs.map((pc) => 60 + pc).sort((a, b) => a - b);
 }
