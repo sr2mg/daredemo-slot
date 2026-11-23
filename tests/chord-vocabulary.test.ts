@@ -129,6 +129,27 @@ describe('新トークン(カラーコード・借用)の導出', () => {
     expect(minor.modes).toContain('dorian');
   });
 
+  it('♭IIM7はフリギア借用の下属機能で、長7度が主音そのもの', () => {
+    expect([...CHORDS.bIIM7!.tones]).toEqual([1, 5, 8, 0]);
+    expect(harmonicFunctionForToken('bIIM7')).toBe('predominant');
+    for (const tonality of ['major', 'minor'] as const) {
+      const origins = chordOriginsFor('bIIM7', tonality)!;
+      expect(origins.diatonic, tonality).toBe(false);
+      expect(origins.modes, tonality).toContain('phrygian');
+      expect(origins.secondaryDominantOf, tonality).toBeNull();
+    }
+  });
+
+  it('i9sus4は♭VIIの三和音を主音の低音に載せた掛留で、短調のダイアトニック', () => {
+    expect([...CHORDS.i9sus4!.tones]).toEqual([0, 5, 7, 10, 2]);
+    // 上声 = ♭VII の三和音(10, 2, 5)。低音は主音。
+    expect(CHORDS.VII!.tones.every((pc) => CHORDS.i9sus4!.tones.includes(pc))).toBe(true);
+    expect(harmonicFunctionForToken('i9sus4')).toBe('dominant');
+    const origins = chordOriginsFor('i9sus4', 'minor')!;
+    expect(origins.diatonic).toBe(true);
+    expect(origins.secondaryDominantOf).toBeNull();
+  });
+
   it('借用解釈: ♭IIIM7は短調でダイアトニック、長調で同主短調(エオリア)借用', () => {
     expect(chordOriginsFor('IIIM7', 'minor')!.diatonic).toBe(true);
     const major = chordOriginsFor('IIIM7', 'major')!;
