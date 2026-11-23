@@ -96,9 +96,15 @@ describe('スタイル別ドラムキットとバス宣言', () => {
     expect(drumBusFxFor('garage2step')?.crush).toBeNull();
   });
 
+  it('breaksは808/909キット(25)でバス宣言を持たない', () => {
+    const drums = arrangeSf2Parts(pieceFor('breaks')).drums;
+    expect(drums.every((note) => note.bank === 128 && note.program === 25)).toBe(true);
+    expect(drumBusFxFor('breaks')).toBeNull();
+  });
+
   it('既存スタイルはスタンダードキット(0)のままバス宣言を持たない(後方互換)', () => {
     for (const style of STYLES) {
-      if (style.id === 'dnb' || style.id === 'garage2step') continue;
+      if (style.id === 'dnb' || style.id === 'garage2step' || style.id === 'breaks') continue;
       const drums = arrangeSf2Parts(pieceFor(style.id)).drums;
       expect(drums.every((note) => note.bank === 128 && note.program === 0), style.id).toBe(true);
       expect(drumBusFxFor(style.id), style.id).toBeNull();
