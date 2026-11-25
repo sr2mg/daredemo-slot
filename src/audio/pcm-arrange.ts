@@ -215,6 +215,19 @@ export function arrangeSf2Parts(
   };
 }
 
+/**
+ * その曲が実際に鳴らすプリセットの一覧(重複なし)。フォントの部分読み(sf2-lazy.ts)が
+ * 「この曲に必要な音色」を知るための入口で、合成と同じ編曲結果から導く。
+ */
+export function pcmPresetRefs(piece: Piece, overrides: PcmVoiceOverride = {}): PcmPresetRef[] {
+  const seen = new Map<string, PcmPresetRef>();
+  for (const note of arrangeSf2Notes(piece, overrides)) {
+    const key = `${note.bank}:${note.program}`;
+    if (!seen.has(key)) seen.set(key, { bank: note.bank, program: note.program });
+  }
+  return [...seen.values()];
+}
+
 export function arrangeSf2Notes(piece: Piece, overrides: PcmVoiceOverride = {}): Sf2Note[] {
   return Object.values(arrangeSf2Parts(piece, overrides)).flat();
 }

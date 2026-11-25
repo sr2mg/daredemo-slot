@@ -15,7 +15,7 @@
 
 import { glideDurationSec } from '../core/music/glide.js';
 
-interface Sf2SampleHeader {
+export interface Sf2SampleHeader {
   name: string;
   start: number;
   end: number;
@@ -122,33 +122,45 @@ const valueOf = (
   local: GenMap, global: GenMap | null, oper: number, fallback: number,
 ): number => local.get(oper) ?? global?.get(oper) ?? fallback;
 
+/** 葉チャンクの位置(データ先頭)と長さ。 */
+export type Sf2ChunkMap = Map<string, { at: number; size: number }>;
+
+export const sf2TagAt = (view: DataView, at: number): string => String.fromCharCode(
+  view.getUint8(at), view.getUint8(at + 1), view.getUint8(at + 2), view.getUint8(at + 3),
+);
+
+/** [at, end) のチャンク列をたどり、LIST は入れ子へ降りて葉チャンクの位置を集める。 */
+export function walkSf2Chunks(view: DataView, at: number, end: number, chunks: Sf2ChunkMap): void {
+  while (at + 8 <= end) {
+    const id = sf2TagAt(view, at);
+    const size = view.getUint32(at + 4, true);
+    if (id === 'LIST') {
+      walkSf2Chunks(view, at + 12, at + 8 + size, chunks);
+    } else {
+      chunks.set(id, { at: at + 8, size });
+    }
+    at += 8 + size + (size & 1);
+  }
+}
+
 export function parseSf2(buffer: ArrayBuffer): Sf2Font {
   const view = new DataView(buffer);
-  const tag = (at: number): string => String.fromCharCode(
-    view.getUint8(at), view.getUint8(at + 1), view.getUint8(at + 2), view.getUint8(at + 3),
-  );
-  if (tag(0) !== 'RIFF' || tag(8) !== 'sfbk') throw new Error('SF2ではないファイルです');
-
-  let sampleData: Int16Array | null = null;
-  const chunks = new Map<string, { at: number; size: number }>();
-  const walkList = (at: number, end: number): void => {
-    while (at + 8 <= end) {
-      const id = tag(at);
-      const size = view.getUint32(at + 4, true);
-      if (id === 'LIST') {
-        walkList(at + 12, at + 8 + size);
-      } else {
-        chunks.set(id, { at: at + 8, size });
-      }
-      at += 8 + size + (size & 1);
-    }
-  };
-  walkList(12, 8 + view.getUint32(4, true));
+  if (sf2TagAt(view, 0) !== 'RIFF' || sf2TagAt(view, 8) !== 'sfbk') throw new Error('SF2ではないファイルです');
+  const chunks: Sf2ChunkMap = new Map();
+  walkSf2Chunks(view, 12, 8 + view.getUint32(4, true), chunks);
 
   const smpl = chunks.get('smpl');
   if (!smpl) throw new Error('サンプルデータ(smpl)がありません');
-  sampleData = new Int16Array(buffer, smpl.at, smpl.size / 2);
+  const sampleData = new Int16Array(buffer, smpl.at, smpl.size / 2);
+  return { presets: parseSf2Hydra(view, chunks), sampleData };
+}
 
+/**
+ * 目録(pdta)だけからプリセット→発音ゾーンを展開する。波形(smpl)には触れないので、
+ * 部分読み(sf2-lazy.ts)は目録だけ先に読んで、鳴らすプリセットの波形を後から取りに行ける。
+ * サンプルの位置(start/end/loop)は smpl 先頭からのサンプル数。
+ */
+export function parseSf2Hydra(view: DataView, chunks: Sf2ChunkMap): Sf2Preset[] {
   const readName = (at: number): string => {
     let name = '';
     for (let i = 0; i < 20; i++) {
@@ -264,7 +276,7 @@ export function parseSf2(buffer: ArrayBuffer): Sf2Font {
     }
     presets.push({ name: header.name, bank: header.bank, program: header.program, zones });
   }
-  return { presets, sampleData };
+  return presets;
 }
 
 export interface Sf2Note {
@@ -305,12 +317,13 @@ const fontsOf = (stack: Sf2FontStack): readonly Sf2Font[] =>
  * 段階制の解決: 「正確な(bank,program)一致」を全フォント順に探し、無ければ
  * 劣化代替(ドラムは任意のbank128→同番号→ピアノ)も同じ順で探す。
  * 「主フォントのピアノ」より「補完フォントの本物」を優先するのが狙い。
+ * 波形を持たない目録だけのフォント(sf2-lazy.ts)にも同じ規則を使うため、型は構造で受ける。
  */
-function findPreset(
-  fonts: readonly Sf2Font[],
+export function findSf2Preset<F extends { readonly presets: readonly Sf2Preset[] }>(
+  fonts: readonly F[],
   bank: number,
   program: number,
-): { preset: Sf2Preset; font: Sf2Font } | null {
+): { preset: Sf2Preset; font: F } | null {
   for (const font of fonts) {
     const exact = font.presets.find((p) => p.bank === bank && p.program === program);
     if (exact && exact.zones.length > 0) return { preset: exact, font };
@@ -360,7 +373,7 @@ export function renderSf2Stems(
   const exclusiveActive = new Map<string, Voice>();
   const sorted = [...notes].sort((a, b) => a.startSec - b.startSec);
   for (const note of sorted) {
-    const resolved = findPreset(fonts, note.bank, note.program);
+    const resolved = findSf2Preset(fonts, note.bank, note.program);
     if (!resolved) continue;
     for (const zone of resolved.preset.zones) {
       if (note.midi < zone.keyLo || note.midi > zone.keyHi) continue;
