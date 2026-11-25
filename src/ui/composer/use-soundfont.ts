@@ -12,6 +12,7 @@ import type { BgmPcmRenderer } from '../../audio/render.js';
 import type { LeadColorSlot, PcmPart, PcmPresetRef, PcmVoiceOverride } from '../../audio/pcm-arrange.js';
 import type { ComposeOptions } from '../../core/music/types.js';
 import { loadStored, saveStored } from '../persist.js';
+import type { LazySf2 } from '../../audio/sf2-lazy.js';
 import type { ActiveSoundFont, SoundFontSource } from '../soundfont-store.js';
 
 export const SOURCE_OPTIONS: readonly { id: SoundFontSource; label: string }[] = [
@@ -101,7 +102,7 @@ export function useSoundFont() {
   };
 
   const loadFont = async (source: SoundFontSource): Promise<void> => {
-    setFontStatus('SoundFont読み込み中…（同梱フォントは約31MB、初回のみ）');
+    setFontStatus('SoundFontの音色一覧を読み込み中…');
     try {
       const store = await import('../soundfont-store.js');
       const font = await store.loadSoundFont(source);
@@ -134,10 +135,15 @@ export function useSoundFont() {
     setFontStatus(`${file.name} を読み込み中…`);
     try {
       const store = await import('../soundfont-store.js');
-      const font = await store.savePickedSoundFont(file);
+      const { active, saved } = await store.savePickedSoundFont(file);
       setFontSource('picked');
-      setActiveFont(font);
-      setFontStatus(`使用中: ${font.label}（IndexedDBへ保存済み。次回から「保存済みの選択ファイル」で再利用可）`);
+      setActiveFont(active);
+      // 目録を読めた時点で使える。次回用の保存は裏で進み、終わったら表示だけ差し替える。
+      setFontStatus(`使用中: ${active.label}（次回用に保存しています…）`);
+      saved.then(
+        () => setFontStatus(`使用中: ${active.label}（IndexedDBへ保存済み。次回から「保存済みの選択ファイル」で再利用可）`),
+        () => setFontStatus(`使用中: ${active.label}（保存はできませんでした。次回は選び直してください）`),
+      );
     } catch (e) {
       setFontStatus(e instanceof Error ? e.message : String(e));
     }
@@ -159,17 +165,25 @@ export function useSoundFont() {
       idFor: (options) => `sf2:${activeFont.id}${complement ? '+gu-gs' : ''}:${JSON.stringify(voicesFor(options))}`,
       render: async (piece, options, mix) => {
         const voices = voicesFor(options);
-        const { renderSf2Bgm } = await import('../../audio/pcm-arrange.js');
-        if (!complement) return renderSf2Bgm(piece, activeFont.font, voices, undefined, mix);
+        const [{ pcmPresetRefs, renderSf2Bgm }, { loadSf2Stack }] = await Promise.all([
+          import('../../audio/pcm-arrange.js'),
+          import('../../audio/sf2-lazy.js'),
+        ]);
+        // 波形はこの曲が鳴らすプリセットの分だけ読む(フォント全体は読まない)。
+        const refs = pcmPresetRefs(piece, voices);
+        const renderWith = async (stack: readonly LazySf2[]) =>
+          renderSf2Bgm(piece, await loadSf2Stack(stack, refs), voices, undefined, mix);
+        if (!complement) return renderWith([activeFont.font]);
+        let bundled: ActiveSoundFont;
         try {
           const store = await import('../soundfont-store.js');
-          const bundled = await store.loadSoundFont('bundled');
-          return renderSf2Bgm(piece, [activeFont.font, bundled.font], voices, undefined, mix);
+          bundled = await store.loadSoundFont('bundled');
         } catch {
           // 補完フォントが取れない(オフライン等)場合は選択フォント単独で劣化継続。
           // キー(+gu-gs)が表す構成と波形が一致しないため、キャッシュには残させない。
-          return { ...await renderSf2Bgm(piece, activeFont.font, voices, undefined, mix), transient: true };
+          return { ...await renderWith([activeFont.font]), transient: true };
         }
+        return renderWith([activeFont.font, bundled.font]);
       },
     };
   }, [activeFont, fontSource, pcmVoices]);
